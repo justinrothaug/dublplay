@@ -571,12 +571,13 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
-  // American odds are always 3+ digits (e.g. -110, +176); spreads are 1-2 digits like -14.5
-  const oddsMatch = pick.text.match(/([+-]\d{3,})(?!\d|\.)/);
-  const extractedOdds = oddsMatch ? oddsMatch[1] : "-110";
+  // Use actual game odds directly, same as game cards do — never parse from text
+  const calcOdds = isBet
+    ? (pick.game.awayOdds || pick.game.homeOdds || "-110")
+    : "-110";
   return (
     <div
-      onClick={onPickOdds ? () => onPickOdds(extractedOdds) : undefined}
+      onClick={onPickOdds ? () => onPickOdds(calcOdds) : undefined}
       style={{
         background: T.card,
         border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,

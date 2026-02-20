@@ -6,6 +6,8 @@ from pydantic import BaseModel
 import httpx
 import os
 import re
+import json
+import logging
 import pathlib
 import time
 import asyncio
@@ -801,6 +803,86 @@ async def debug_odds():
     return info
 
 
+async def fetch_gemini_props(client: httpx.AsyncClient, key: str, today_str: str) -> list[dict]:
+    """Use Gemini with Google Search grounding to get real NBA player prop lines."""
+    prompt = (
+        f"Today is {today_str}. Search DraftKings for tonight's NBA player prop lines.\n"
+        "Return ONLY a raw JSON array (no markdown, no code blocks, no extra text) "
+        "of 12-15 value props for tonight's NBA games.\n"
+        "Each element must have EXACTLY these fields:\n"
+        '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
+        '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
+        '"l15":65,"streak":3,"avg":28.2,"edge_score":4.2,"matchup":"LAL @ GSW",'
+        '"reason":"Brief reason for the pick"}\n'
+        "Rules:\n"
+        "- line must be the REAL current DraftKings line you found via search\n"
+        "- over_odds/under_odds: realistic American odds strings like \"-115\" or \"+105\"\n"
+        "- l5/l10/l15: integer hit-rate % for going OVER this line in last 5/10/15 games\n"
+        "- streak: consecutive games OVER the line (0 if none)\n"
+        "- avg: player season average for this stat\n"
+        "- edge_score: float 1.0-5.0 strength of betting edge\n"
+        "- Only include games scheduled for today\n"
+        "Output ONLY the JSON array, starting with [ and ending with ]"
+    )
+    try:
+        resp = await client.post(
+            f"{GEMINI_URL}?key={key}",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 2500, "temperature": 0.2},
+            },
+            timeout=45,
+        )
+        data = resp.json()
+        if "error" in data:
+            logging.warning(f"Gemini props error: {data['error']['message']}")
+            return []
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        logging.warning(f"Gemini props request failed: {e}")
+        return []
+
+    match = re.search(r'\[[\s\S]*\]', text)
+    if not match:
+        logging.warning(f"No JSON array in Gemini props response: {text[:300]}")
+        return []
+    try:
+        raw = json.loads(match.group())
+    except Exception as e:
+        logging.warning(f"Gemini props JSON parse failed: {e}")
+        return []
+
+    out = []
+    for p in raw:
+        try:
+            line = float(p.get("line", 0))
+            stat = str(p.get("stat", ""))
+            rec  = str(p.get("rec", "OVER")).upper()
+            out.append({
+                "player":     str(p.get("player", "")),
+                "team":       str(p.get("team", "")),
+                "pos":        str(p.get("pos", "")),
+                "stat":       stat,
+                "prop":       f"{stat} O/U {line}",
+                "line":       line,
+                "over_odds":  str(p.get("over_odds", "-115")),
+                "under_odds": str(p.get("under_odds", "+105")),
+                "rec":        rec,
+                "l5":         int(p.get("l5", 50)),
+                "l10":        int(p.get("l10", 50)),
+                "l15":        int(p.get("l15", 50)),
+                "streak":     int(p.get("streak", 0)),
+                "avg":        float(p.get("avg", line)),
+                "edge_score": float(p.get("edge_score", 3.0)),
+                "matchup":    str(p.get("matchup", "")),
+                "reason":     str(p.get("reason", "")),
+            })
+        except Exception:
+            continue
+    return out
+
+
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
@@ -814,8 +896,18 @@ async def get_props():
     if isinstance(pp_props, Exception):
         pp_props = []
 
+    # PrizePicks is blocked by Cloudflare from server — fall back to Gemini + Google Search
+    source = "prizepicks"
+    if not pp_props and GEMINI_API_KEY:
+        today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
+        logging.info("PrizePicks unavailable; fetching props via Gemini search grounding")
+        async with httpx.AsyncClient() as client:
+            pp_props = await fetch_gemini_props(client, GEMINI_API_KEY, today_str)
+        source = "gemini" if pp_props else "none"
+    elif not pp_props:
+        source = "none"
+
     filtered = [p for p in pp_props if p["player"].lower() not in injuries]
-    source = "prizepicks" if pp_props else "none"
     return {"props": filtered, "source": source, "injured_out": sorted(injuries)}
 
 

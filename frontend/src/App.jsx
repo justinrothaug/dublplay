@@ -355,21 +355,33 @@ function TeamBadge({ abbr, size = 40 }) {
   );
 }
 
+function ScorePip({ score }) {
+  if (score == null) return null;
+  const c = edgeColor(score);
+  return (
+    <span style={{
+      display:"inline-flex", alignItems:"center", justifyContent:"center",
+      width:28, height:28, borderRadius:"50%",
+      border:`2px solid ${c}`, background:`${c}18`,
+      fontSize:10, fontWeight:800, color:c, flexShrink:0, marginLeft:6,
+    }}>{score}</span>
+  );
+}
+
 function AnalysisPanel({ analysis, isLive, loading }) {
   if (!analysis) return null;
   const items = [
-    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green },
-    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold },
-    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa" },
+    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet },
+    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou },
+    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null },
   ].filter(i => i.text);
 
   return (
     <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
-      <div style={{ marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ marginBottom:10 }}>
         <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700 }}>
           dublplay analysis
         </span>
-        {analysis.dubl_score != null && <EdgeCircle score={analysis.dubl_score} />}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
         {items.length === 0 && loading && (
@@ -384,6 +396,7 @@ function AnalysisPanel({ analysis, isLive, loading }) {
               <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em", marginRight:6 }}>{item.label}</span>
               <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
             </div>
+            <ScorePip score={item.score} />
           </div>
         ))}
       </div>
@@ -528,8 +541,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         </span>
       </div>
 
-      {/* Top 3 game picks by Dubl Score */}
-      <TopGamesSection games={ordered} aiOverrides={aiOverrides} />
+      {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
+      <TopPicksSection games={ordered} aiOverrides={aiOverrides} />
 
       {/* Horizontal scroll rail */}
       <div style={{
@@ -552,11 +565,12 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
   );
 }
 
-// ── TOP GAME PICKS (top 3 by Dubl Score) ─────────────────────────────────────
-function TopGameCard({ game, analysis, rank }) {
+// ── TOP PICKS (top 3 individual bets ranked by Dubl Score) ───────────────────
+function TopPickCard({ pick, rank }) {
   const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
-  const ec = edgeColor(analysis.dubl_score);
-  const isLive = game.status === "live";
+  const ec = edgeColor(pick.score);
+  const isBet = pick.type === "bet";
+  const color = isBet ? T.green : T.gold;
   return (
     <div style={{
       background: T.card,
@@ -566,45 +580,47 @@ function TopGameCard({ game, analysis, rank }) {
     }}>
       <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
       <div style={{ padding:"12px 14px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
-          <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
-          <EdgeCircle score={analysis.dubl_score} />
-        </div>
-        <div style={{ fontWeight:800, fontSize:14, color:T.text, marginBottom:3 }}>
-          {game.awayName} @ {game.homeName}
-        </div>
-        {isLive && (
-          <div style={{ fontSize:10, color:T.red, fontWeight:700, marginBottom:5 }}>
-            LIVE · Q{game.quarter} {game.clock}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
+            <span style={{
+              fontSize:9, fontWeight:700, letterSpacing:"0.06em",
+              color, background:`${color}18`,
+              border:`1px solid ${color}44`, borderRadius:4, padding:"2px 7px",
+            }}>{isBet ? "✦ BEST BET" : "◉ O/U"}</span>
           </div>
-        )}
-        {analysis.best_bet && (
-          <div style={{ marginTop:5 }}>
-            <span style={{ fontSize:9, fontWeight:700, color:T.green, letterSpacing:"0.06em", marginRight:5 }}>✦ BEST BET</span>
-            <span style={{ fontSize:11, color:T.text2, lineHeight:1.5 }}>
-              {analysis.best_bet.length > 90 ? analysis.best_bet.slice(0,90)+"…" : analysis.best_bet}
-            </span>
-          </div>
-        )}
+          <EdgeCircle score={pick.score} />
+        </div>
+        <div style={{ fontSize:11, color:T.text3, marginBottom:5 }}>
+          {pick.game.awayName} @ {pick.game.homeName}
+          {pick.game.status === "live" && <span style={{ color:T.red, marginLeft:6, fontWeight:700 }}>LIVE</span>}
+        </div>
+        <span style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
+          {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
+        </span>
       </div>
     </div>
   );
 }
 
-function TopGamesSection({ games, aiOverrides }) {
-  const top = games
-    .filter(g => g.status !== "final" && aiOverrides[g.id]?.dubl_score != null)
-    .map(g => ({ game: g, analysis: aiOverrides[g.id] }))
-    .sort((a,b) => b.analysis.dubl_score - a.analysis.dubl_score)
-    .slice(0,3);
+function TopPicksSection({ games, aiOverrides }) {
+  const picks = [];
+  for (const g of games) {
+    if (g.status === "final") continue;
+    const a = aiOverrides[g.id];
+    if (!a) continue;
+    if (a.best_bet && a.dubl_score_bet != null)
+      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, game:g });
+    if (a.ou && a.dubl_score_ou != null)
+      picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g });
+  }
+  const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
   if (top.length === 0) return null;
   return (
     <div style={{ padding:"0 20px", marginBottom:16 }}>
-      <SectionLabel>TOP GAME PICKS — RANKED BY DUBL SCORE</SectionLabel>
+      <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
       <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))" }}>
-        {top.map(({game,analysis},i) => (
-          <TopGameCard key={game.id} game={game} analysis={analysis} rank={i+1} />
-        ))}
+        {top.map((pick,i) => <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} />)}
       </div>
     </div>
   );
@@ -1142,6 +1158,48 @@ const gateBtn = {
   borderRadius:10, padding:"14px", fontSize:12, fontWeight:800, letterSpacing:"0.08em", fontFamily:"inherit",
 };
 
+// ── PARSE GAME-ANALYSIS PLAYER PROP TEXT → STRUCTURED PROP ───────────────────
+// Format Gemini outputs: "Player OVER/UNDER X.X Stat (±odds) — reason"
+const STAT_ALIASES = {
+  "points": "Points", "point": "Points",
+  "rebounds": "Rebounds", "rebound": "Rebounds",
+  "assists": "Assists", "assist": "Assists",
+  "3-pointers made": "3PM", "3-pointer": "3PM", "three-pointers made": "3PM",
+  "threes made": "3PM", "threes": "3PM", "three pointers": "3PM",
+  "3pm": "3PM",
+  "blocks": "Blocks", "block": "Blocks",
+  "steals": "Steals", "steal": "Steals",
+};
+function normalizeStatName(raw) {
+  const key = raw.trim().toLowerCase();
+  return STAT_ALIASES[key] || raw.trim();
+}
+function parseGameProp(text, game) {
+  if (!text) return null;
+  // Match: "Name OVER/UNDER X.X StatWords (±odds) — reason"
+  const m = text.match(
+    /^(.+?)\s+(OVER|UNDER)\s+(\d+\.?\d*)\s+([^(—–\-]+?)(?:\s*\(([-+]\d+)\))?\s*[—–-]/i
+  );
+  if (!m) return null;
+  const [, player, rec, lineStr, statRaw, oddsStr] = m;
+  const line = parseFloat(lineStr);
+  const stat = normalizeStatName(statRaw);
+  const odds = oddsStr || "-110";
+  const recUp = rec.toUpperCase();
+  const over_odds  = recUp === "OVER"  ? odds : "-110";
+  const under_odds = recUp === "UNDER" ? odds : "-110";
+  const matchup = game ? `${game.away} @ ${game.home}` : "";
+  const reason = text.replace(/^.+?[—–-]\s*/, "").slice(0, 120);
+  return {
+    player: player.trim(), team:"", pos:"", stat,
+    prop: `${stat} O/U ${line}`, line,
+    over_odds, under_odds, odds,
+    rec: recUp, l5:0, l10:0, l15:0, streak:0,
+    avg: line, edge_score: 3.5,
+    matchup, reason, _source:"game_analysis",
+  };
+}
+
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [apiKey, setApiKey] = useState(null);
@@ -1320,7 +1378,21 @@ export default function App() {
 
       {tab !== "games" && (
         <div style={{ maxWidth:960, margin:"0 auto", padding:"22px 16px" }}>
-          {tab === "props" && <PropsTab props={props} parlay={parlay} toggleParlay={toggleParlay} />}
+          {tab === "props" && (() => {
+            // Merge game-analysis player props into the props list so they
+            // always appear in the Props tab even if the bulk Gemini call missed them.
+            const existing = new Set(props.map(p => `${p.player.toLowerCase()}|${p.stat.toLowerCase()}`));
+            const gamePropsList = games.flatMap(g => {
+              const a = aiOverrides[g.id];
+              if (!a?.props) return [];
+              const parsed = parseGameProp(a.props, g);
+              if (!parsed) return [];
+              const key = `${parsed.player.toLowerCase()}|${parsed.stat.toLowerCase()}`;
+              return existing.has(key) ? [] : [parsed];
+            });
+            const mergedProps = [...props, ...gamePropsList];
+            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} />;
+          })()}
           {tab === "chat"  && <ChatTab apiKey={apiKey} />}
         </div>
       )}

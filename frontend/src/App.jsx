@@ -1444,8 +1444,8 @@ const LOAD_MESSAGES = [
 ];
 
 const Loader = () => {
-  const [msgIdx, setMsgIdx] = React.useState(0);
-  React.useEffect(() => {
+  const [msgIdx, setMsgIdx] = useState(0);
+  useEffect(() => {
     const id = setInterval(() => setMsgIdx(i => (i + 1) % LOAD_MESSAGES.length), 1400);
     return () => clearInterval(id);
   }, []);

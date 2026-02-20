@@ -172,7 +172,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -238,7 +238,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
       {/* ── Teams + Score / Win% ── */}
       <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         {/* Away */}
-        <div style={{ flex:1 }}>
+        <div
+          style={{ flex:1, cursor: game.awayOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={game.awayOdds && onPickOdds ? () => onPickOdds(game.awayOdds) : undefined}
+          title={game.awayOdds ? `Calc: ${game.awayName} ${game.awayOdds}` : undefined}
+        >
           <TeamBadge abbr={game.away} size={44} />
           <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.awayName}</div>
           {isUp && (
@@ -274,7 +278,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
         </div>
 
         {/* Home */}
-        <div style={{ flex:1, textAlign:"right" }}>
+        <div
+          style={{ flex:1, textAlign:"right", cursor: game.homeOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={game.homeOdds && onPickOdds ? () => onPickOdds(game.homeOdds) : undefined}
+          title={game.homeOdds ? `Calc: ${game.homeName} ${game.homeOdds}` : undefined}
+        >
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <TeamBadge abbr={game.home} size={44} />
           </div>
@@ -289,10 +297,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
       {(game.spread || game.ou || game.homeOdds) && (
         <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
           {game.spread && (
-            <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal} />
+            <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal}
+              onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.ou && (
-            <OddsCol label="TOTAL" value={`${game.ou}${isLive ? ` ${game.ouDir}` : ""}`} highlight={!isFinal} />
+            <OddsCol label="TOTAL" value={`${game.ou}${isLive ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+              onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.homeOdds && game.awayOdds && (
             <OddsCol label="MONEYLINE" value={`${game.awayOdds} / ${game.homeOdds}`} highlight={!isFinal} />
@@ -313,9 +323,9 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
   );
 }
 
-function OddsCol({ label, value, highlight }) {
+function OddsCol({ label, value, highlight, onClick }) {
   return (
-    <div style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}` }}>
+    <div onClick={onClick} style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}`, cursor: onClick ? "pointer" : "default" }}>
       <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:4 }}>{label}</div>
       <div style={{ fontSize:12, fontWeight:700, color: highlight ? T.text : T.text2 }}>{value}</div>
     </div>
@@ -482,7 +492,7 @@ function FinalResultsPanel({ game }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -530,6 +540,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             onRefresh={onRefresh}
             loadingRefresh={loadingIds.has(g.id)}
             aiOverride={aiOverrides[g.id]}
+            onPickOdds={onPickOdds}
           />
         ))}
       </div>
@@ -543,11 +554,82 @@ function BestBetsSection({ props }) {
   return (
     <div style={{ marginBottom:28 }}>
       <SectionLabel>TOP AI PICKS — RANKED BY EDGE SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", marginBottom:16 }}>
+      <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
         {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
       </div>
-      <BetCalcCard />
     </div>
+  );
+}
+
+// ── PAYOUT CALC POPUP (bottom-sheet, iOS-optimized) ───────────────────────────
+function CalcPopup({ onClose, initialOdds }) {
+  const [odds, setOdds] = useState(initialOdds || "-110");
+  const [stake, setStake] = useState("100");
+  const payout = americanToPayout(odds, parseFloat(stake) || 0);
+  const profit = payout ? (parseFloat(payout) - (parseFloat(stake) || 0)).toFixed(2) : null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{
+        position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:300,
+        WebkitTapHighlightColor:"transparent",
+      }} />
+      {/* Sheet */}
+      <div style={{
+        position:"fixed", bottom:0, left:0, right:0, zIndex:301,
+        background:T.card, borderTop:`1px solid ${T.borderBr}`,
+        borderRadius:"20px 20px 0 0",
+        padding:"20px 20px calc(20px + env(safe-area-inset-bottom))",
+        animation:"slideUp 0.22s ease",
+        maxWidth:480, margin:"0 auto",
+      }}>
+        {/* Handle */}
+        <div style={{ width:36, height:4, borderRadius:2, background:"rgba(255,255,255,0.15)", margin:"0 auto 18px" }} />
+        {/* Title row */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:800, color:T.gold, letterSpacing:"0.08em" }}>💰 PAYOUT CALCULATOR</div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.06)", border:"none", borderRadius:20, width:30, height:30, color:T.text3, fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+        </div>
+        {/* Inputs */}
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          {[
+            { label:"ODDS (e.g. -110, +150)", val:odds, set:setOdds, placeholder:"-110", inputMode:"text" },
+            { label:"STAKE ($)", val:stake, set:setStake, placeholder:"100", inputMode:"decimal" },
+          ].map(f => (
+            <div key={f.label}>
+              <label style={{ display:"block", fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:7 }}>{f.label}</label>
+              <input
+                value={f.val}
+                onChange={e => f.set(e.target.value)}
+                placeholder={f.placeholder}
+                inputMode={f.inputMode}
+                style={{
+                  width:"100%", boxSizing:"border-box",
+                  background:T.cardAlt, border:`1px solid ${T.borderBr}`,
+                  borderRadius:10, color:T.text,
+                  padding:"14px 15px",
+                  fontSize:16, /* prevents iOS zoom */
+                  fontFamily:"inherit",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        {/* Results */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:18 }}>
+          {[
+            { label:"PAYOUT", value: payout ? `$${payout}` : "—", color: payout ? T.text : T.text3 },
+            { label:"PROFIT", value: profit ? `+$${profit}` : "—", color: profit && parseFloat(profit) > 0 ? T.green : T.text3 },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px", textAlign:"center" }}>
+              <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:8 }}>{label}</div>
+              <div style={{ fontSize:24, fontWeight:800, color }}>{value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -860,7 +942,7 @@ function ParlayTray({ parlay, onRemove, onClear }) {
 const QUICK = ["Best bet tonight?","Top prop plays?","Any live value right now?","Best parlay tonight?","Injury impact today?"];
 
 function ChatTab({ apiKey }) {
-  const [msgs, setMsgs] = useState([{role:"assistant",content:"Welcome to dublplay 🏀 I'm your Gemini-powered betting analyst. Ask me anything about tonight's slate — props, spreads, live value, injuries. (Entertainment only.)"}]);
+  const [msgs, setMsgs] = useState([{role:"assistant",content:"Welcome to dublplay 🏀 Ask me anything about tonight's slate — props, spreads, live value, injuries. (Entertainment only.)"}]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -881,7 +963,7 @@ function ChatTab({ apiKey }) {
 
   return (
     <TabPane>
-      <SectionLabel>AI BETTING CHAT · GEMINI</SectionLabel>
+      <SectionLabel>AI BETTING CHAT</SectionLabel>
       <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
         {QUICK.map(q=>(
           <button key={q} onClick={()=>send(q)} disabled={busy} style={{
@@ -901,7 +983,7 @@ function ChatTab({ apiKey }) {
               borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px",
               padding:"10px 14px", animation:"fadeUp 0.2s ease",
             }}>
-              {m.role==="assistant" && <span style={{ color:"#a78bfa",fontSize:9,fontWeight:700,letterSpacing:"0.08em",display:"block",marginBottom:5 }}>GEMINI ANALYST</span>}
+              {m.role==="assistant" && <span style={{ color:"#a78bfa",fontSize:9,fontWeight:700,letterSpacing:"0.08em",display:"block",marginBottom:5 }}>dublplay analyst</span>}
               <p style={{ color:T.text2, fontSize:12, lineHeight:1.75, margin:0 }}>{m.content}</p>
             </div>
           ))}
@@ -958,6 +1040,7 @@ export default function App() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
+  const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -1003,15 +1086,14 @@ export default function App() {
     return () => clearInterval(interval);
   }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 4) Auto-analyze today's non-final games once data loads (skip tomorrow — saves quota)
+  // 4) Auto-analyze non-final games once data loads
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
-    if (selectedDate) return; // only auto-analyze today
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
         setLoadingIds(prev => new Set([...prev, g.id]));
-        api.analyze(g.id, apiKey, null)
+        api.analyze(g.id, apiKey, selectedDate)
           .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
           .catch(console.error)
           .finally(() => setLoadingIds(prev => {
@@ -1070,7 +1152,7 @@ export default function App() {
               <span style={{ color:T.text3, fontSize:9, letterSpacing:"0.1em", marginLeft:8 }}>AI SPORTSBOOK ANALYST</span>
             </div>
           </div>
-          <div style={{ display:"flex", gap:4 }}>
+          <div style={{ display:"flex", gap:4, alignItems:"center" }}>
             {[{ label:"TODAY", val:null }, { label:"TMW", val:tomorrowStr }].map(({ label, val }) => (
               <button key={label} onClick={() => setSelectedDate(val)} style={{
                 background: selectedDate === val ? T.green : "transparent",
@@ -1081,6 +1163,14 @@ export default function App() {
                 cursor: "pointer",
               }}>{label}</button>
             ))}
+            <button onClick={() => setCalcSeed("-110")} style={{
+              background: "transparent",
+              border: `1px solid ${T.border}`,
+              color: T.gold,
+              borderRadius: 5, padding: "3px 9px",
+              fontSize: 13, cursor: "pointer",
+              lineHeight: 1,
+            }} title="Payout Calculator">$</button>
           </div>
         </div>
       </div>
@@ -1109,6 +1199,7 @@ export default function App() {
           lastUpdated={lastUpdated}
           aiOverrides={aiOverrides}
           upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
+          onPickOdds={odds => setCalcSeed(odds)}
         />
       )}
 
@@ -1120,6 +1211,7 @@ export default function App() {
       )}
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
+      {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
     </div>
   );
 }

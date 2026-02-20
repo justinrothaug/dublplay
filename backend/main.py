@@ -57,6 +57,9 @@ def espn_status_to_app(status_name: str) -> str:
 TEAM_ABBR_MAP = {
     "GS": "GSW", "SA": "SAS", "NY": "NYK", "NO": "NOP",
     "OKC": "OKC", "BKN": "BKN",
+    "WSH": "WAS",   # ESPN uses WSH; Odds API maps to WAS
+    "UTAH": "UTA",  # ESPN uses UTAH; Odds API maps to UTA
+    "PHO": "PHX",   # ESPN alternate for Phoenix
 }
 
 # Full NBA team names as returned by The Odds API → ESPN abbreviations
@@ -586,11 +589,15 @@ def build_system_prompt(games: list, injuries: set) -> str:
     ) if upcoming else "None"
 
     return (
-        "You are a sharp NBA betting analyst. Use betting terminology (ATS, ML, O/U, value, fade).\n"
-        f"LIVE: {live_str}\n"
+        "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
+        "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
+        "Always cite specific edges: matchup advantages, pace differentials, recent ATS records, "
+        "key injuries, rest advantages, or defensive rankings. "
+        "For player props, always name a real starter with a realistic line and a stats-based reason.\n"
+        f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}\n"
-        "Always respond using EXACTLY the three labeled fields shown. No extra text before or after."
+        "Respond with EXACTLY the three labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
 
@@ -774,29 +781,45 @@ async def get_games(date: Optional[str] = None):
 
 @app.get("/api/debug")
 async def debug_odds():
-    """Diagnostic endpoint — check Odds API key and what data is available."""
+    """Diagnostic endpoint — odds key status, ESPN game IDs, and odds match check."""
+    async with httpx.AsyncClient() as client:
+        espn_games = await fetch_espn_games(client)
+
+    espn_ids = [g["id"] for g in espn_games]
+
     info: dict = {
         "odds_api_key_set": bool(ODDS_API_KEY),
-        "sticky_odds_games": list(_sticky_odds.keys()),
-        "dk_cache_fresh": cache_get("dk_game_lines") is not None,
+        "espn_game_ids": espn_ids,
+        "sticky_odds_keys": list(_sticky_odds.keys()),
         "odds_api_cache_fresh": cache_get("odds") is not None,
     }
+
     if ODDS_API_KEY:
         async with httpx.AsyncClient() as client:
             try:
                 r = await client.get(
                     f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
                     params={"apiKey": ODDS_API_KEY, "regions": "us",
-                            "markets": "h2h", "oddsFormat": "american"},
+                            "markets": "h2h,spreads,totals", "oddsFormat": "american"},
                     timeout=10,
                 )
                 events = r.json()
                 if isinstance(events, list):
+                    odds_keys = []
+                    for ev in events:
+                        h = full_name_to_abbr(ev.get("home_team", "")).lower()
+                        a = full_name_to_abbr(ev.get("away_team", "")).lower()
+                        odds_keys.append(f"{a}-{h}")
                     info["odds_api_game_count"] = len(events)
-                    info["odds_api_games"] = [
-                        {"home": ev.get("home_team"), "away": ev.get("away_team"),
-                         "bookmakers": len(ev.get("bookmakers", []))}
-                        for ev in events[:10]
+                    info["odds_api_keys"] = odds_keys
+                    info["matched_ids"] = [k for k in odds_keys if k in espn_ids]
+                    info["unmatched_espn"] = [k for k in espn_ids if k not in odds_keys]
+                    info["unmatched_odds"] = [k for k in odds_keys if k not in espn_ids]
+                    info["sample_odds"] = [
+                        {"key": odds_keys[i],
+                         "bookmakers": len(ev.get("bookmakers", [])),
+                         "home": ev.get("home_team"), "away": ev.get("away_team")}
+                        for i, ev in enumerate(events[:5])
                     ]
                 else:
                     info["odds_api_error"] = events
@@ -885,21 +908,28 @@ async def analyze_game(req: AnalyzeRequest):
     if is_final:
         raise HTTPException(status_code=400, detail="Game is already over.")
 
-    MARKERS = "BEST_BET: [...]\nOU_LEAN: [...]\nPLAYER_PROP: [...]"
+    ou_line = game.get("ou", "N/A")
+    away_ml = game.get("awayOdds", "N/A")
+    home_ml = game.get("homeOdds", "N/A")
 
     if is_live:
         prompt = (
-            f"Live game: {game['awayName']} {game.get('awayScore',0)} "
+            f"Live: {game['awayName']} {game.get('awayScore',0)} "
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            f"Respond with EXACTLY:\n{MARKERS}"
+            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
+            "PLAYER_PROP: [REQUIRED — format EXACTLY like: 'Ja Morant OVER 24.5 Points' — real player in this game, realistic line, 1 sentence reason. Writing N/A is not allowed.]"
         )
     else:
         prompt = (
-            f"Pre-game: {game['awayName']} @ {game['homeName']}. "
-            f"Spread: {game.get('spread','N/A')}. O/U: {game.get('ou','N/A')}. "
-            f"ML: {game.get('awayOdds','N/A')}/{game.get('homeOdds','N/A')}.\n"
-            f"Respond with EXACTLY:\n{MARKERS}"
+            f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
+            f"Spread: {game.get('spread','N/A')}. O/U: {ou_line}.\n"
+            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
+            "PLAYER_PROP: [REQUIRED — format EXACTLY like: 'Anthony Edwards OVER 27.5 Points' — must be a real starter in this game, a realistic line, and 1 sentence with a stats-based reason. Writing N/A is never acceptable.]"
         )
 
     async with httpx.AsyncClient() as client:

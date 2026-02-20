@@ -427,7 +427,63 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
                 return result
 
     # Fall back to DraftKings (free, no key, shows live game lines too)
-    return await fetch_draftkings_game_lines(client)
+    dk = await fetch_draftkings_game_lines(client)
+    if dk:
+        return dk
+    return {}  # signal to caller to try Gemini fallback
+
+
+async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dict:
+    """
+    Last-resort fallback: ask Gemini + Google Search for today's NBA moneylines.
+    Called only when Odds API and DraftKings both return nothing.
+    """
+    if not GEMINI_API_KEY:
+        return {}
+    upcoming = [g for g in games if g.get("status") != "final"]
+    if not upcoming:
+        return {}
+
+    lines = "\n".join(f"{g['awayName']} @ {g['homeName']}" for g in upcoming)
+    prompt = (
+        f"Search for today's NBA betting odds for these games:\n{lines}\n\n"
+        "Return ONLY a raw JSON array — no markdown, no explanation. "
+        "Each element: {\"away\":\"ABBR\",\"home\":\"ABBR\","
+        "\"awayOdds\":\"+110\",\"homeOdds\":\"-130\","
+        "\"spread\":\"HOME -2.5\",\"ou\":\"225.5\"} "
+        "Use American odds format. Only include games you found real odds for."
+    )
+    try:
+        resp = await client.post(
+            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            json={
+                "systemInstruction": {"parts": [{"text":
+                    "You retrieve sports odds. Output only a raw JSON array. No markdown fences."}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 2000, "temperature": 0},
+            },
+            timeout=25,
+        )
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+        data = json.loads(text)
+        result: dict = {}
+        for item in data:
+            away = (item.get("away") or "").upper()
+            home = (item.get("home") or "").upper()
+            if not away or not home:
+                continue
+            key = f"{away.lower()}-{home.lower()}"
+            entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
+            if entry:
+                result[key] = entry
+                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
+        if result:
+            cache_set("odds", result)
+        return result
+    except Exception:
+        return {}
 
 
 async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
@@ -761,6 +817,11 @@ async def get_games(date: Optional[str] = None):
 
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
+
+    # If neither Odds API nor DraftKings returned anything, fall back to Gemini search
+    if not odds_map:
+        async with httpx.AsyncClient() as client:
+            odds_map = await fetch_gemini_odds(client, games)
 
     return {"games": _merge_odds(games, odds_map), "source": "live"}
 

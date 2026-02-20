@@ -1432,8 +1432,49 @@ export default function App() {
   );
 }
 
-const Loader = () => (
-  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg }}>
-    <Spinner /><span style={{ color:T.text3, fontSize:12, marginLeft:10 }}>Loading...</span>
-  </div>
-);
+const LOAD_MESSAGES = [
+  "Calculating Odds…",
+  "Scanning Lineups…",
+  "Making Picks…",
+  "Analyzing Trends…",
+  "Crunching Numbers…",
+  "Checking Injuries…",
+  "Running Models…",
+  "Almost Ready…",
+];
+
+const Loader = () => {
+  const [msgIdx, setMsgIdx] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setMsgIdx(i => (i + 1) % LOAD_MESSAGES.length), 1400);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div style={{
+      minHeight:"100vh", display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      background:T.bg, gap:28,
+    }}>
+      <img
+        src="/static/loading.png"
+        alt="DublPlay"
+        style={{ width:110, height:110, borderRadius:24, objectFit:"cover", boxShadow:"0 8px 32px rgba(0,0,0,0.5)" }}
+      />
+      <span style={{
+        width:36, height:36,
+        border:"3px solid rgba(255,255,255,0.08)",
+        borderTopColor:T.green,
+        borderRadius:"50%",
+        display:"inline-block",
+        animation:"spin 0.8s linear infinite",
+      }} />
+      <span key={msgIdx} style={{
+        color:T.text2, fontSize:13, letterSpacing:"0.06em",
+        minWidth:180, textAlign:"center",
+        animation:"fadeUp 0.3s ease",
+      }}>
+        {LOAD_MESSAGES[msgIdx]}
+      </span>
+    </div>
+  );
+};

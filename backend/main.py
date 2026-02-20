@@ -803,46 +803,8 @@ async def debug_odds():
     return info
 
 
-async def fetch_gemini_props(client: httpx.AsyncClient, key: str, today_str: str) -> list[dict]:
-    """Use Gemini with Google Search grounding to get real NBA player prop lines."""
-    prompt = (
-        f"Today is {today_str}. Search DraftKings for tonight's NBA player prop lines.\n"
-        "Return ONLY a raw JSON array (no markdown, no code blocks, no extra text) "
-        "of 12-15 value props for tonight's NBA games.\n"
-        "Each element must have EXACTLY these fields:\n"
-        '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
-        '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
-        '"l15":65,"streak":3,"avg":28.2,"edge_score":4.2,"matchup":"LAL @ GSW",'
-        '"reason":"Brief reason for the pick"}\n'
-        "Rules:\n"
-        "- line must be the REAL current DraftKings line you found via search\n"
-        "- over_odds/under_odds: realistic American odds strings like \"-115\" or \"+105\"\n"
-        "- l5/l10/l15: integer hit-rate % for going OVER this line in last 5/10/15 games\n"
-        "- streak: consecutive games OVER the line (0 if none)\n"
-        "- avg: player season average for this stat\n"
-        "- edge_score: float 1.0-5.0 strength of betting edge\n"
-        "- Only include games scheduled for today\n"
-        "Output ONLY the JSON array, starting with [ and ending with ]"
-    )
-    try:
-        resp = await client.post(
-            f"{GEMINI_URL}?key={key}",
-            json={
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 2500, "temperature": 0.2},
-            },
-            timeout=45,
-        )
-        data = resp.json()
-        if "error" in data:
-            logging.warning(f"Gemini props error: {data['error']['message']}")
-            return []
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        logging.warning(f"Gemini props request failed: {e}")
-        return []
-
+def _parse_gemini_props_json(text: str) -> list[dict]:
+    """Parse Gemini response text into normalized props list."""
     match = re.search(r'\[[\s\S]*\]', text)
     if not match:
         logging.warning(f"No JSON array in Gemini props response: {text[:300]}")
@@ -883,31 +845,217 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, today_str: str
     return out
 
 
+async def fetch_odds_api_player_props(client: httpx.AsyncClient) -> list[dict]:
+    """Fetch real player props from The Odds API — actual bookmaker lines + odds."""
+    if not ODDS_API_KEY:
+        return []
+    cached = cache_get("player_props_odds")
+    if cached is not None:
+        return cached
+
+    # 1. Get today's events
+    try:
+        r = await client.get(
+            f"{ODDS_API_BASE}/sports/basketball_nba/events",
+            params={"apiKey": ODDS_API_KEY},
+            timeout=10,
+        )
+        events = r.json()
+    except Exception as e:
+        logging.warning(f"Odds API events fetch failed: {e}")
+        return []
+
+    if not isinstance(events, list) or not events:
+        logging.warning("Odds API returned no NBA events")
+        return []
+
+    prop_markets = "player_points,player_rebounds,player_assists,player_threes"
+    stat_names = {
+        "player_points": "Points",
+        "player_rebounds": "Rebounds",
+        "player_assists": "Assists",
+        "player_threes": "3PM",
+    }
+    props_out: list[dict] = []
+
+    # 2. Get player prop odds for each event (limit to 8 events to conserve quota)
+    for ev in events[:8]:
+        event_id = ev.get("id", "")
+        home_full = ev.get("home_team", "")
+        away_full = ev.get("away_team", "")
+        matchup = f"{full_name_to_abbr(away_full)} @ {full_name_to_abbr(home_full)}"
+
+        try:
+            r = await client.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": prop_markets,
+                    "oddsFormat": "american",
+                    "bookmakers": "draftkings,fanduel",
+                },
+                timeout=10,
+            )
+            data = r.json()
+        except Exception as e:
+            logging.warning(f"Odds API player props failed for event {event_id}: {e}")
+            continue
+
+        if isinstance(data, dict) and "error" in data:
+            logging.warning(f"Odds API player props error: {data}")
+            break   # likely plan doesn't support player props, stop trying
+
+        for bm in data.get("bookmakers", []) if isinstance(data, dict) else []:
+            bm_name = bm.get("title", bm.get("key", ""))
+            for market in bm.get("markets", []):
+                stat_key = market.get("key", "")
+                stat = stat_names.get(stat_key, stat_key)
+
+                # Group outcomes by player description (Over/Under pairs)
+                by_player: dict[str, dict] = {}
+                for o in market.get("outcomes", []):
+                    name = o.get("description", "")
+                    if not name:
+                        continue
+                    side = o.get("name", "").lower()  # "over" / "under"
+                    by_player.setdefault(name, {})[side] = {
+                        "price": o.get("price", 0),
+                        "point": o.get("point", 0),
+                    }
+
+                for player_name, sides in by_player.items():
+                    over  = sides.get("over", {})
+                    under = sides.get("under", {})
+                    line = over.get("point") or under.get("point")
+                    if not line:
+                        continue
+                    over_price  = over.get("price", -110)
+                    under_price = under.get("price", -110)
+                    rec = "OVER" if over_price >= under_price else "UNDER"
+
+                    props_out.append({
+                        "player":     player_name,
+                        "team":       "",
+                        "pos":        "",
+                        "stat":       stat,
+                        "prop":       f"{stat} O/U {line}",
+                        "line":       float(line),
+                        "over_odds":  _fmt_american(over_price),
+                        "under_odds": _fmt_american(under_price),
+                        "rec":        rec,
+                        "l5": 0, "l10": 0, "l15": 0,
+                        "streak":     0,
+                        "avg":        float(line),
+                        "edge_score": round(abs(over_price - under_price) / 30, 1),
+                        "matchup":    matchup,
+                        "reason":     f"Live {bm_name} line",
+                    })
+            break  # one bookmaker per event is enough
+
+    if props_out:
+        logging.info(f"Odds API player props: got {len(props_out)} props from {len(events)} events")
+        cache_set("player_props_odds", props_out)
+    else:
+        logging.warning("Odds API player props: no props returned (plan may not support player props)")
+    return props_out
+
+
+async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[dict]) -> list[dict]:
+    """Use Gemini with Google Search grounding to get real NBA player prop lines."""
+    today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    game_lines = []
+    for g in games:
+        if g.get("status") == "final":
+            continue
+        game_lines.append(f"  - {g.get('awayName','?')} @ {g.get('homeName','?')}")
+    games_block = "\n".join(game_lines) if game_lines else "  (no games found)"
+
+    _PROPS_JSON_SCHEMA = (
+        '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
+        '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
+        '"l15":65,"streak":3,"avg":28.2,"edge_score":4.2,"matchup":"LAL @ GSW",'
+        '"reason":"Brief reason"}'
+    )
+
+    prompt = (
+        f"Today is {today_str}. Tonight's NBA games:\n{games_block}\n\n"
+        "Search for tonight's NBA player over/under statistical lines and projections.\n"
+        "Find the actual current lines from sportsbooks for points, rebounds, and assists.\n"
+        f"Return ONLY a raw JSON array of 12-15 props. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
+        "Rules:\n"
+        "- Use REAL lines from search results\n"
+        "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
+        "- l5/l10/l15: integer hit-rate % for OVER in last 5/10/15 games (0-100)\n"
+        "- streak: consecutive games OVER the line (0 if none)\n"
+        "- avg: season average for this stat\n"
+        "- edge_score: float 1.0-5.0 strength of edge\n"
+        "- Only include games scheduled for today\n"
+        "Output ONLY the JSON array, starting with [ and ending with ]"
+    )
+
+    try:
+        resp = await client.post(
+            f"{GEMINI_URL}?key={key}",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 3000, "temperature": 0.2},
+            },
+            timeout=45,
+        )
+        data = resp.json()
+        if "error" in data:
+            logging.warning(f"Gemini props error: {data['error']['message']}")
+            return []
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        props = _parse_gemini_props_json(text)
+        if props:
+            logging.info(f"Gemini search-grounded props: got {len(props)} props")
+        else:
+            logging.warning(f"Gemini search grounding returned no parseable props: {text[:300]}")
+        return props
+    except Exception as e:
+        logging.warning(f"Gemini search-grounded props failed: {e}")
+        return []
+
+
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
-        injuries, pp_props = await asyncio.gather(
-            fetch_espn_injuries(client),
-            fetch_prizepicks_props(client),
-            return_exceptions=True,
-        )
-    if isinstance(injuries, Exception):
         injuries = set()
-    if isinstance(pp_props, Exception):
-        pp_props = []
+        try:
+            injuries = await fetch_espn_injuries(client)
+        except Exception:
+            pass
 
-    # PrizePicks is blocked by Cloudflare from server — fall back to Gemini + Google Search
-    source = "prizepicks"
-    if not pp_props and GEMINI_API_KEY:
-        today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
-        logging.info("PrizePicks unavailable; fetching props via Gemini search grounding")
-        async with httpx.AsyncClient() as client:
-            pp_props = await fetch_gemini_props(client, GEMINI_API_KEY, today_str)
-        source = "gemini" if pp_props else "none"
-    elif not pp_props:
+        props: list[dict] = []
         source = "none"
 
-    filtered = [p for p in pp_props if p["player"].lower() not in injuries]
+        # 1. Try The Odds API player props (real bookmaker lines + real odds)
+        if ODDS_API_KEY:
+            props = await fetch_odds_api_player_props(client)
+            if props:
+                source = "odds_api"
+
+        # 2. Try Gemini with Google Search grounding (searches for real lines)
+        if not props and GEMINI_API_KEY:
+            espn_games = await fetch_espn_games(client)
+            props = await fetch_gemini_props(client, GEMINI_API_KEY, espn_games or [])
+            if props:
+                source = "gemini"
+
+        # 3. Try PrizePicks as last resort
+        if not props:
+            try:
+                props = await fetch_prizepicks_props(client)
+                if props:
+                    source = "prizepicks"
+            except Exception:
+                pass
+
+    filtered = [p for p in props if p.get("player", "").lower() not in injuries]
     return {"props": filtered, "source": source, "injured_out": sorted(injuries)}
 
 
@@ -974,21 +1122,21 @@ async def analyze_game(req: AnalyzeRequest):
             f"Live: {game['awayName']} {game.get('awayScore',0)} "
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            "Search for today's current player prop lines for this game on DraftKings or PrizePicks, then respond.\n"
+            "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 3 labeled lines, no other text:\n"
             "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
-            "PLAYER_PROP: [Use the REAL current DraftKings/PrizePicks line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason'. Never invent a line.]"
+            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']"
         )
     else:
         prompt = (
             f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
-            "Search for today's current player prop lines for this game on DraftKings or PrizePicks, then respond.\n"
+            "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 3 labeled lines, no other text:\n"
             "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
-            "PLAYER_PROP: [Use the REAL current DraftKings/PrizePicks line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason'. Never invent a line.]"
+            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']"
         )
 
     async with httpx.AsyncClient() as client:

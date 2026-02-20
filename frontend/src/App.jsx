@@ -574,11 +574,17 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   // Derive a short label from the pick text
   const pickLabel = isBet
     ? (() => {
-        const t = pick.text || "";
-        const awayMatch = pick.game.awayName && t.toLowerCase().includes(pick.game.awayName.toLowerCase());
-        const homeMatch = pick.game.homeName && t.toLowerCase().includes(pick.game.homeName.toLowerCase());
+        const t = (pick.text || "").toLowerCase();
+        const matchesTeam = (fullName, abbr) => {
+          if (!fullName && !abbr) return false;
+          if (abbr && t.includes(abbr.toLowerCase())) return true;
+          // check each word of the full name (catches "Pelicans" inside "New Orleans Pelicans")
+          return (fullName || "").toLowerCase().split(/\s+/).some(w => w.length > 3 && t.includes(w));
+        };
+        const awayMatch = matchesTeam(pick.game.awayName, pick.game.away);
+        const homeMatch = matchesTeam(pick.game.homeName, pick.game.home);
+        if (homeMatch && !awayMatch) return pick.game.home;
         if (awayMatch) return pick.game.away;
-        if (homeMatch) return pick.game.home;
         return pick.game.away; // fallback
       })()
     : /under/i.test(pick.text) ? "UNDER" : "OVER";

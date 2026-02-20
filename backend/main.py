@@ -721,19 +721,21 @@ def get_effective_key(request_key: str) -> str:
 def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
     """
     Merge odds into ESPN game list.
-    Priority: ESPN embedded odds > Odds API/DK > sticky cache (pre-game lines saved for live/final).
+    Priority: ESPN embedded odds > Odds API/DK > sticky cache.
+    Uses g.get() (not pop) to avoid mutating the shared ESPN cache.
     """
     result = []
     for g in espn_games:
         gid = g["id"]
         o = odds_map.get(gid) or {}
+        sticky = _sticky_odds.get(gid, {})
 
-        spread   = g.pop("espn_spread", None)   or o.get("spread")   or _sticky_odds.get(gid, {}).get("spread")
-        ou       = g.pop("espn_ou", None)        or o.get("ou")       or _sticky_odds.get(gid, {}).get("ou")
-        homeOdds = g.pop("espn_homeOdds", None)  or o.get("homeOdds") or _sticky_odds.get(gid, {}).get("homeOdds")
-        awayOdds = g.pop("espn_awayOdds", None)  or o.get("awayOdds") or _sticky_odds.get(gid, {}).get("awayOdds")
+        spread   = g.get("espn_spread")   or o.get("spread")   or sticky.get("spread")
+        ou       = g.get("espn_ou")        or o.get("ou")       or sticky.get("ou")
+        homeOdds = g.get("espn_homeOdds")  or o.get("homeOdds") or sticky.get("homeOdds")
+        awayOdds = g.get("espn_awayOdds")  or o.get("awayOdds") or sticky.get("awayOdds")
 
-        # Persist lines so live/final cards can still show them after books pull the line
+        # Persist lines so live/final cards still show them after books pull the line
         if any([spread, ou, homeOdds]):
             _sticky_odds[gid] = {k: v for k, v in {
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds
@@ -750,8 +752,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
             except Exception:
                 pass
 
+        # Build result without espn_* fields
+        base = {k: v for k, v in g.items() if not k.startswith("espn_")}
         result.append({
-            **g,
+            **base,
             "homeWinProb": home_prob,
             "awayWinProb": away_prob,
             "homeOdds": homeOdds,
@@ -908,9 +912,12 @@ async def analyze_game(req: AnalyzeRequest):
     if is_final:
         raise HTTPException(status_code=400, detail="Game is already over.")
 
-    ou_line = game.get("ou", "N/A")
-    away_ml = game.get("awayOdds", "N/A")
-    home_ml = game.get("homeOdds", "N/A")
+    # Resolve odds: sticky cache (populated by get_games) → ESPN embedded → N/A
+    sticky = _sticky_odds.get(req.game_id, {})
+    ou_line   = sticky.get("ou")       or game.get("espn_ou")       or "N/A"
+    spread_ln = sticky.get("spread")   or game.get("espn_spread")   or "N/A"
+    away_ml   = sticky.get("awayOdds") or game.get("espn_awayOdds") or "N/A"
+    home_ml   = sticky.get("homeOdds") or game.get("espn_homeOdds") or "N/A"
 
     if is_live:
         prompt = (
@@ -925,7 +932,7 @@ async def analyze_game(req: AnalyzeRequest):
     else:
         prompt = (
             f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
-            f"Spread: {game.get('spread','N/A')}. O/U: {ou_line}.\n"
+            f"Spread: {spread_ln}. O/U: {ou_line}.\n"
             "Respond with EXACTLY these 3 labeled lines, no other text:\n"
             "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"

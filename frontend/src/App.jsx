@@ -571,15 +571,32 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
-  const oddsMatch = pick.text.match(/([+-]\d{2,3})/);
-  const extractedOdds = oddsMatch ? oddsMatch[1] : "-110";
+  // Derive a short label from the pick text
+  const pickLabel = isBet
+    ? (() => {
+        const t = pick.text || "";
+        const awayMatch = pick.game.awayName && t.toLowerCase().includes(pick.game.awayName.toLowerCase());
+        const homeMatch = pick.game.homeName && t.toLowerCase().includes(pick.game.homeName.toLowerCase());
+        if (awayMatch) return pick.game.away;
+        if (homeMatch) return pick.game.home;
+        return pick.game.away; // fallback
+      })()
+    : /under/i.test(pick.text) ? "UNDER" : "OVER";
+  // Use actual game odds directly, same as game cards do — never parse from text
+  const calcOdds = isBet
+    ? (pick.game.awayOdds || pick.game.homeOdds || "-110")
+    : "-110";
   return (
-    <div style={{
-      background: T.card,
-      border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
-      borderRadius:14, overflow:"hidden",
-      animation:`fadeUp ${0.1+rank*0.07}s ease`,
-    }}>
+    <div
+      onClick={onPickOdds ? () => onPickOdds(calcOdds) : undefined}
+      style={{
+        background: T.card,
+        border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+        borderRadius:14, overflow:"hidden",
+        animation:`fadeUp ${0.1+rank*0.07}s ease`,
+        cursor: onPickOdds ? "pointer" : "default",
+      }}
+    >
       <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
       <div style={{ padding:"12px 14px" }}>
         {/* Top row: rank/type badge + score */}
@@ -590,7 +607,7 @@ function TopPickCard({ pick, rank, onPickOdds }) {
               fontSize:9, fontWeight:700, letterSpacing:"0.06em",
               color, background:`${color}18`,
               border:`1px solid ${color}44`, borderRadius:4, padding:"2px 7px",
-            }}>{isBet ? "✦ BEST BET" : "◉ O/U"}</span>
+            }}>{isBet ? `✦ ${pickLabel}` : `◉ ${pickLabel}`}</span>
           </div>
           <EdgeCircle score={pick.score} />
         </div>
@@ -606,24 +623,9 @@ function TopPickCard({ pick, rank, onPickOdds }) {
           <TeamBadge abbr={pick.game.home} size={32} />
         </div>
         {/* Pick text */}
-        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5, marginBottom:10 }}>
+        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
           {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
         </div>
-        {/* Calc button */}
-        {onPickOdds && (
-          <button
-            onClick={() => onPickOdds(extractedOdds)}
-            style={{
-              width:"100%", background:"rgba(255,255,255,0.05)",
-              border:`1px solid ${T.border}`, borderRadius:8,
-              color:T.gold, fontSize:11, fontWeight:700,
-              padding:"7px 0", cursor:"pointer", letterSpacing:"0.06em",
-              fontFamily:"inherit",
-            }}
-          >
-            💰 PAYOUT CALC
-          </button>
-        )}
       </div>
     </div>
   );
@@ -1430,8 +1432,49 @@ export default function App() {
   );
 }
 
-const Loader = () => (
-  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg }}>
-    <Spinner /><span style={{ color:T.text3, fontSize:12, marginLeft:10 }}>Loading...</span>
-  </div>
-);
+const LOAD_MESSAGES = [
+  "Calculating Odds…",
+  "Scanning Lineups…",
+  "Making Picks…",
+  "Analyzing Trends…",
+  "Crunching Numbers…",
+  "Checking Injuries…",
+  "Running Models…",
+  "Almost Ready…",
+];
+
+const Loader = () => {
+  const [msgIdx, setMsgIdx] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setMsgIdx(i => (i + 1) % LOAD_MESSAGES.length), 1400);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div style={{
+      minHeight:"100vh", display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      background:T.bg, gap:28,
+    }}>
+      <img
+        src="/static/loading.png"
+        alt="DublPlay"
+        style={{ width:110, height:110, borderRadius:24, objectFit:"cover", boxShadow:"0 8px 32px rgba(0,0,0,0.5)" }}
+      />
+      <span style={{
+        width:36, height:36,
+        border:"3px solid rgba(255,255,255,0.08)",
+        borderTopColor:T.green,
+        borderRadius:"50%",
+        display:"inline-block",
+        animation:"spin 0.8s linear infinite",
+      }} />
+      <span key={msgIdx} style={{
+        color:T.text2, fontSize:13, letterSpacing:"0.06em",
+        minWidth:180, textAlign:"center",
+        animation:"fadeUp 0.3s ease",
+      }}>
+        {LOAD_MESSAGES[msgIdx]}
+      </span>
+    </div>
+  );
+};

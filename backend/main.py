@@ -987,9 +987,9 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
 
     prompt = (
         f"Today is {today_str}. Tonight's NBA games:\n{games_block}\n\n"
-        "Search for tonight's NBA player over/under statistical lines and projections.\n"
-        "Find the actual current lines from sportsbooks for points, rebounds, and assists.\n"
-        f"Return ONLY a raw JSON array of 12-15 props. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
+        "Use Google Search to find tonight's NBA player prop lines from sportsbooks "
+        "(DraftKings, FanDuel, BetMGM) for points, rebounds, assists, and 3-pointers.\n"
+        f"Output a raw JSON array of 12-15 props. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
         "Rules:\n"
         "- Use REAL lines from search results\n"
         "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
@@ -998,13 +998,21 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         "- avg: season average for this stat\n"
         "- edge_score: float 1.0-5.0 strength of edge\n"
         "- Only include games scheduled for today\n"
-        "Output ONLY the JSON array, starting with [ and ending with ]"
+        "IMPORTANT: Output ONLY the JSON array. Start your response with [ and end with ]. "
+        "No explanations, no preamble, no markdown fences."
     )
 
     try:
         resp = await client.post(
             f"{GEMINI_URL}?key={key}",
             json={
+                "systemInstruction": {
+                    "parts": [{"text": (
+                        "You are a JSON data API. You NEVER explain what you are about to do. "
+                        "You NEVER say 'Okay' or 'I will'. You NEVER use markdown code fences. "
+                        "Your entire response is always a raw JSON array starting with [ and ending with ]."
+                    )}]
+                },
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 3000, "temperature": 0.2},
@@ -1015,7 +1023,9 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         if "error" in data:
             logging.warning(f"Gemini props error: {data['error']['message']}")
             return []
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        # Grounded responses may split across multiple parts — join all text parts
+        parts = data["candidates"][0]["content"]["parts"]
+        text = " ".join(p.get("text", "") for p in parts if "text" in p)
         props = _parse_gemini_props_json(text)
         if props:
             logging.info(f"Gemini search-grounded props: got {len(props)} props")

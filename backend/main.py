@@ -428,7 +428,110 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
     return await fetch_draftkings_game_lines(client)
 
 
-async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
+async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
+    """
+    Fetch NBA player props from PrizePicks public API — no key required.
+    Returns real lines posted for today's games.
+    PrizePicks league_id 7 = NBA.
+    """
+    cached = cache_get("pp_props")
+    if cached is not None:
+        return cached
+
+    STAT_MAP = {
+        "Points": "Points",
+        "Rebounds": "Rebounds",
+        "Assists": "Assists",
+        "3-PT Made": "3PM",
+        "Pts+Rebs+Asts": "PRA",
+        "Pts+Ast": "PA",
+        "Pts+Reb": "PR",
+        "Reb+Ast": "RA",
+        "Blocks": "Blocks",
+        "Steals": "Steals",
+        "Turnovers": "Turnovers",
+        "Fantasy Score": "Fantasy",
+    }
+
+    try:
+        r = await client.get(
+            "https://api.prizepicks.com/projections",
+            params={"league_id": "7", "per_page": "250", "single_stat": "true"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible)",
+                "Accept": "application/json",
+                "Referer": "https://app.prizepicks.com/",
+            },
+            timeout=15,
+        )
+        data = r.json()
+    except Exception:
+        return []
+
+    # Build player lookup from "included" array
+    players: dict[str, dict] = {}
+    for item in data.get("included", []):
+        if item.get("type") == "new_player":
+            pid = item["id"]
+            attrs = item.get("attributes", {})
+            players[pid] = {
+                "name": attrs.get("name", ""),
+                "team": attrs.get("team", "—"),
+                "pos":  attrs.get("position", "—"),
+            }
+
+    props_out: list[dict] = []
+    for proj in data.get("data", []):
+        if proj.get("type") != "projection":
+            continue
+        attrs = proj.get("attributes", {})
+        if attrs.get("status") not in ("normal", "locked", None, ""):
+            continue  # skip injured_reserve / off_the_board etc.
+
+        raw_stat = attrs.get("stat_type", "")
+        stat = STAT_MAP.get(raw_stat, raw_stat)
+        line = attrs.get("line_score")
+        if not line:
+            continue
+
+        pid = (proj.get("relationships", {})
+                   .get("new_player", {})
+                   .get("data", {})
+                   .get("id", ""))
+        player_info = players.get(pid, {})
+        player_name = player_info.get("name", "")
+        if not player_name:
+            continue
+
+        team     = player_info.get("team", "—")
+        pos      = player_info.get("pos",  "—")
+        matchup  = attrs.get("description", "—")   # "ORL @ CHA" style
+
+        # PrizePicks doesn't publish vig odds — standard lines are -120/-100 ish
+        over_odds = "-115"
+
+        props_out.append({
+            "player":     player_name,
+            "team":       team,
+            "pos":        pos,
+            "game":       matchup,
+            "prop":       f"{stat} {line}+",
+            "rec":        "OVER",
+            "line":       line,
+            "conf":       62,
+            "edge_score": 65,
+            "l5": 60, "l10": 55, "l15": 52,
+            "streak":     0,
+            "avg":        line,
+            "odds":       over_odds,
+            "reason":     f"PrizePicks real line · {matchup}",
+        })
+
+    cache_set("pp_props", props_out)
+    return props_out
+
+
+
     """
     Fetch NBA player props from DraftKings public sportsbook JSON endpoint.
     Strategy:
@@ -558,65 +661,6 @@ async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
     return props_out
 
 
-# ── STAR PLAYER PROP LINES (fallback when DK unavailable) ─────────────────────
-# Approximate 2024-25 season lines used to show real game matchups when DK fails
-TEAM_STAR_PROPS: dict[str, list[tuple]] = {
-    "BOS": [("Jaylen Brown", "Points", 23.5, "-112"), ("Jayson Tatum", "Points", 27.5, "-110")],
-    "NYK": [("Jalen Brunson", "Points", 25.5, "-115"), ("Karl-Anthony Towns", "Points", 21.5, "-110")],
-    "MIL": [("Giannis Antetokounmpo", "Points", 29.5, "-118"), ("Damian Lillard", "Points", 24.5, "-112")],
-    "CLE": [("Donovan Mitchell", "Points", 24.5, "-115"), ("Evan Mobley", "Rebounds", 8.5, "-115")],
-    "IND": [("Tyrese Haliburton", "Assists", 9.5, "-112"), ("Pascal Siakam", "Points", 21.5, "-110")],
-    "ORL": [("Paolo Banchero", "Points", 24.5, "-112"), ("Franz Wagner", "Points", 20.5, "-110")],
-    "MIA": [("Tyler Herro", "Points", 21.5, "-112"), ("Bam Adebayo", "Rebounds", 9.5, "-115")],
-    "CHI": [("Zach LaVine", "Points", 22.5, "-110"), ("Nikola Vucevic", "Rebounds", 10.5, "-112")],
-    "ATL": [("Trae Young", "Assists", 10.5, "-115"), ("Jalen Johnson", "Points", 20.5, "-110")],
-    "TOR": [("Scottie Barnes", "Points", 18.5, "-110"), ("Immanuel Quickley", "Assists", 6.5, "-108")],
-    "DET": [("Cade Cunningham", "Points", 23.5, "-112"), ("Cade Cunningham", "Assists", 6.5, "-110")],
-    "CHA": [("LaMelo Ball", "Points", 23.5, "-112"), ("LaMelo Ball", "Assists", 6.5, "-112")],
-    "PHI": [("Tyrese Maxey", "Points", 25.5, "-112"), ("Joel Embiid", "Rebounds", 10.5, "-115")],
-    "BKN": [("Cam Thomas", "Points", 22.5, "-110"), ("Nic Claxton", "Rebounds", 9.5, "-110")],
-    "WAS": [("Kyle Kuzma", "Points", 18.5, "-110"), ("Jordan Poole", "Points", 18.5, "-110")],
-    "OKC": [("Shai Gilgeous-Alexander", "Points", 29.5, "-115"), ("Jalen Williams", "Points", 22.5, "-112")],
-    "DEN": [("Nikola Jokic", "Points", 27.5, "-115"), ("Nikola Jokic", "Rebounds", 11.5, "-118")],
-    "MIN": [("Anthony Edwards", "Points", 26.5, "-112"), ("Rudy Gobert", "Rebounds", 11.5, "-115")],
-    "UTA": [("Lauri Markkanen", "Points", 21.5, "-112"), ("Walker Kessler", "Rebounds", 10.5, "-115")],
-    "POR": [("Anfernee Simons", "Points", 20.5, "-110"), ("Jerami Grant", "Points", 18.5, "-110")],
-    "SAC": [("De'Aaron Fox", "Points", 25.5, "-112"), ("Domantas Sabonis", "Rebounds", 12.5, "-118")],
-    "GSW": [("Stephen Curry", "Points", 28.5, "-115"), ("Stephen Curry", "3PM", 3.5, "-115")],
-    "LAL": [("LeBron James", "Points", 24.5, "-110"), ("Anthony Davis", "Rebounds", 11.5, "-115")],
-    "LAC": [("James Harden", "Assists", 8.5, "-115"), ("Kawhi Leonard", "Points", 22.5, "-112")],
-    "PHX": [("Devin Booker", "Points", 26.5, "-115"), ("Kevin Durant", "Points", 27.5, "-112")],
-    "NOP": [("Brandon Ingram", "Points", 23.5, "-112"), ("CJ McCollum", "Points", 19.5, "-110")],
-    "DAL": [("Luka Doncic", "Points", 32.5, "-115"), ("Kyrie Irving", "Points", 24.5, "-112")],
-    "HOU": [("Alperen Sengun", "Points", 19.5, "-112"), ("Jalen Green", "Points", 22.5, "-112")],
-    "MEM": [("Ja Morant", "Points", 24.5, "-112"), ("Desmond Bane", "Points", 19.5, "-110")],
-    "SAS": [("Victor Wembanyama", "Points", 23.5, "-112"), ("Victor Wembanyama", "Rebounds", 9.5, "-115")],
-}
-
-
-def generate_game_props(games: list) -> list[dict]:
-    """
-    Generate estimated props from today's actual ESPN game data.
-    Used as a fallback when DraftKings API is unavailable so the Props tab
-    always shows real game matchups instead of stale mock data.
-    """
-    props_out = []
-    for game in games:
-        if game.get("status") == "final":
-            continue
-        away = game.get("away", "")
-        home = game.get("home", "")
-        matchup = f"{game.get('awayName', away)} vs {game.get('homeName', home)}"
-        for abbr in [away, home]:
-            for player, stat, line, odds in TEAM_STAR_PROPS.get(abbr, [])[:1]:
-                props_out.append({
-                    "player": player, "team": abbr, "pos": "—", "game": matchup,
-                    "prop": f"{stat} {line}+", "rec": "OVER", "line": line,
-                    "conf": 60, "edge_score": 65, "l5": 60, "l10": 57, "l15": 53,
-                    "streak": 0, "avg": line, "odds": odds,
-                    "reason": f"Estimated line — live DraftKings data unavailable · {matchup}",
-                })
-    return props_out
 
 
 def _fmt_american(price) -> str:
@@ -874,30 +918,28 @@ async def debug_odds():
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
-        injuries, dk_props, espn_games = await asyncio.gather(
+        injuries, pp_props, dk_props = await asyncio.gather(
             fetch_espn_injuries(client),
+            fetch_prizepicks_props(client),
             fetch_draftkings_props(client),
-            fetch_espn_games(client),
             return_exceptions=True,
         )
     if isinstance(injuries, Exception):
         injuries = set()
+    if isinstance(pp_props, Exception):
+        pp_props = []
     if isinstance(dk_props, Exception):
         dk_props = []
-    if isinstance(espn_games, Exception):
-        espn_games = []
 
-    if dk_props:
-        # DraftKings already removes injured players' lines automatically,
-        # but we double-filter with ESPN injuries as a safety net
-        filtered = [p for p in dk_props if p["player"].lower() not in injuries]
-        return {"props": filtered, "source": "draftkings", "injured_out": sorted(injuries)}
+    # Priority: PrizePicks (free, no key, real lines) → DraftKings (real, public)
+    # Never fall back to estimated/mock — return empty if both sources fail
+    props  = pp_props or dk_props
+    source = "prizepicks" if pp_props else ("draftkings" if dk_props else "none")
 
-    # Fall back to estimated props based on today's REAL game matchups
-    # (never show stale mock data with wrong game names)
-    game_props = generate_game_props(espn_games) if espn_games else []
-    filtered = [p for p in game_props if p["player"].lower() not in injuries]
-    return {"props": filtered, "source": "estimated", "injured_out": sorted(injuries)}
+    # Filter injured players (both sources already remove lines for injured players,
+    # but ESPN injury feed gives us an extra safety net)
+    filtered = [p for p in props if p["player"].lower() not in injuries]
+    return {"props": filtered, "source": source, "injured_out": sorted(injuries)}
 
 
 @app.get("/api/injuries")

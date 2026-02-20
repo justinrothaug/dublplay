@@ -23,6 +23,9 @@ COPY backend/ ./
 # Copy built React app
 COPY --from=frontend-build /app/frontend/dist ./static
 
+# Copy user static files (e.g. loading.png)
+COPY static/ ./backend/user_static/
+
 # Patch main.py to serve static files (done at build time via sed)
 # We mount the static dir in main.py using StaticFiles
 ENV PORT=7860

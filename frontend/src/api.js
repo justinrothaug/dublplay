@@ -11,11 +11,11 @@ async function req(path, options = {}) {
 }
 
 export const api = {
-  getGames:     ()             => req("/api/games"),
+  getGames:     (date = null)  => req(date ? `/api/games?date=${date}` : "/api/games"),
   getStandings: ()             => req("/api/standings"),
   getProps:     ()             => req("/api/props"),
-  analyze:      (game_id, api_key) =>
-    req("/api/analyze", { method:"POST", body: JSON.stringify({ game_id, api_key }) }),
+  analyze:      (game_id, api_key, date = null) =>
+    req("/api/analyze", { method:"POST", body: JSON.stringify({ game_id, api_key, date }) }),
   chat: (messages, api_key) =>
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),

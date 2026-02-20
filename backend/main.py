@@ -20,8 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-ODDS_API_KEY   = os.getenv("ODDS_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+ODDS_API_KEY   = os.getenv("ODDS_API_KEY", "").strip()   # strip() prevents HF Secrets trailing-newline bug
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
@@ -199,10 +199,42 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
                 g["clock"]   = "Halftime" if halftime else clock
 
             if app_status == "upcoming":
-                g["time"] = event.get("date", "")[:16].replace("T", " ") + " UTC"
+                g["time"] = event.get("date", "")  # raw ISO timestamp, frontend localizes
 
-            if date_str:
-                g["day"] = "tomorrow"
+            # Parse ESPN embedded odds (ESPN BET supplies spread/total/ML for upcoming games)
+            espn_odds_list = comp.get("odds", [])
+            espn_spread = espn_ou = espn_homeOdds = espn_awayOdds = None
+            if espn_odds_list and isinstance(espn_odds_list, list):
+                eo = espn_odds_list[0]
+                # Spread: "details" = away team's spread e.g. "MEM -5" or "-5"
+                details = eo.get("details", "")
+                if details and details.strip():
+                    parts = details.strip().split()
+                    try:
+                        away_val = float(parts[-1])
+                        if len(parts) >= 2:
+                            # "TEAM ±X" — check if named team is home or away
+                            tok = parts[0]
+                            tok_abbr = any_name_to_abbr(tok) if len(tok) > 2 else norm_abbr(tok)
+                            home_val = away_val if tok_abbr == home_abbr else -away_val
+                        else:
+                            home_val = -away_val  # bare number = away perspective
+                        espn_spread = f"{home_abbr} {_sign(home_val)}"
+                    except (ValueError, IndexError):
+                        pass
+                ou_raw = eo.get("overUnder")
+                espn_ou = str(ou_raw) if ou_raw is not None else None
+                hml = eo.get("homeTeamOdds", {}).get("moneyLine")
+                aml = eo.get("awayTeamOdds", {}).get("moneyLine")
+                espn_homeOdds = _fmt_american(hml) if hml else None
+                espn_awayOdds = _fmt_american(aml) if aml else None
+                if espn_homeOdds == "—": espn_homeOdds = None
+                if espn_awayOdds == "—": espn_awayOdds = None
+
+            g["espn_spread"]    = espn_spread
+            g["espn_ou"]        = espn_ou
+            g["espn_homeOdds"]  = espn_homeOdds
+            g["espn_awayOdds"]  = espn_awayOdds
 
             games.append(g)
         except Exception:
@@ -635,6 +667,7 @@ class ChatRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     game_id: str
     api_key: str = ""
+    date: Optional[str] = None  # YYYYMMDD for non-today dates
 
 class ParlayRequest(BaseModel):
     odds: list[str]
@@ -661,19 +694,31 @@ def get_effective_key(request_key: str) -> str:
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
 def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
-    """Merge odds into ESPN game list, falling back to sticky cache."""
+    """
+    Merge odds into ESPN game list.
+    Priority: ESPN embedded odds > Odds API/DK > sticky cache (pre-game lines saved for live/final).
+    """
     result = []
     for g in espn_games:
         gid = g["id"]
-        # For the odds lookup, strip the date suffix we added for tomorrow
-        odds_key = gid.rsplit("-", 1)[0] if g.get("day") == "tomorrow" else gid
-        o = odds_map.get(odds_key) or _sticky_odds.get(odds_key, {})
+        o = odds_map.get(gid) or {}
+
+        spread   = g.pop("espn_spread", None)   or o.get("spread")   or _sticky_odds.get(gid, {}).get("spread")
+        ou       = g.pop("espn_ou", None)        or o.get("ou")       or _sticky_odds.get(gid, {}).get("ou")
+        homeOdds = g.pop("espn_homeOdds", None)  or o.get("homeOdds") or _sticky_odds.get(gid, {}).get("homeOdds")
+        awayOdds = g.pop("espn_awayOdds", None)  or o.get("awayOdds") or _sticky_odds.get(gid, {}).get("awayOdds")
+
+        # Persist lines so live/final cards can still show them after books pull the line
+        if any([spread, ou, homeOdds]):
+            _sticky_odds[gid] = {k: v for k, v in {
+                "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds
+            }.items() if v}
 
         home_prob = away_prob = 50.0
-        if o.get("homeOdds") and o.get("awayOdds"):
+        if homeOdds and awayOdds:
             try:
-                hd = american_to_decimal(o["homeOdds"])
-                ad = american_to_decimal(o["awayOdds"])
+                hd = american_to_decimal(homeOdds)
+                ad = american_to_decimal(awayOdds)
                 total = (1/hd) + (1/ad)
                 home_prob = round((1/hd) / total * 100, 1)
                 away_prob = round((1/ad) / total * 100, 1)
@@ -684,10 +729,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
             **g,
             "homeWinProb": home_prob,
             "awayWinProb": away_prob,
-            "homeOdds": o.get("homeOdds"),
-            "awayOdds": o.get("awayOdds"),
-            "spread": o.get("spread"),
-            "ou": o.get("ou"),
+            "homeOdds": homeOdds,
+            "awayOdds": awayOdds,
+            "spread": spread,
+            "ou": ou,
             "ouDir": None,
             "analysis": {"best_bet": None, "ou": None, "props": None},
         })
@@ -695,21 +740,18 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
 
 
 @app.get("/api/games")
-async def get_games():
-    tomorrow_str = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
-
+async def get_games(date: Optional[str] = None):
+    """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     async with httpx.AsyncClient() as client:
-        today_games, tomorrow_games, odds_map = await asyncio.gather(
-            fetch_espn_games(client),
-            fetch_espn_games(client, tomorrow_str),
+        games, odds_map = await asyncio.gather(
+            fetch_espn_games(client, date),
             fetch_odds(client),
         )
 
-    if not today_games and not tomorrow_games:
+    if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    all_games = _merge_odds(today_games or [], odds_map) + _merge_odds(tomorrow_games or [], odds_map)
-    return {"games": all_games, "source": "live"}
+    return {"games": _merge_odds(games, odds_map), "source": "live"}
 
 
 @app.get("/api/debug")
@@ -807,17 +849,13 @@ def calculate_parlay(req: ParlayRequest):
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
 
-    tomorrow_str = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
-
     async with httpx.AsyncClient() as client:
-        today_games, tomorrow_games, injuries = await asyncio.gather(
-            fetch_espn_games(client),
-            fetch_espn_games(client, tomorrow_str),
+        espn_games, injuries = await asyncio.gather(
+            fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
         )
 
-    all_espn = (today_games or []) + (tomorrow_games or [])
-    games_to_search = all_espn if all_espn else MOCK_GAMES
+    games_to_search = espn_games if espn_games else MOCK_GAMES
     game = next((g for g in games_to_search if g["id"] == req.game_id), None)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")

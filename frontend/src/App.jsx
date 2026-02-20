@@ -215,7 +215,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
           </div>
         )}
         {isFinal && <span style={{ color:T.text3, fontSize:11, fontWeight:700, letterSpacing:"0.08em" }}>FINAL</span>}
-        {isUp    && <span style={{ color:T.green, fontSize:11, fontWeight:700 }}>⏰ {game.time}</span>}
+        {isUp && game.time && (
+          <span style={{ color:T.green, fontSize:11, fontWeight:700 }}>
+            ⏰ {new Date(game.time).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
+          </span>
+        )}
         {isLive && (
           <div style={{ display:"flex", gap:6 }}>
             <WinProbChip pct={game.awayWinProb} abbr={game.away} />
@@ -494,31 +498,15 @@ function FinalResultsPanel({ game }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides }) {
-  const liveGames      = games.filter(g => g.status === "live"     && !g.day);
-  const todayUpcoming  = games.filter(g => g.status === "upcoming" && !g.day);
-  const finalGames     = games.filter(g => g.status === "final"    && !g.day);
-  const tomorrowGames  = games.filter(g => g.day === "tomorrow");
-  const ordered = [...liveGames, ...todayUpcoming, ...finalGames];
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel }) {
+  const liveGames     = games.filter(g => g.status === "live");
+  const upcomingGames = games.filter(g => g.status === "upcoming");
+  const finalGames    = games.filter(g => g.status === "final");
+  const ordered = [...liveGames, ...upcomingGames, ...finalGames];
 
   const fmtTime = d => d
     ? d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })
     : null;
-
-  // Divider card between today and tomorrow
-  const TomorrowDivider = () => (
-    <div style={{
-      display:"flex", alignItems:"center", alignSelf:"stretch",
-      padding:"0 4px", flexShrink:0,
-    }}>
-      <div style={{
-        writingMode:"vertical-rl", transform:"rotate(180deg)",
-        fontSize:9, fontWeight:700, letterSpacing:"0.12em",
-        color:T.text3, padding:"12px 6px",
-        borderLeft:`1px solid ${T.border}`,
-      }}>TOMORROW</div>
-    </div>
-  );
 
   return (
     <div>
@@ -530,16 +518,13 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides })
             <span style={{ fontSize:11, fontWeight:700, color:T.red, letterSpacing:"0.06em" }}>{liveGames.length} LIVE</span>
           </div>
         )}
-        {todayUpcoming.length > 0 && (
+        {upcomingGames.length > 0 && (
           <span style={{ fontSize:11, fontWeight:700, color:T.green, letterSpacing:"0.06em" }}>
-            {todayUpcoming.length} TONIGHT
+            {upcomingGames.length} {upcomingLabel || "TONIGHT"}
           </span>
         )}
         {finalGames.length > 0 && (
           <span style={{ fontSize:11, color:T.text3, letterSpacing:"0.06em" }}>{finalGames.length} FINAL</span>
-        )}
-        {tomorrowGames.length > 0 && (
-          <span style={{ fontSize:11, color:T.accent, letterSpacing:"0.06em" }}>{tomorrowGames.length} TOMORROW</span>
         )}
         <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
           {liveGames.length > 0
@@ -555,16 +540,6 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides })
         scrollbarWidth:"none",
       }}>
         {ordered.map(g => (
-          <GameCard
-            key={g.id}
-            game={g}
-            onRefresh={onRefresh}
-            loadingRefresh={loadingIds.has(g.id)}
-            aiOverride={aiOverrides[g.id]}
-          />
-        ))}
-        {tomorrowGames.length > 0 && ordered.length > 0 && <TomorrowDivider />}
-        {tomorrowGames.map(g => (
           <GameCard
             key={g.id}
             game={g}
@@ -998,6 +973,13 @@ export default function App() {
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(null); // null = today
+
+  const tomorrowStr = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10).replace(/-/g, "");
+  })();
 
   // 1) Check server key
   useEffect(() => {
@@ -1009,10 +991,13 @@ export default function App() {
       .catch(() => setApiKey("__no_server__"));
   }, []);
 
-  // 2) Initial data load
+  // 2) Load games whenever apiKey or selectedDate changes
   useEffect(() => {
     if (apiKey === null) return;
-    Promise.all([api.getGames(), api.getProps()])
+    setDataLoaded(false);
+    setGames([]);
+    setAiOverrides({});
+    Promise.all([api.getGames(selectedDate), api.getProps()])
       .then(([g, p]) => {
         setGames(g.games);
         setProps(p.props);
@@ -1020,28 +1005,29 @@ export default function App() {
         setLastUpdated(new Date());
       })
       .catch(console.error);
-  }, [apiKey]);
+  }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 3) Auto-poll scores when live games are active (every 30s)
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
     if (!hasLive || apiKey === null) return;
     const interval = setInterval(() => {
-      api.getGames()
+      api.getGames(selectedDate)
         .then(g => { setGames(g.games); setLastUpdated(new Date()); })
         .catch(console.error);
     }, 30000);
     return () => clearInterval(interval);
-  }, [games, apiKey]);
+  }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 4) Auto-analyze all non-final games once data first loads
+  // 4) Auto-analyze today's non-final games once data loads (skip tomorrow — saves quota)
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
+    if (selectedDate) return; // only auto-analyze today
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
         setLoadingIds(prev => new Set([...prev, g.id]));
-        api.analyze(g.id, apiKey)
+        api.analyze(g.id, apiKey, null)
           .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
           .catch(console.error)
           .finally(() => setLoadingIds(prev => {
@@ -1050,7 +1036,7 @@ export default function App() {
             return next;
           }));
       });
-  }, [dataLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dataLoaded, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {
@@ -1063,7 +1049,7 @@ export default function App() {
   const handleRefresh = async (gameId) => {
     setLoadingIds(prev => new Set([...prev, gameId]));
     try {
-      const d = await api.analyze(gameId, apiKey);
+      const d = await api.analyze(gameId, apiKey, selectedDate);
       setAiOverrides(prev => ({ ...prev, [gameId]: d.analysis }));
     } catch(e) {
       console.error(e);
@@ -1100,7 +1086,18 @@ export default function App() {
               <span style={{ color:T.text3, fontSize:9, letterSpacing:"0.1em", marginLeft:8 }}>AI SPORTSBOOK ANALYST</span>
             </div>
           </div>
-          <div style={{ color:T.text3, fontSize:10 }}>Feb 20, 2026</div>
+          <div style={{ display:"flex", gap:4 }}>
+            {[{ label:"TODAY", val:null }, { label:"TMW", val:tomorrowStr }].map(({ label, val }) => (
+              <button key={label} onClick={() => setSelectedDate(val)} style={{
+                background: selectedDate === val ? T.green : "transparent",
+                border: `1px solid ${selectedDate === val ? T.green : T.border}`,
+                color: selectedDate === val ? "#000" : T.text3,
+                borderRadius: 5, padding: "3px 9px",
+                fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+                cursor: "pointer",
+              }}>{label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1127,6 +1124,7 @@ export default function App() {
           loadingIds={loadingIds}
           lastUpdated={lastUpdated}
           aiOverrides={aiOverrides}
+          upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
         />
       )}
 

@@ -571,16 +571,8 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
-  // Derive a short label from the pick text
   const pickLabel = isBet
-    ? (() => {
-        const t = pick.text || "";
-        const awayMatch = pick.game.awayName && t.toLowerCase().includes(pick.game.awayName.toLowerCase());
-        const homeMatch = pick.game.homeName && t.toLowerCase().includes(pick.game.homeName.toLowerCase());
-        if (awayMatch) return pick.game.away;
-        if (homeMatch) return pick.game.home;
-        return pick.game.away; // fallback
-      })()
+    ? (pick.betTeam || "?")
     : /under/i.test(pick.text) ? "UNDER" : "OVER";
   // Use actual game odds directly, same as game cards do — never parse from text
   const calcOdds = isBet
@@ -638,7 +630,7 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
     const a = aiOverrides[g.id];
     if (!a) continue;
     if (a.best_bet && a.dubl_score_bet != null)
-      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, game:g });
+      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, game:g });
     if (a.ou && a.dubl_score_ou != null)
       picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g });
   }
@@ -1453,7 +1445,8 @@ const Loader = () => {
     <div style={{
       position:"fixed", inset:0,
       display:"flex", flexDirection:"column",
-      alignItems:"center", justifyContent:"center",
+      alignItems:"center", justifyContent:"flex-end",
+      paddingBottom:"12vh",
     }}>
       <img
         src="/static/loading.png"

@@ -35,7 +35,7 @@ const americanToPayout = (oddsStr, stake) => {
   const dec = o > 0 ? (o/100)+1 : (100/Math.abs(o))+1;
   return (dec * stake).toFixed(2);
 };
-const edgeColor = s => s >= 80 ? T.green : s >= 65 ? T.gold : T.red;
+const edgeColor = s => s >= 4.0 ? T.green : s >= 3.0 ? T.gold : T.red;
 const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
 // ── FINAL GAME RESULT CALCULATOR ──────────────────────────────────────────────

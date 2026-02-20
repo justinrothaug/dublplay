@@ -987,12 +987,15 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     """Use Gemini with Google Search grounding to get real NBA player prop lines."""
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    game_lines = []
-    for g in games:
-        if g.get("status") == "final":
-            continue
-        game_lines.append(f"  - {g.get('awayName','?')} @ {g.get('homeName','?')}")
+    active_games = [g for g in games if g.get("status") != "final"]
+    game_lines = [
+        f"  {i+1}. {g.get('awayName','?')} @ {g.get('homeName','?')}"
+        for i, g in enumerate(active_games)
+    ]
     games_block = "\n".join(game_lines) if game_lines else "  (no games found)"
+    n_games = len(active_games)
+    # Ask for at least 4 props per game so every game is fully covered
+    target = max(40, n_games * 4)
 
     _PROPS_JSON_SCHEMA = (
         '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
@@ -1002,10 +1005,13 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     )
 
     prompt = (
-        f"Today is {today_str}. Tonight's NBA games:\n{games_block}\n\n"
-        "Use Google Search to find tonight's NBA player prop lines from sportsbooks "
-        "(DraftKings, FanDuel, BetMGM) for points, rebounds, assists, 3-pointers, blocks, and steals.\n"
-        f"Output a raw JSON array of 40-50 props covering many players across all tonight's games. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
+        f"Today is {today_str}. Tonight's NBA games ({n_games} games):\n{games_block}\n\n"
+        "Use Google Search to find TONIGHT'S NBA player prop lines from DraftKings, FanDuel, or BetMGM "
+        "for points, rebounds, assists, 3-pointers, blocks, and steals.\n\n"
+        f"REQUIREMENT: You MUST include at least 4 props for EVERY one of the {n_games} games listed above. "
+        f"Output a raw JSON array of {target}+ props total. "
+        "Do NOT skip any game — every game must be represented.\n\n"
+        f"Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
         "Rules:\n"
         "- Use REAL lines from search results\n"
         "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
@@ -1013,7 +1019,7 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         "- streak: consecutive games OVER the line (0 if none)\n"
         "- avg: season average for this stat\n"
         "- edge_score: float 1.0-5.0 strength of edge\n"
-        "- Only include games scheduled for today\n"
+        "- matchup field must match one of the games listed above\n"
         "IMPORTANT: Output ONLY the JSON array. Start your response with [ and end with ]. "
         "No explanations, no preamble, no markdown fences."
     )

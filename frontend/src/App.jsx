@@ -571,6 +571,17 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
+  // Derive a short label from the pick text
+  const pickLabel = isBet
+    ? (() => {
+        const t = pick.text || "";
+        const awayMatch = pick.game.awayName && t.toLowerCase().includes(pick.game.awayName.toLowerCase());
+        const homeMatch = pick.game.homeName && t.toLowerCase().includes(pick.game.homeName.toLowerCase());
+        if (awayMatch) return pick.game.away;
+        if (homeMatch) return pick.game.home;
+        return pick.game.away; // fallback
+      })()
+    : /under/i.test(pick.text) ? "UNDER" : "OVER";
   // Use actual game odds directly, same as game cards do — never parse from text
   const calcOdds = isBet
     ? (pick.game.awayOdds || pick.game.homeOdds || "-110")
@@ -596,7 +607,7 @@ function TopPickCard({ pick, rank, onPickOdds }) {
               fontSize:9, fontWeight:700, letterSpacing:"0.06em",
               color, background:`${color}18`,
               border:`1px solid ${color}44`, borderRadius:4, padding:"2px 7px",
-            }}>{isBet ? "✦ BEST BET" : "◉ O/U"}</span>
+            }}>{isBet ? `✦ ${pickLabel}` : `◉ ${pickLabel}`}</span>
           </div>
           <EdgeCircle score={pick.score} />
         </div>

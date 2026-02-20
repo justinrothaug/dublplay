@@ -831,11 +831,18 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
         logging.warning(f"Gemini props JSON parse failed: {e}")
         return []
 
+    VALID_STATS = {"points", "rebounds", "assists", "3pm", "blocks", "steals",
+                   "pts", "reb", "ast", "blk", "stl", "threes", "three-pointers"}
     out = []
     for p in raw:
         try:
             line = float(p.get("line", 0))
             stat = str(p.get("stat", ""))
+            # Drop non-standard prop types (first basket, triple-double, combined, etc.)
+            if stat.lower() not in VALID_STATS and "+" in stat:
+                continue
+            if any(kw in stat.lower() for kw in ("basket", "triple", "double", "combo", "score first")):
+                continue
             rec  = str(p.get("rec", "OVER")).upper()
             over_o  = str(p.get("over_odds", "-115"))
             under_o = str(p.get("under_odds", "+105"))
@@ -987,16 +994,6 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     """Use Gemini with Google Search grounding to get real NBA player prop lines."""
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    active_games = [g for g in games if g.get("status") != "final"]
-    game_lines = [
-        f"  {i+1}. {g.get('awayName','?')} @ {g.get('homeName','?')}"
-        for i, g in enumerate(active_games)
-    ]
-    games_block = "\n".join(game_lines) if game_lines else "  (no games found)"
-    n_games = len(active_games)
-    # Ask for at least 4 props per game so every game is fully covered
-    target = max(40, n_games * 4)
-
     _PROPS_JSON_SCHEMA = (
         '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
         '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
@@ -1005,22 +1002,17 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     )
 
     prompt = (
-        f"Today is {today_str}. Tonight's NBA games ({n_games} games):\n{games_block}\n\n"
-        "Use Google Search to find TONIGHT'S NBA player prop lines from DraftKings, FanDuel, or BetMGM "
-        "for points, rebounds, assists, 3-pointers, blocks, and steals.\n\n"
-        f"REQUIREMENT: You MUST include at least 4 props for EVERY one of the {n_games} games listed above. "
-        f"Output a raw JSON array of {target}+ props total. "
-        "Do NOT skip any game — every game must be represented.\n\n"
+        f"Search for the top 50 NBA player props for {today_str}. "
+        "Include at least one prop per game. "
+        "Only standard over/under props: points, rebounds, assists, 3-pointers made, blocks, steals. "
+        "No parlays, no first basket, no combined stats.\n\n"
         f"Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
-        "Rules:\n"
-        "- Use REAL lines from search results\n"
         "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
         "- l5/l10/l15: integer hit-rate % for OVER in last 5/10/15 games (0-100)\n"
         "- streak: consecutive games OVER the line (0 if none)\n"
-        "- avg: season average for this stat\n"
-        "- edge_score: float 1.0-5.0 strength of edge\n"
-        "- matchup field must match one of the games listed above\n"
-        "IMPORTANT: Output ONLY the JSON array. Start your response with [ and end with ]. "
+        "- avg: player season average for this stat\n"
+        "- edge_score: float 1.0-5.0 your confidence in this pick\n"
+        "IMPORTANT: Output ONLY the JSON array. Start with [ and end with ]. "
         "No explanations, no preamble, no markdown fences."
     )
 

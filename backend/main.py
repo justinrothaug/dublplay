@@ -57,9 +57,52 @@ TEAM_ABBR_MAP = {
     "OKC": "OKC", "BKN": "BKN",
 }
 
+# Full NBA team names as returned by The Odds API → ESPN abbreviations
+NBA_FULL_TO_ABBR: dict[str, str] = {
+    "Atlanta Hawks": "ATL",
+    "Boston Celtics": "BOS",
+    "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA",
+    "Chicago Bulls": "CHI",
+    "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL",
+    "Denver Nuggets": "DEN",
+    "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW",
+    "Houston Rockets": "HOU",
+    "Indiana Pacers": "IND",
+    "LA Clippers": "LAC",
+    "Los Angeles Clippers": "LAC",
+    "Los Angeles Lakers": "LAL",
+    "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA",
+    "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN",
+    "New Orleans Pelicans": "NOP",
+    "New York Knicks": "NYK",
+    "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL",
+    "Philadelphia 76ers": "PHI",
+    "Phoenix Suns": "PHX",
+    "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC",
+    "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR",
+    "Utah Jazz": "UTA",
+    "Washington Wizards": "WAS",
+}
+
 
 def norm_abbr(raw: str) -> str:
     return TEAM_ABBR_MAP.get(raw.upper(), raw.upper())
+
+
+def full_name_to_abbr(full_name: str) -> str:
+    """Convert a full NBA team name (from The Odds API) to ESPN abbreviation."""
+    if full_name in NBA_FULL_TO_ABBR:
+        return NBA_FULL_TO_ABBR[full_name]
+    # Fallback: try first 3 chars through the existing norm_abbr map
+    return norm_abbr(full_name[:3].upper())
 
 
 async def fetch_espn_games(client: httpx.AsyncClient) -> list[dict]:
@@ -176,8 +219,10 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
     for ev in events:
         if not isinstance(ev, dict):
             continue
-        home = norm_abbr(ev.get("home_team", "")[:3].upper())
-        away = norm_abbr(ev.get("away_team", "")[:3].upper())
+        home_full = ev.get("home_team", "")
+        away_full = ev.get("away_team", "")
+        home = full_name_to_abbr(home_full)
+        away = full_name_to_abbr(away_full)
         key  = f"{away.lower()}-{home.lower()}"
 
         odds_data: dict = {}
@@ -188,11 +233,11 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
                 mk = market["key"]
                 outcomes = {o["name"]: o["price"] for o in market.get("outcomes", [])}
                 if mk == "h2h":
-                    odds_data["homeOdds"] = _fmt_american(outcomes.get(ev.get("home_team", ""), 0))
-                    odds_data["awayOdds"] = _fmt_american(outcomes.get(ev.get("away_team", ""), 0))
+                    odds_data["homeOdds"] = _fmt_american(outcomes.get(home_full, 0))
+                    odds_data["awayOdds"] = _fmt_american(outcomes.get(away_full, 0))
                 elif mk == "spreads":
                     for o in market.get("outcomes", []):
-                        if norm_abbr(o["name"][:3].upper()) == home:
+                        if full_name_to_abbr(o["name"]) == home:
                             odds_data["spread"] = f"{home} {_sign(o['point'])}"
                 elif mk == "totals":
                     for o in market.get("outcomes", []):

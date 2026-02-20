@@ -988,8 +988,8 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     prompt = (
         f"Today is {today_str}. Tonight's NBA games:\n{games_block}\n\n"
         "Use Google Search to find tonight's NBA player prop lines from sportsbooks "
-        "(DraftKings, FanDuel, BetMGM) for points, rebounds, assists, and 3-pointers.\n"
-        f"Output a raw JSON array of 12-15 props. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
+        "(DraftKings, FanDuel, BetMGM) for points, rebounds, assists, 3-pointers, blocks, and steals.\n"
+        f"Output a raw JSON array of 40-50 props covering many players across all tonight's games. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
         "Rules:\n"
         "- Use REAL lines from search results\n"
         "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
@@ -1015,7 +1015,7 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
                 },
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 3000, "temperature": 0.2},
+                "generationConfig": {"maxOutputTokens": 8000, "temperature": 0.2},
             },
             timeout=45,
         )

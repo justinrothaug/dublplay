@@ -172,16 +172,15 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
   const awayLeads = (isLive || isFinal) && game.awayScore > game.homeScore;
   const homeLeads = (isLive || isFinal) && game.homeScore > game.awayScore;
-  const [aiText, setAiText] = useState(null);
 
   const staticAnalysis = game.analysis;
-  const displayAnalysis = aiText ? parseGeminiText(aiText) : staticAnalysis;
+  const displayAnalysis = aiOverride ? parseGeminiText(aiOverride) : staticAnalysis;
 
   return (
     <div style={{
@@ -304,9 +303,9 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
             analysis={displayAnalysis}
             isLive={isLive}
             isFinal={false}
-            onRefresh={onRefresh ? () => onRefresh(game.id, setAiText) : null}
+            onRefresh={onRefresh ? () => onRefresh(game.id) : null}
             loading={loadingRefresh}
-            hasOverride={!!aiText}
+            hasOverride={!!aiOverride}
           />
       }
     </div>
@@ -490,7 +489,7 @@ function FinalResultsPanel({ game }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingId, lastUpdated }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -536,7 +535,8 @@ function GamesScroll({ games, onRefresh, loadingId, lastUpdated }) {
             key={g.id}
             game={g}
             onRefresh={onRefresh}
-            loadingRefresh={loadingId === g.id}
+            loadingRefresh={loadingIds.has(g.id)}
+            aiOverride={aiOverrides[g.id]}
           />
         ))}
       </div>
@@ -959,7 +959,8 @@ export default function App() {
   const [tab, setTab] = useState("games");
   const [games, setGames] = useState([]);
   const [props, setProps] = useState([]);
-  const [loadingId, setLoadingId] = useState(null);
+  const [loadingIds, setLoadingIds] = useState(new Set());
+  const [aiOverrides, setAiOverrides] = useState({});
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -999,6 +1000,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [games, apiKey]);
 
+  // 4) Auto-analyze all non-final games once data first loads
+  useEffect(() => {
+    if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
+    games
+      .filter(g => g.status !== "final")
+      .forEach(g => {
+        setLoadingIds(prev => new Set([...prev, g.id]));
+        api.analyze(g.id, apiKey)
+          .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
+          .catch(console.error)
+          .finally(() => setLoadingIds(prev => {
+            const next = new Set(prev);
+            next.delete(g.id);
+            return next;
+          }));
+      });
+  }, [dataLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {
       return <ApiKeyGate serverHasKey={false} onSubmit={k=>setApiKey(k)} />;
@@ -1007,15 +1026,19 @@ export default function App() {
   }
   if (!dataLoaded) return <Loader />;
 
-  const handleRefresh = async (gameId, setAiText) => {
-    setLoadingId(gameId);
+  const handleRefresh = async (gameId) => {
+    setLoadingIds(prev => new Set([...prev, gameId]));
     try {
       const d = await api.analyze(gameId, apiKey);
-      setAiText(d.analysis);
+      setAiOverrides(prev => ({ ...prev, [gameId]: d.analysis }));
     } catch(e) {
       console.error(e);
     }
-    setLoadingId(null);
+    setLoadingIds(prev => {
+      const next = new Set(prev);
+      next.delete(gameId);
+      return next;
+    });
   };
 
   const toggleParlay = prop => {
@@ -1067,8 +1090,9 @@ export default function App() {
         <GamesScroll
           games={games}
           onRefresh={handleRefresh}
-          loadingId={loadingId}
+          loadingIds={loadingIds}
           lastUpdated={lastUpdated}
+          aiOverrides={aiOverrides}
         />
       )}
 

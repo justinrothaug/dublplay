@@ -180,7 +180,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
   const homeLeads = (isLive || isFinal) && game.homeScore > game.awayScore;
 
   const staticAnalysis = game.analysis;
-  const displayAnalysis = aiOverride ? parseGeminiText(aiOverride) : staticAnalysis;
+  const displayAnalysis = aiOverride || staticAnalysis;
 
   return (
     <div style={{
@@ -306,10 +306,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
         : <AnalysisPanel
             analysis={displayAnalysis}
             isLive={isLive}
-            isFinal={false}
-            onRefresh={onRefresh ? () => onRefresh(game.id) : null}
             loading={loadingRefresh}
-            hasOverride={!!aiOverride}
           />
       }
     </div>
@@ -348,7 +345,7 @@ function TeamBadge({ abbr, size = 40 }) {
   );
 }
 
-function AnalysisPanel({ analysis, isLive, isFinal, onRefresh, loading, hasOverride }) {
+function AnalysisPanel({ analysis, isLive, loading }) {
   if (!analysis) return null;
   const items = [
     { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green },
@@ -358,28 +355,15 @@ function AnalysisPanel({ analysis, isLive, isFinal, onRefresh, loading, hasOverr
 
   return (
     <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+      <div style={{ marginBottom:10 }}>
         <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700 }}>
-          {hasOverride ? "⚡ GEMINI ANALYSIS" : "AI ANALYSIS"}
+          dublplay analysis
         </span>
-        {/* No refresh button for final games */}
-        {onRefresh && !isFinal && (
-          <button onClick={onRefresh} disabled={loading} style={{
-            background:"rgba(83,211,55,0.1)", border:`1px solid ${T.greenBdr}`,
-            borderRadius:5, padding:"3px 8px", fontSize:9, color:T.green, fontWeight:700,
-            letterSpacing:"0.06em", opacity: loading ? 0.5 : 1, cursor: loading ? "default" : "pointer",
-          }}>
-            {loading ? <><Spinner />...</> : "REFRESH ↺"}
-          </button>
-        )}
-        {isFinal && (
-          <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.06em" }}>GAME OVER</span>
-        )}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-        {items.length === 0 && (
+        {items.length === 0 && loading && (
           <span style={{ fontSize:11, color:T.text3, lineHeight:1.6 }}>
-            {loading ? <><Spinner /> Analyzing...</> : "Tap REFRESH ↺ for AI analysis"}
+            <Spinner /> Analyzing...
           </span>
         )}
         {items.map((item, i) => (

@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 import os
+import re
 import pathlib
 import time
 import asyncio
@@ -585,13 +586,30 @@ def build_system_prompt(games: list, injuries: set) -> str:
     ) if upcoming else "None"
 
     return (
-        "You are a sharp NBA betting analyst.\n"
+        "You are a sharp NBA betting analyst. Use betting terminology (ATS, ML, O/U, value, fade).\n"
         f"LIVE: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}\n"
-        "Give sharp, direct betting analysis. Use betting terminology (ATS, ML, O/U, value).\n"
-        "Be concise. Note entertainment-only disclaimer briefly at end."
+        "Always respond using EXACTLY the three labeled fields shown. No extra text before or after."
     )
+
+
+def parse_gemini_analysis(text: str) -> dict:
+    """Parse structured Gemini response into best_bet / ou / props."""
+    def extract(marker: str) -> str | None:
+        m = re.search(
+            rf'{marker}:\s*(.*?)(?=BEST_BET:|OU_LEAN:|PLAYER_PROP:|$)',
+            text, re.DOTALL | re.IGNORECASE,
+        )
+        if not m:
+            return None
+        return m.group(1).strip().replace("**", "").strip() or None
+
+    return {
+        "best_bet": extract("BEST_BET"),
+        "ou":       extract("OU_LEAN"),
+        "props":    extract("PLAYER_PROP"),
+    }
 
 
 # ── FALLBACK MOCK DATA (used when live APIs unavailable) ──────────────────────
@@ -867,19 +885,21 @@ async def analyze_game(req: AnalyzeRequest):
     if is_final:
         raise HTTPException(status_code=400, detail="Game is already over.")
 
+    MARKERS = "BEST_BET: [...]\nOU_LEAN: [...]\nPLAYER_PROP: [...]"
+
     if is_live:
         prompt = (
-            f"Live betting: {game['awayName']} {game.get('awayScore',0)} "
+            f"Live game: {game['awayName']} {game.get('awayScore',0)} "
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            f"Give: (1) Best live bet (2) Total lean (3) Player to target. Sharp and brief."
+            f"Respond with EXACTLY:\n{MARKERS}"
         )
     else:
         prompt = (
-            f"Pre-game betting analysis: {game['awayName']} @ {game['homeName']}.\n"
+            f"Pre-game: {game['awayName']} @ {game['homeName']}. "
             f"Spread: {game.get('spread','N/A')}. O/U: {game.get('ou','N/A')}. "
-            f"ML: {game.get('awayOdds','N/A')} / {game.get('homeOdds','N/A')}.\n"
-            f"Give: (1) Best bet (2) O/U lean (3) Top player prop. 4-5 sentences total."
+            f"ML: {game.get('awayOdds','N/A')}/{game.get('homeOdds','N/A')}.\n"
+            f"Respond with EXACTLY:\n{MARKERS}"
         )
 
     async with httpx.AsyncClient() as client:
@@ -888,7 +908,7 @@ async def analyze_game(req: AnalyzeRequest):
             json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 350, "temperature": 0.75},
+                "generationConfig": {"maxOutputTokens": 500, "temperature": 0.7},
             },
             timeout=30,
         )
@@ -896,7 +916,7 @@ async def analyze_game(req: AnalyzeRequest):
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"]["message"])
     text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return {"analysis": text}
+    return {"analysis": parse_gemini_analysis(text)}
 
 
 @app.post("/api/chat")

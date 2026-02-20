@@ -574,9 +574,9 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const pickLabel = isBet
     ? (pick.betTeam || "?")
     : /under/i.test(pick.text) ? "UNDER" : "OVER";
-  // Use actual game odds directly, same as game cards do — never parse from text
+  // Use the odds for the predicted team, not blindly the away team
   const calcOdds = isBet
-    ? (pick.game.awayOdds || pick.game.homeOdds || "-110")
+    ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
     : "-110";
   return (
     <div

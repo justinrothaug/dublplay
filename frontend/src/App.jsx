@@ -571,15 +571,20 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
-  const oddsMatch = pick.text.match(/([+-]\d{2,3})/);
+  // American odds are always 3+ digits (e.g. -110, +176); spreads are 1-2 digits like -14.5
+  const oddsMatch = pick.text.match(/([+-]\d{3,})(?!\d|\.)/);
   const extractedOdds = oddsMatch ? oddsMatch[1] : "-110";
   return (
-    <div style={{
-      background: T.card,
-      border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
-      borderRadius:14, overflow:"hidden",
-      animation:`fadeUp ${0.1+rank*0.07}s ease`,
-    }}>
+    <div
+      onClick={onPickOdds ? () => onPickOdds(extractedOdds) : undefined}
+      style={{
+        background: T.card,
+        border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+        borderRadius:14, overflow:"hidden",
+        animation:`fadeUp ${0.1+rank*0.07}s ease`,
+        cursor: onPickOdds ? "pointer" : "default",
+      }}
+    >
       <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
       <div style={{ padding:"12px 14px" }}>
         {/* Top row: rank/type badge + score */}
@@ -606,24 +611,9 @@ function TopPickCard({ pick, rank, onPickOdds }) {
           <TeamBadge abbr={pick.game.home} size={32} />
         </div>
         {/* Pick text */}
-        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5, marginBottom:10 }}>
+        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
           {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
         </div>
-        {/* Calc button */}
-        {onPickOdds && (
-          <button
-            onClick={() => onPickOdds(extractedOdds)}
-            style={{
-              width:"100%", background:"rgba(255,255,255,0.05)",
-              border:`1px solid ${T.border}`, borderRadius:8,
-              color:T.gold, fontSize:11, fontWeight:700,
-              padding:"7px 0", cursor:"pointer", letterSpacing:"0.06em",
-              fontFamily:"inherit",
-            }}
-          >
-            💰 PAYOUT CALC
-          </button>
-        )}
       </div>
     </div>
   );

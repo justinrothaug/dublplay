@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "./api.js";
 
-// ── DESIGN TOKENS (DraftKings-inspired) ──────────────────────────────────────
+// ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
 const T = {
   bg:       "#13151a",
   card:     "#1c1f28",
@@ -38,6 +38,42 @@ const americanToPayout = (oddsStr, stake) => {
 const edgeColor = s => s >= 80 ? T.green : s >= 65 ? T.gold : T.red;
 const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
+// Parse Gemini free-text into best_bet / ou / props
+// Handles numbered formats like: (1) ... (2) ... (3) ... or 1. ... 2. ... 3. ...
+function parseGeminiText(text) {
+  if (!text) return { best_bet: null, ou: null, props: null };
+
+  // Try (1) / (2) / (3) format
+  let m1 = text.match(/\(1\)[:\s]*([\s\S]*?)(?=\(2\)|$)/i);
+  let m2 = text.match(/\(2\)[:\s]*([\s\S]*?)(?=\(3\)|$)/i);
+  let m3 = text.match(/\(3\)[:\s]*([\s\S]*?)(?=\(4\)|$)/i);
+
+  // Try 1. / 2. / 3. format
+  if (!m1) {
+    m1 = text.match(/^1[.)]\s*([\s\S]*?)(?=^2[.)]|$)/im);
+    m2 = text.match(/^2[.)]\s*([\s\S]*?)(?=^3[.)]|$)/im);
+    m3 = text.match(/^3[.)]\s*([\s\S]*?)(?=^4[.)]|$)/im);
+  }
+
+  // Try **Best Bet** / **O\/U** / **Player** headers
+  if (!m1) {
+    m1 = text.match(/best\s*bet[:\s]*([\s\S]*?)(?=o\/u|total|player\s*prop|$)/i);
+    m2 = text.match(/(?:o\/u|total)[:\s]*([\s\S]*?)(?=player\s*prop|$)/i);
+    m3 = text.match(/player\s*prop[:\s]*([\s\S]*?)$/i);
+  }
+
+  if (m1 || m2 || m3) {
+    return {
+      best_bet: m1 ? m1[1].trim().replace(/\*+/g, "").trim() : null,
+      ou:       m2 ? m2[1].trim().replace(/\*+/g, "").trim() : null,
+      props:    m3 ? m3[1].trim().replace(/\*+/g, "").trim() : null,
+    };
+  }
+
+  // Fallback: put full text in best_bet
+  return { best_bet: text.trim(), ou: null, props: null };
+}
+
 // ── API KEY GATE ──────────────────────────────────────────────────────────────
 function ApiKeyGate({ onSubmit, serverHasKey }) {
   const [key, setKey] = useState("");
@@ -50,7 +86,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
         boxShadow:"0 0 80px rgba(83,211,55,0.06)",
       }}>
         <div style={{ fontSize:48, marginBottom:12 }}>🏀</div>
-        <h1 style={{ color:T.green, fontSize:28, fontWeight:800, letterSpacing:"0.04em", margin:"0 0 6px" }}>NBA EDGE</h1>
+        <h1 style={{ color:T.green, fontSize:28, fontWeight:800, letterSpacing:"0.04em", margin:"0 0 6px" }}>dublplay</h1>
         <p style={{ color:T.text2, fontSize:12, letterSpacing:"0.1em", margin:"0 0 32px" }}>AI-POWERED SPORTSBOOK ANALYST</p>
         {serverHasKey ? (
           <button onClick={() => onSubmit("")} style={gateBtn}>LAUNCH APP →</button>
@@ -77,14 +113,14 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
   );
 }
 
-// ── GAME CARD (DraftKings-style) ──────────────────────────────────────────────
+// ── GAME CARD ─────────────────────────────────────────────────────────────────
 function GameCard({ game, onRefresh, loadingRefresh }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
   const awayLeads = (isLive || isFinal) && game.awayScore > game.homeScore;
   const homeLeads = (isLive || isFinal) && game.homeScore > game.awayScore;
-  const [aiText, setAiText] = useState(null); // null = use static, string = Gemini override
+  const [aiText, setAiText] = useState(null);
 
   const staticAnalysis = game.analysis;
   const displayAnalysis = aiText ? parseGeminiText(aiText) : staticAnalysis;
@@ -131,6 +167,13 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
         )}
       </div>
 
+      {/* ── Injury alert ── */}
+      {game.injuryAlert && isUp && (
+        <div style={{ margin:"8px 16px 0", background:"rgba(248,70,70,0.08)", border:"1px solid rgba(248,70,70,0.2)", borderRadius:7, padding:"5px 10px", fontSize:10, color:T.red, fontWeight:600 }}>
+          {game.injuryAlert}
+        </div>
+      )}
+
       {/* ── Teams + Score / Win% ── */}
       <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         {/* Away */}
@@ -161,7 +204,6 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
                 <span style={{ color:T.text3, fontSize:12 }}>vs</span>
                 <span style={{ fontSize:20, fontWeight:800, color:T.text }}>{game.homeWinProb}%</span>
               </div>
-              {/* Win prob bar */}
               <div style={{ width:110, height:5, borderRadius:3, background:"rgba(255,255,255,0.07)", overflow:"hidden", margin:"8px auto 0" }}>
                 <div style={{ height:"100%", width:`${game.awayWinProb}%`, background:T.green, borderRadius:3, transition:"width 0.6s" }} />
               </div>
@@ -182,11 +224,9 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
         </div>
       </div>
 
-      {/* ── Odds strip (DraftKings 3-col style) ── */}
+      {/* ── Odds strip ── */}
       {(game.spread || game.ou || game.homeOdds) && (
-        <div style={{
-          display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
-        }}>
+        <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
           {game.spread && (
             <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal} />
           )}
@@ -199,11 +239,12 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
         </div>
       )}
 
-      {/* ── AI Analysis (always shown) ── */}
+      {/* ── AI Analysis ── */}
       <AnalysisPanel
         analysis={displayAnalysis}
         isLive={isLive}
-        onRefresh={onRefresh ? () => onRefresh(game.id, setAiText) : null}
+        isFinal={isFinal}
+        onRefresh={(!isFinal && onRefresh) ? () => onRefresh(game.id, setAiText) : null}
         loading={loadingRefresh}
         hasOverride={!!aiText}
       />
@@ -213,7 +254,7 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
 
 function OddsCol({ label, value, highlight }) {
   return (
-    <div style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}`, ":last-child":{borderRight:"none"} }}>
+    <div style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}` }}>
       <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:4 }}>{label}</div>
       <div style={{ fontSize:12, fontWeight:700, color: highlight ? T.text : T.text2 }}>{value}</div>
     </div>
@@ -243,21 +284,12 @@ function TeamBadge({ abbr, size = 40 }) {
   );
 }
 
-// Parse Gemini free-text into best_bet / ou / props (best-effort)
-function parseGeminiText(text) {
-  return {
-    best_bet: text,
-    ou: null,
-    props: null,
-  };
-}
-
-function AnalysisPanel({ analysis, isLive, onRefresh, loading, hasOverride }) {
+function AnalysisPanel({ analysis, isLive, isFinal, onRefresh, loading, hasOverride }) {
   if (!analysis) return null;
   const items = [
-    { icon:"✦", label:"BEST BET", text: analysis.best_bet, color:T.green },
+    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green },
     { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold },
-    { icon:"▸", label:"PLAYER PROP", text: analysis.props, color:"#a78bfa" },
+    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa" },
   ].filter(i => i.text);
 
   return (
@@ -266,14 +298,18 @@ function AnalysisPanel({ analysis, isLive, onRefresh, loading, hasOverride }) {
         <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700 }}>
           {hasOverride ? "⚡ GEMINI ANALYSIS" : "AI ANALYSIS"}
         </span>
-        {onRefresh && (
+        {/* No refresh button for final games */}
+        {onRefresh && !isFinal && (
           <button onClick={onRefresh} disabled={loading} style={{
             background:"rgba(83,211,55,0.1)", border:`1px solid ${T.greenBdr}`,
             borderRadius:5, padding:"3px 8px", fontSize:9, color:T.green, fontWeight:700,
-            letterSpacing:"0.06em", opacity: loading ? 0.5 : 1,
+            letterSpacing:"0.06em", opacity: loading ? 0.5 : 1, cursor: loading ? "default" : "pointer",
           }}>
             {loading ? <><Spinner />...</> : "REFRESH ↺"}
           </button>
+        )}
+        {isFinal && (
+          <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.06em" }}>GAME OVER</span>
         )}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
@@ -292,18 +328,20 @@ function AnalysisPanel({ analysis, isLive, onRefresh, loading, hasOverride }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingId }) {
+function GamesScroll({ games, onRefresh, loadingId, lastUpdated }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
-
-  // Order: live first, then upcoming, then finals
   const ordered = [...liveGames, ...upcomingGames, ...finalGames];
+
+  const fmtTime = d => d
+    ? d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })
+    : null;
 
   return (
     <div>
-      {/* Section labels */}
-      <div style={{ padding:"18px 20px 12px", display:"flex", alignItems:"center", gap:16 }}>
+      {/* Section labels + last updated */}
+      <div style={{ padding:"18px 20px 12px", display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
         {liveGames.length > 0 && (
           <div style={{ display:"flex", alignItems:"center", gap:5 }}>
             <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
@@ -318,6 +356,11 @@ function GamesScroll({ games, onRefresh, loadingId }) {
         {finalGames.length > 0 && (
           <span style={{ fontSize:11, color:T.text3, letterSpacing:"0.06em" }}>{finalGames.length} FINAL</span>
         )}
+        <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
+          {liveGames.length > 0
+            ? `↻ auto-refreshing${lastUpdated ? ` · ${fmtTime(lastUpdated)}` : ""}`
+            : lastUpdated ? `updated ${fmtTime(lastUpdated)}` : ""}
+        </span>
       </div>
 
       {/* Horizontal scroll rail */}
@@ -339,18 +382,17 @@ function GamesScroll({ games, onRefresh, loadingId }) {
   );
 }
 
-// ── BEST BETS ─────────────────────────────────────────────────────────────────
-function BestBetsTab({ props }) {
+// ── BEST BETS (top 3 cards) ───────────────────────────────────────────────────
+function BestBetsSection({ props }) {
   const top = [...props].sort((a,b) => b.edge_score - a.edge_score).slice(0,3);
   return (
-    <TabPane>
+    <div style={{ marginBottom:28 }}>
       <SectionLabel>TOP AI PICKS — RANKED BY EDGE SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", marginBottom:20 }}>
+      <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", marginBottom:16 }}>
         {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
       </div>
       <BetCalcCard />
-      <Disclaimer />
-    </TabPane>
+    </div>
   );
 }
 
@@ -373,7 +415,6 @@ function BestBetCard({ prop, rank }) {
           <div style={{ color:T.text, fontWeight:800, fontSize:16 }}>{prop.player}</div>
           <div style={{ color:T.text3, fontSize:11, marginTop:2 }}>{prop.team} · {prop.game}</div>
         </div>
-        {/* Prop pill */}
         <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:10 }}>
           <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 11px", fontSize:13, fontWeight:700, color:T.text }}>
             {prop.prop}
@@ -388,13 +429,12 @@ function BestBetCard({ prop, rank }) {
           </div>
           <span style={{ color:T.text2, fontSize:12, marginLeft:"auto", fontWeight:700 }}>{prop.odds}</span>
         </div>
-        {/* L5 / L10 / L15 / Avg row */}
         <div style={{ display:"flex", gap:6, marginBottom:10 }}>
           {[["L5",prop.l5],["L10",prop.l10],["L15",prop.l15],["AVG",prop.avg]].map(([lbl,val]) => (
             <div key={lbl} style={{ flex:1, background:T.cardAlt, borderRadius:7, padding:"6px 0", textAlign:"center" }}>
               <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.06em", marginBottom:2 }}>{lbl}</div>
-              <div style={{ fontSize:12, fontWeight:700, color: typeof val==="number"&&val<=20 ? hitColor(val) : hitColor(Number(val)) }}>
-                {typeof val === "number" && lbl !== "AVG" ? `${val}%` : val}
+              <div style={{ fontSize:12, fontWeight:700, color: lbl!=="AVG" ? hitColor(Number(val)) : T.text }}>
+                {lbl !== "AVG" ? `${val}%` : val}
               </div>
             </div>
           ))}
@@ -456,7 +496,7 @@ function BetCalcCard() {
   );
 }
 
-// ── PROPS TABLE ───────────────────────────────────────────────────────────────
+// ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
 function PropsTab({ props, parlay, toggleParlay }) {
   const [filter, setFilter] = useState("all");
   const [sortCol, setSortCol] = useState("edge_score");
@@ -483,8 +523,15 @@ function PropsTab({ props, parlay, toggleParlay }) {
   );
   return (
     <TabPane>
+      {/* Best Bets at top */}
+      <BestBetsSection props={props} />
+
+      {/* Divider */}
+      <div style={{ borderTop:`1px solid ${T.border}`, marginBottom:22 }} />
+
+      {/* Full props table */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
-        <SectionLabel noMargin>PLAYER PROPS · AI RANKED</SectionLabel>
+        <SectionLabel noMargin>ALL PLAYER PROPS · AI RANKED</SectionLabel>
         <div style={{ display:"flex", gap:6 }}>
           {filters.map(f=>(
             <button key={f.id} onClick={()=>setFilter(f.id)} style={{
@@ -654,58 +701,11 @@ function ParlayTray({ parlay, onRemove, onClear }) {
   );
 }
 
-// ── STANDINGS ─────────────────────────────────────────────────────────────────
-function StandingsTab({ standings }) {
-  return (
-    <TabPane>
-      <div style={{ display:"grid", gap:14, gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))" }}>
-        {Object.entries(standings).map(([conf,teams])=>(
-          <div key={conf} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:14, overflow:"hidden" }}>
-            <div style={{ padding:"12px 16px", background:"rgba(0,0,0,0.2)", borderBottom:`1px solid ${T.border}` }}>
-              <span style={{ color:T.text2, fontSize:10, letterSpacing:"0.1em", fontWeight:700 }}>{conf.toUpperCase()} CONFERENCE</span>
-            </div>
-            <table style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr>
-                  {["#","TEAM","W","L","PCT","GB","STK"].map(h=>(
-                    <th key={h} style={{ padding:"8px 10px", textAlign:h==="TEAM"?"left":"center", color:T.text3, fontSize:9, letterSpacing:"0.07em", fontWeight:700 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {teams.map((t,i)=>(
-                  <tr key={t.abbr} style={{ borderTop:`1px solid ${T.border}` }}>
-                    <td style={{ padding:"10px", textAlign:"center", color:i<6?T.text3:"rgba(248,70,70,0.5)", fontSize:11, fontWeight:i<6?400:700 }}>{i+1}</td>
-                    <td style={{ padding:"10px" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <div style={{ width:24,height:24,borderRadius:6,background:TEAM_COLORS[t.abbr]||"#333",fontSize:8,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center" }}>
-                          {t.abbr.slice(0,2)}
-                        </div>
-                        <span style={{ color:T.text2, fontSize:12 }}>{t.team}</span>
-                        {i===5 && <span style={{ fontSize:8,color:T.red,background:"rgba(248,70,70,0.1)",borderRadius:3,padding:"1px 4px" }}>BUBBLE</span>}
-                      </div>
-                    </td>
-                    <td style={{ padding:"10px",textAlign:"center",color:T.text,fontSize:12,fontWeight:700 }}>{t.w}</td>
-                    <td style={{ padding:"10px",textAlign:"center",color:T.text3,fontSize:12 }}>{t.l}</td>
-                    <td style={{ padding:"10px",textAlign:"center",color:T.text2,fontSize:12 }}>{t.pct}</td>
-                    <td style={{ padding:"10px",textAlign:"center",color:T.text3,fontSize:11 }}>{t.gb}</td>
-                    <td style={{ padding:"10px",textAlign:"center",fontSize:11,fontWeight:700,color:t.streak.startsWith("W")?T.green:T.red }}>{t.streak}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
-      </div>
-    </TabPane>
-  );
-}
-
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 const QUICK = ["Best bet tonight?","Top prop plays?","Any live value right now?","Best parlay tonight?","Injury impact today?"];
 
 function ChatTab({ apiKey }) {
-  const [msgs, setMsgs] = useState([{role:"assistant",content:"Welcome to NBA Edge 🏀 I'm your Gemini-powered betting analyst. Ask me anything about tonight's slate — props, spreads, live value, injuries. (Entertainment only.)"}]);
+  const [msgs, setMsgs] = useState([{role:"assistant",content:"Welcome to dublplay 🏀 I'm your Gemini-powered betting analyst. Ask me anything about tonight's slate — props, spreads, live value, injuries. (Entertainment only.)"}]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -792,15 +792,15 @@ const gateBtn = {
 
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [apiKey, setApiKey] = useState(null);          // null = not yet loaded
+  const [apiKey, setApiKey] = useState(null);
   const [serverHasKey, setServerHasKey] = useState(false);
-  const [tab, setTab] = useState("props");
+  const [tab, setTab] = useState("games");
   const [games, setGames] = useState([]);
-  const [standings, setStandings] = useState({});
   const [props, setProps] = useState([]);
   const [loadingId, setLoadingId] = useState(null);
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   // 1) Check server key
   useEffect(() => {
@@ -812,15 +812,31 @@ export default function App() {
       .catch(() => setApiKey("__no_server__"));
   }, []);
 
-  // 2) Load data once we know the key situation
+  // 2) Initial data load
   useEffect(() => {
     if (apiKey === null) return;
-    Promise.all([api.getGames(), api.getStandings(), api.getProps()])
-      .then(([g,s,p]) => { setGames(g.games); setStandings(s.standings); setProps(p.props); setDataLoaded(true); })
+    Promise.all([api.getGames(), api.getProps()])
+      .then(([g, p]) => {
+        setGames(g.games);
+        setProps(p.props);
+        setDataLoaded(true);
+        setLastUpdated(new Date());
+      })
       .catch(console.error);
   }, [apiKey]);
 
-  // Show gate if server has no key and user hasn't entered one
+  // 3) Auto-poll scores when live games are active (every 30s)
+  useEffect(() => {
+    const hasLive = games.some(g => g.status === "live");
+    if (!hasLive || apiKey === null) return;
+    const interval = setInterval(() => {
+      api.getGames()
+        .then(g => { setGames(g.games); setLastUpdated(new Date()); })
+        .catch(console.error);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [games, apiKey]);
+
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {
       return <ApiKeyGate serverHasKey={false} onSubmit={k=>setApiKey(k)} />;
@@ -848,10 +864,9 @@ export default function App() {
   };
 
   const TABS = [
-    {id:"props",    label:"🎯 PROPS"},
-    {id:"bestbets", label:"⭐ BEST BETS"},
-    {id:"standings",label:"📊 STANDINGS"},
-    {id:"chat",     label:"💬 AI CHAT"},
+    { id:"games", label:"🏀 GAMES" },
+    { id:"props", label:"🎯 PROPS" },
+    { id:"chat",  label:"💬 CHAT"  },
   ];
 
   return (
@@ -862,28 +877,23 @@ export default function App() {
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <span style={{ fontSize:20 }}>🏀</span>
             <div>
-              <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>NBA EDGE</span>
+              <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
               <span style={{ color:T.text3, fontSize:9, letterSpacing:"0.1em", marginLeft:8 }}>AI SPORTSBOOK ANALYST</span>
             </div>
           </div>
-          <div style={{ color:T.text3, fontSize:10 }}>Feb 19, 2026</div>
+          <div style={{ color:T.text3, fontSize:10 }}>Feb 20, 2026</div>
         </div>
       </div>
 
-      {/* ── Games scroll (always visible) ── */}
-      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
-        <GamesScroll games={games} onRefresh={handleRefresh} loadingId={loadingId} />
-      </div>
-
       {/* ── Tab bar ── */}
-      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}`, overflowX:"auto" }}>
+      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ maxWidth:960, margin:"0 auto", padding:"0 16px", display:"flex" }}>
           {TABS.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
               background:"transparent", border:"none",
               borderBottom:`2px solid ${tab===t.id?T.green:"transparent"}`,
               color: tab===t.id ? T.green : T.text2,
-              padding:"13px 16px", fontSize:11, fontWeight:700, letterSpacing:"0.07em",
+              padding:"13px 20px", fontSize:11, fontWeight:700, letterSpacing:"0.07em",
               whiteSpace:"nowrap", transition:"color 0.15s",
             }}>{t.label}</button>
           ))}
@@ -891,12 +901,21 @@ export default function App() {
       </div>
 
       {/* ── Tab content ── */}
-      <div style={{ maxWidth:960, margin:"0 auto", padding:"22px 16px" }}>
-        {tab==="props"     && <PropsTab     props={props} parlay={parlay} toggleParlay={toggleParlay} />}
-        {tab==="bestbets"  && <BestBetsTab  props={props} />}
-        {tab==="standings" && <StandingsTab standings={standings} />}
-        {tab==="chat"      && <ChatTab      apiKey={apiKey} />}
-      </div>
+      {tab === "games" && (
+        <GamesScroll
+          games={games}
+          onRefresh={handleRefresh}
+          loadingId={loadingId}
+          lastUpdated={lastUpdated}
+        />
+      )}
+
+      {tab !== "games" && (
+        <div style={{ maxWidth:960, margin:"0 auto", padding:"22px 16px" }}>
+          {tab === "props" && <PropsTab props={props} parlay={parlay} toggleParlay={toggleParlay} />}
+          {tab === "chat"  && <ChatTab apiKey={apiKey} />}
+        </div>
+      )}
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
     </div>

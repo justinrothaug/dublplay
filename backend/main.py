@@ -6,8 +6,11 @@ from pydantic import BaseModel
 import httpx
 import os
 import pathlib
+import time
+import asyncio
+from typing import Optional
 
-app = FastAPI(title="NBA Edge API")
+app = FastAPI(title="dublplay API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,265 +20,418 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+ODDS_API_KEY   = os.getenv("ODDS_API_KEY", "")
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+ODDS_API_BASE       = "https://api.the-odds-api.com/v4"
 
-SYSTEM_PROMPT = """You are a sharp NBA betting analyst. Today is Feb 19, 2026.
-LIVE: DET leads NYK 104-88 (Q4 7:21), TOR leads CHI 74-64 (Q3 5:09), SAS leads PHX 61-49 (Half).
-TONIGHT: BOS@GSW (BOS -175, 67.8% win), ORL@SAC (ORL -255, 76.1%), DEN@LAC (DEN -125, 62.4%).
-LEADERS: West – OKC 42-14, SAS 38-16, DEN 35-20. East – DET 40-13, BOS 35-19, NYK 35-20.
-Give sharp, direct betting analysis. Use betting terminology (ATS, ML, O/U, value, etc.).
-Be concise. Always note entertainment-only disclaimer briefly at end."""
+# ── CACHE ─────────────────────────────────────────────────────────────────────
+_cache: dict = {}
+CACHE_TTL = 60  # seconds
 
-GAMES = [
+
+def cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def cache_set(key: str, data):
+    _cache[key] = {"ts": time.time(), "data": data}
+
+
+# ── ESPN HELPERS ──────────────────────────────────────────────────────────────
+def espn_status_to_app(status_name: str) -> str:
+    if status_name in ("STATUS_IN_PROGRESS", "STATUS_HALFTIME"):
+        return "live"
+    if status_name == "STATUS_FINAL":
+        return "final"
+    return "upcoming"
+
+
+TEAM_ABBR_MAP = {
+    "GS": "GSW", "SA": "SAS", "NY": "NYK", "NO": "NOP",
+    "OKC": "OKC", "BKN": "BKN",
+}
+
+
+def norm_abbr(raw: str) -> str:
+    return TEAM_ABBR_MAP.get(raw.upper(), raw.upper())
+
+
+async def fetch_espn_games(client: httpx.AsyncClient) -> list[dict]:
+    """Fetch today's NBA games from ESPN unofficial scoreboard API."""
+    cached = cache_get("espn_games")
+    if cached is not None:
+        return cached
+
+    try:
+        r = await client.get(ESPN_SCOREBOARD_URL, timeout=10)
+        data = r.json()
+    except Exception:
+        return []
+
+    games = []
+    for event in data.get("events", []):
+        try:
+            comp = event["competitions"][0]
+            status = event["status"]
+            status_name = status["type"]["name"]
+            app_status = espn_status_to_app(status_name)
+
+            competitors = comp["competitors"]
+            home = next(c for c in competitors if c["homeAway"] == "home")
+            away = next(c for c in competitors if c["homeAway"] == "away")
+
+            home_abbr = norm_abbr(home["team"]["abbreviation"])
+            away_abbr = norm_abbr(away["team"]["abbreviation"])
+            game_id = f"{away_abbr.lower()}-{home_abbr.lower()}"
+
+            g = {
+                "id": game_id,
+                "espn_id": event["id"],
+                "status": app_status,
+                "home": home_abbr,
+                "away": away_abbr,
+                "homeName": home["team"]["shortDisplayName"],
+                "awayName": away["team"]["shortDisplayName"],
+                "homeScore": int(home.get("score") or 0),
+                "awayScore": int(away.get("score") or 0),
+            }
+
+            if app_status == "live":
+                period = status.get("period", 1)
+                clock  = status.get("displayClock", "")
+                halftime = status_name == "STATUS_HALFTIME"
+                g["quarter"] = period
+                g["clock"]   = "Halftime" if halftime else clock
+
+            if app_status == "upcoming":
+                g["time"] = event.get("date", "")[:16].replace("T", " ") + " UTC"
+
+            games.append(g)
+        except Exception:
+            continue
+
+    cache_set("espn_games", games)
+    return games
+
+
+async def fetch_espn_injuries(client: httpx.AsyncClient) -> set[str]:
+    """Return set of player names currently listed as OUT/Doubtful."""
+    cached = cache_get("espn_injuries")
+    if cached is not None:
+        return cached
+
+    out_players: set[str] = set()
+    try:
+        r = await client.get(ESPN_INJURIES_URL, timeout=10)
+        data = r.json()
+        for team_entry in data.get("injuries", []):
+            for inj in team_entry.get("injuries", []):
+                status = inj.get("status", "").lower()
+                if any(s in status for s in ("out", "doubtful", "injured reserve", "ir")):
+                    name = inj.get("athlete", {}).get("displayName", "")
+                    if name:
+                        out_players.add(name.lower())
+    except Exception:
+        pass
+
+    cache_set("espn_injuries", out_players)
+    return out_players
+
+
+async def fetch_odds(client: httpx.AsyncClient) -> dict:
+    """
+    Fetch NBA odds from The Odds API.
+    Returns dict keyed by rough game id -> {spread, ou, homeOdds, awayOdds}.
+    Requires ODDS_API_KEY env var.
+    """
+    if not ODDS_API_KEY:
+        return {}
+
+    cached = cache_get("odds")
+    if cached is not None:
+        return cached
+
+    try:
+        r = await client.get(
+            f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "h2h,spreads,totals",
+                "oddsFormat": "american",
+            },
+            timeout=10,
+        )
+        events = r.json()
+    except Exception:
+        return {}
+
+    result = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        home = norm_abbr(ev.get("home_team", "")[:3].upper())
+        away = norm_abbr(ev.get("away_team", "")[:3].upper())
+        key  = f"{away.lower()}-{home.lower()}"
+
+        odds_data: dict = {}
+        for bm in ev.get("bookmakers", []):
+            if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
+                continue
+            for market in bm.get("markets", []):
+                mk = market["key"]
+                outcomes = {o["name"]: o["price"] for o in market.get("outcomes", [])}
+                if mk == "h2h":
+                    odds_data["homeOdds"] = _fmt_american(outcomes.get(ev.get("home_team", ""), 0))
+                    odds_data["awayOdds"] = _fmt_american(outcomes.get(ev.get("away_team", ""), 0))
+                elif mk == "spreads":
+                    for o in market.get("outcomes", []):
+                        if norm_abbr(o["name"][:3].upper()) == home:
+                            odds_data["spread"] = f"{home} {_sign(o['point'])}"
+                elif mk == "totals":
+                    for o in market.get("outcomes", []):
+                        if o["name"] == "Over":
+                            odds_data["ou"] = str(o["point"])
+            break  # first matching bookmaker is enough
+
+        if odds_data:
+            result[key] = odds_data
+
+    cache_set("odds", result)
+    return result
+
+
+async def fetch_player_props(client: httpx.AsyncClient, espn_game_ids: list[str]) -> list[dict]:
+    """
+    Fetch player prop lines from The Odds API for today's games.
+    Markets: player_points, player_rebounds, player_assists
+    Returns list of prop dicts in our schema.
+    Requires ODDS_API_KEY.
+    """
+    if not ODDS_API_KEY:
+        return []
+
+    cached = cache_get("props")
+    if cached is not None:
+        return cached
+
+    # First get event IDs from the odds API
+    try:
+        r = await client.get(
+            f"{ODDS_API_BASE}/sports/basketball_nba/events/",
+            params={"apiKey": ODDS_API_KEY},
+            timeout=10,
+        )
+        events = r.json()
+    except Exception:
+        return []
+
+    props_out = []
+    markets = ["player_points", "player_rebounds", "player_assists", "player_threes"]
+    market_labels = {
+        "player_points": "Points",
+        "player_rebounds": "Rebounds",
+        "player_assists": "Assists",
+        "player_threes": "3PM",
+    }
+
+    for ev in events[:6]:  # limit to first 6 games to stay within rate limits
+        event_id = ev.get("id")
+        home = norm_abbr(ev.get("home_team", "")[:3].upper())
+        away = norm_abbr(ev.get("away_team", "")[:3].upper())
+        matchup = f"{away} vs {home}"
+
+        try:
+            r2 = await client.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": ",".join(markets),
+                    "oddsFormat": "american",
+                },
+                timeout=10,
+            )
+            ev_odds = r2.json()
+        except Exception:
+            continue
+
+        seen: dict = {}  # player+market -> best line
+        for bm in ev_odds.get("bookmakers", []):
+            if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
+                continue
+            for market in bm.get("markets", []):
+                mk = market["key"]
+                label = market_labels.get(mk)
+                if not label:
+                    continue
+                for outcome in market.get("outcomes", []):
+                    player = outcome.get("description", outcome.get("name", ""))
+                    point  = outcome.get("point")
+                    price  = outcome.get("price")
+                    side   = outcome.get("name", "")  # "Over" / "Under"
+                    if not player or point is None:
+                        continue
+                    pk = f"{player}|{mk}"
+                    if pk not in seen:
+                        seen[pk] = {
+                            "player": player,
+                            "market": mk,
+                            "label": label,
+                            "line": point,
+                            "over_odds": None,
+                            "under_odds": None,
+                            "matchup": matchup,
+                            "home": home, "away": away,
+                        }
+                    if side == "Over":
+                        seen[pk]["over_odds"] = price
+                    else:
+                        seen[pk]["under_odds"] = price
+
+        for pk, p in seen.items():
+            over  = p["over_odds"]
+            under = p["under_odds"]
+            if over is None and under is None:
+                continue
+            rec = "OVER" if (over is not None and (under is None or abs(over) <= abs(under))) else "UNDER"
+            odds_val = over if rec == "OVER" else under
+            props_out.append({
+                "player": p["player"],
+                "team": p["away"] if p["player"].lower() in p["away"].lower() else "—",
+                "pos": "—",
+                "game": p["matchup"],
+                "prop": f"{p['label']} {p['line']}+",
+                "rec": rec,
+                "line": p["line"],
+                "conf": 60,
+                "edge_score": 60,
+                "l5": 60, "l10": 55, "l15": 50,
+                "streak": 0,
+                "avg": p["line"],
+                "odds": _fmt_american(odds_val),
+                "reason": f"Live line from The Odds API · {p['matchup']}",
+            })
+
+    cache_set("props", props_out)
+    return props_out
+
+
+def _fmt_american(price) -> str:
+    if not price:
+        return "—"
+    try:
+        p = int(price)
+        return f"+{p}" if p > 0 else str(p)
+    except Exception:
+        return str(price)
+
+
+def _sign(val) -> str:
+    try:
+        v = float(val)
+        return f"+{v}" if v > 0 else str(v)
+    except Exception:
+        return str(val)
+
+
+# ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────
+def build_system_prompt(games: list, injuries: set) -> str:
+    injury_note = ""
+    if injuries:
+        injury_note = f"\nKEY INJURIES (OUT/Doubtful): {', '.join(sorted(injuries)[:8])}."
+
+    live = [g for g in games if g["status"] == "live"]
+    upcoming = [g for g in games if g["status"] == "upcoming"]
+
+    live_str = ", ".join(
+        f"{g['awayName']} {g.get('awayScore',0)} @ {g['homeName']} {g.get('homeScore',0)} (Q{g.get('quarter','?')} {g.get('clock','')})"
+        for g in live
+    ) if live else "None"
+
+    up_str = ", ".join(
+        f"{g['awayName']}@{g['homeName']}"
+        for g in upcoming
+    ) if upcoming else "None"
+
+    return (
+        "You are a sharp NBA betting analyst.\n"
+        f"LIVE: {live_str}\n"
+        f"TONIGHT: {up_str}\n"
+        f"{injury_note}\n"
+        "Give sharp, direct betting analysis. Use betting terminology (ATS, ML, O/U, value).\n"
+        "Be concise. Note entertainment-only disclaimer briefly at end."
+    )
+
+
+# ── FALLBACK MOCK DATA (used when live APIs unavailable) ──────────────────────
+MOCK_GAMES = [
     {
-        "id": "nyk-det",
-        "status": "live",
-        "quarter": 4,
-        "clock": "7:21",
-        "home": "NYK", "away": "DET",
-        "homeName": "Knicks", "awayName": "Pistons",
-        "homeScore": 88, "awayScore": 104,
-        "homeWinProb": 18, "awayWinProb": 82,
-        # Live moneylines & total
-        "homeOdds": "+480", "awayOdds": "-700",
-        "ou": "202.5", "ouDir": "OVER",
-        "spread": "DET -16.5",
+        "id": "nyk-det", "status": "live", "quarter": 4, "clock": "7:21",
+        "home": "NYK", "away": "DET", "homeName": "Knicks", "awayName": "Pistons",
+        "homeScore": 88, "awayScore": 104, "homeWinProb": 18, "awayWinProb": 82,
+        "homeOdds": "+480", "awayOdds": "-700", "ou": "202.5", "ouDir": "OVER", "spread": "DET -16.5",
         "analysis": {
-            "best_bet": "DET ML (-700) — only for those already in. Live cover at -16.5 is where the value is. Pistons have dominated every quarter.",
-            "ou": "OVER 202.5 — both teams are still pushing. Currently at 192 combined, averaging 24+ pts per remaining Q4 minute.",
-            "props": "Cade Cunningham has 28 pts, 7 ast with 7:21 left. Hammering his points OVER for any remaining live props."
+            "best_bet": "DET ML (-700) — only for those already in. Live cover at -16.5 is where the value is.",
+            "ou": "OVER 202.5 — both teams still pushing, averaging 24+ pts per remaining Q4 minute.",
+            "props": "Cade Cunningham has 28 pts, 7 ast with 7:21 left. Hammering his points OVER for any remaining live props.",
         },
     },
     {
-        "id": "chi-tor",
-        "status": "live",
-        "quarter": 3,
-        "clock": "5:09",
-        "home": "CHI", "away": "TOR",
-        "homeName": "Bulls", "awayName": "Raptors",
-        "homeScore": 64, "awayScore": 74,
-        "homeWinProb": 28, "awayWinProb": 72,
-        "homeOdds": "+280", "awayOdds": "-380",
-        "ou": "218.5", "ouDir": "UNDER",
-        "spread": "TOR -10.5",
+        "id": "gsw-bos", "status": "upcoming",
+        "home": "GSW", "away": "BOS", "homeName": "Warriors", "awayName": "Celtics",
+        "time": "7:00 PM PT", "homeWinProb": 43.5, "awayWinProb": 56.5,
+        "homeOdds": "+110", "awayOdds": "-130", "spread": "BOS -2.5", "ou": "219.5",
+        "injuryAlert": "⚠️ Tatum OUT (Achilles)",
         "analysis": {
-            "best_bet": "TOR ML or -10.5 spread. Raptors have a 10-point lead in Q3 with Scottie Barnes controlling the game.",
-            "ou": "UNDER 218.5 — Both defenses tightened in Q3. Only 138 pts with ~17 mins left. Pace suggests landing under 220.",
-            "props": "Scottie Barnes 25+ pts is live. He has 19 in Q3 and Toronto keeps running plays through him."
-        },
-    },
-    {
-        "id": "sas-phx",
-        "status": "live",
-        "quarter": 2,
-        "clock": "Halftime",
-        "home": "SAS", "away": "PHX",
-        "homeName": "Spurs", "awayName": "Suns",
-        "homeScore": 61, "awayScore": 49,
-        "homeWinProb": 67, "awayWinProb": 33,
-        "homeOdds": "-230", "awayOdds": "+185",
-        "ou": "228.5", "ouDir": "OVER",
-        "spread": "SAS -12.5",
-        "analysis": {
-            "best_bet": "SAS ML at -230 has value given Wembanyama's dominant first half (22 pts, 9 reb). Spurs are running PHX off the floor.",
-            "ou": "OVER 228.5 — 110 combined at half. SAS offense is clicking at 61 pts, second half should open up.",
-            "props": "Victor Wembanyama 30+ pts live is in play. He has 22 with a full second half ahead against a depleted PHX defense."
-        },
-    },
-    {
-        "id": "cle-bkn",
-        "status": "final",
-        "home": "CLE", "away": "BKN",
-        "homeName": "Cavaliers", "awayName": "Nets",
-        "homeScore": 112, "awayScore": 84,
-        "homeWinProb": 100, "awayWinProb": 0,
-        "homeOdds": None, "awayOdds": None,
-        "ou": None, "spread": None,
-        "analysis": {
-            "best_bet": "CLE covered easily as -9 favorites. Mobley & Mitchell combined for 58 pts.",
-            "ou": "Final 196 — went UNDER 214.5 total. BKN's offense completely shut down in the second half.",
-            "props": "Donovan Mitchell scored 31. Anyone who had his points OVER 27.5 cashed comfortably."
-        },
-    },
-    {
-        "id": "cha-hou",
-        "status": "final",
-        "home": "CHA", "away": "HOU",
-        "homeName": "Hornets", "awayName": "Rockets",
-        "homeScore": 101, "awayScore": 105,
-        "homeWinProb": 0, "awayWinProb": 100,
-        "homeOdds": None, "awayOdds": None,
-        "ou": None, "spread": None,
-        "analysis": {
-            "best_bet": "HOU ML cashed. Rockets won outright as slight road favorites (-130). Şengün delivered the game-winner.",
-            "ou": "Final 206 — went UNDER 214 total. Low-scoring fourth quarter kept it just under.",
-            "props": "Alperen Şengün: 24 pts, 14 reb, 6 ast. His PRA OVER 38.5 hit with room to spare."
-        },
-    },
-    {
-        "id": "lal-dal",
-        "status": "final",
-        "home": "LAL", "away": "DAL",
-        "homeName": "Lakers", "awayName": "Mavericks",
-        "homeScore": 124, "awayScore": 104,
-        "homeWinProb": 100, "awayWinProb": 0,
-        "homeOdds": None, "awayOdds": None,
-        "ou": None, "spread": None,
-        "analysis": {
-            "best_bet": "LAL blowout — covered -7 by +13. LeBron's triple-double sealed it.",
-            "ou": "OVER 224.5 cashed — 228 combined. Lakers' up-tempo pace in the second half did it.",
-            "props": "LeBron James: 28 pts, 12 reb, 11 ast. Triple-double OVER props were the play of the night."
-        },
-    },
-    {
-        "id": "gsw-bos",
-        "status": "upcoming",
-        "home": "GSW", "away": "BOS",
-        "homeName": "Warriors", "awayName": "Celtics",
-        "time": "7:00 PM PT",
-        "homeWinProb": 32.2, "awayWinProb": 67.8,
-        "homeOdds": "+148", "awayOdds": "-175",
-        "spread": "BOS -5.5", "ou": "224.5",
-        "analysis": {
-            "best_bet": "BOS -5.5 ATS — Celtics are 8-2 ATS on the road this season. GSW ranks 24th in defensive efficiency. Tatum likely goes off.",
-            "ou": "LEAN OVER 224.5 — Warriors play at a top-5 pace, Celtics have the firepower. Both teams averaging 118+ PPG in Feb.",
-            "props": "Jayson Tatum OVER 27.5 pts (-115) is the top prop. He's averaging 31.2 in last 5 road games and GSW gives up 118+ at home."
-        },
-    },
-    {
-        "id": "sac-orl",
-        "status": "upcoming",
-        "home": "SAC", "away": "ORL",
-        "homeName": "Kings", "awayName": "Magic",
-        "time": "7:00 PM PT",
-        "homeWinProb": 23.9, "awayWinProb": 76.1,
-        "homeOdds": "+210", "awayOdds": "-255",
-        "spread": "ORL -7", "ou": "215.0",
-        "analysis": {
-            "best_bet": "ORL ML (-255) — Magic are the 2nd-best team by net rating. Banchero is a mismatch nightmare for SAC who ranks 29th in defense.",
-            "ou": "LEAN UNDER 215 — Orlando plays elite team defense (4th in points allowed). Kings without key bench pieces tonight.",
-            "props": "Paolo Banchero OVER 24.5 pts (-118) — has 28+ in 4 of last 5 games, and SAC has no answer for him at the 4."
-        },
-    },
-    {
-        "id": "lac-den",
-        "status": "upcoming",
-        "home": "LAC", "away": "DEN",
-        "homeName": "Clippers", "awayName": "Nuggets",
-        "time": "7:30 PM PT",
-        "homeWinProb": 37.6, "awayWinProb": 62.4,
-        "homeOdds": "+105", "awayOdds": "-125",
-        "spread": "DEN -3", "ou": "221.5",
-        "analysis": {
-            "best_bet": "DEN -3 ATS — Nuggets are 7-1-1 ATS as road favorites this season. Jokić in a must-win stretch for playoff seeding.",
-            "ou": "OVER 221.5 — Jokić demands double teams and opens up shooters. LAC allows 117+ PPG at home, DEN scores 118+.",
-            "props": "Nikola Jokić OVER 12.5 reb (-130) — double-doubles in 8 straight, and LAC ranks 28th in reb defense. Hammer it."
+            "best_bet": "GSW +2.5 ATS — massive line move after Tatum scratched. Lean GSW to cover.",
+            "ou": "UNDER 219.5 — Without Tatum, BOS offense loses its ceiling. Expect a slower game.",
+            "props": "Jaylen Brown OVER 30.5 pts — inherits full usage with Tatum out.",
         },
     },
 ]
 
-STANDINGS = {
-    "East": [
-        {"abbr":"DET","team":"Detroit Pistons","w":40,"l":13,"pct":".755","streak":"W3","gb":"-"},
-        {"abbr":"BOS","team":"Boston Celtics","w":35,"l":19,"pct":".648","streak":"W2","gb":"5.5"},
-        {"abbr":"NYK","team":"New York Knicks","w":35,"l":20,"pct":".636","streak":"L1","gb":"6.0"},
-        {"abbr":"CLE","team":"Cleveland Cavaliers","w":35,"l":21,"pct":".625","streak":"W4","gb":"6.5"},
-        {"abbr":"TOR","team":"Toronto Raptors","w":32,"l":23,"pct":".582","streak":"W1","gb":"9.5"},
-        {"abbr":"PHI","team":"Philadelphia 76ers","w":30,"l":25,"pct":".545","streak":"L2","gb":"12.0"},
-        {"abbr":"ORL","team":"Orlando Magic","w":28,"l":25,"pct":".528","streak":"W5","gb":"13.0"},
-        {"abbr":"MIA","team":"Miami Heat","w":29,"l":27,"pct":".518","streak":"L1","gb":"13.5"},
-    ],
-    "West": [
-        {"abbr":"OKC","team":"OKC Thunder","w":42,"l":14,"pct":".750","streak":"W6","gb":"-"},
-        {"abbr":"SAS","team":"San Antonio Spurs","w":38,"l":16,"pct":".704","streak":"W3","gb":"3.0"},
-        {"abbr":"DEN","team":"Denver Nuggets","w":35,"l":20,"pct":".636","streak":"W2","gb":"6.5"},
-        {"abbr":"HOU","team":"Houston Rockets","w":34,"l":20,"pct":".630","streak":"W1","gb":"7.0"},
-        {"abbr":"LAL","team":"Los Angeles Lakers","w":33,"l":21,"pct":".611","streak":"L2","gb":"8.0"},
-        {"abbr":"MIN","team":"Minnesota T-Wolves","w":34,"l":22,"pct":".607","streak":"W3","gb":"8.0"},
-        {"abbr":"PHX","team":"Phoenix Suns","w":32,"l":23,"pct":".582","streak":"L3","gb":"9.5"},
-        {"abbr":"GSW","team":"Golden State Warriors","w":29,"l":26,"pct":".527","streak":"W1","gb":"12.5"},
-    ],
-}
-
-PROPS = [
+MOCK_PROPS = [
     {
-        "player": "Paolo Banchero",
-        "team": "ORL", "pos": "F",
-        "game": "SAC vs ORL",
-        "prop": "Points 24.5+",
-        "rec": "OVER",
-        "line": 24.5,
-        "conf": 74,
-        "edge_score": 85,
-        "l5": 80, "l10": 70, "l15": 67,
-        "streak": 4,
-        "avg": 26.8,
-        "odds": "-118",
+        "player": "Paolo Banchero", "team": "ORL", "pos": "F", "game": "SAC vs ORL",
+        "prop": "Points 24.5+", "rec": "OVER", "line": 24.5, "conf": 74, "edge_score": 85,
+        "l5": 80, "l10": 70, "l15": 67, "streak": 4, "avg": 26.8, "odds": "-118",
         "reason": "28+ pts in 4 of last 5. SAC defense ranks 29th overall.",
     },
     {
-        "player": "Jayson Tatum",
-        "team": "BOS", "pos": "F",
-        "game": "GSW vs BOS",
-        "prop": "Points 27.5+",
-        "rec": "OVER",
-        "line": 27.5,
-        "conf": 72,
-        "edge_score": 81,
-        "l5": 80, "l10": 70, "l15": 73,
-        "streak": 3,
-        "avg": 31.2,
-        "odds": "-115",
-        "reason": "Averaging 31.2 PPG last 5 road games. GSW allows 118+ PPG at home.",
+        "player": "Jaylen Brown", "team": "BOS", "pos": "F", "game": "GSW vs BOS",
+        "prop": "Points 30.5+", "rec": "OVER", "line": 30.5, "conf": 70, "edge_score": 79,
+        "l5": 60, "l10": 60, "l15": 53, "streak": 0, "avg": 27.4, "odds": "-110",
+        "reason": "Tatum OUT — Brown becomes the #1 option with full usage bump.",
     },
     {
-        "player": "Nikola Jokić",
-        "team": "DEN", "pos": "C",
-        "game": "LAC vs DEN",
-        "prop": "Rebounds 12.5+",
-        "rec": "OVER",
-        "line": 12.5,
-        "conf": 68,
-        "edge_score": 74,
-        "l5": 80, "l10": 70, "l15": 60,
-        "streak": 4,
-        "avg": 13.4,
-        "odds": "-130",
+        "player": "Nikola Jokić", "team": "DEN", "pos": "C", "game": "LAC vs DEN",
+        "prop": "Rebounds 12.5+", "rec": "OVER", "line": 12.5, "conf": 68, "edge_score": 74,
+        "l5": 80, "l10": 70, "l15": 60, "streak": 4, "avg": 13.4, "odds": "-130",
         "reason": "Double-doubles in 8 straight. LAC ranks 28th in reb defense.",
     },
     {
-        "player": "Alperen Şengün",
-        "team": "HOU", "pos": "C",
-        "game": "Recent Form",
-        "prop": "Pts+Reb+Ast 38.5+",
-        "rec": "OVER",
-        "line": 38.5,
-        "conf": 65,
-        "edge_score": 69,
-        "l5": 60, "l10": 60, "l15": 53,
-        "streak": 2,
-        "avg": 40.1,
-        "odds": "-110",
+        "player": "Alperen Şengün", "team": "HOU", "pos": "C", "game": "Recent Form",
+        "prop": "Pts+Reb+Ast 38.5+", "rec": "OVER", "line": 38.5, "conf": 65, "edge_score": 69,
+        "l5": 60, "l10": 60, "l15": 53, "streak": 2, "avg": 40.1, "odds": "-110",
         "reason": "Triple-double threat in 3 of last 4. Massive usage rate at center.",
     },
     {
-        "player": "Stephen Curry",
-        "team": "GSW", "pos": "G",
-        "game": "GSW vs BOS",
-        "prop": "3PM 4.5",
-        "rec": "UNDER",
-        "line": 4.5,
-        "conf": 61,
-        "edge_score": 63,
-        "l5": 60, "l10": 50, "l15": 47,
-        "streak": 2,
-        "avg": 3.8,
-        "odds": "+105",
+        "player": "Stephen Curry", "team": "GSW", "pos": "G", "game": "GSW vs BOS",
+        "prop": "3PM 4.5", "rec": "UNDER", "line": 4.5, "conf": 61, "edge_score": 63,
+        "l5": 60, "l10": 50, "l15": 47, "streak": 2, "avg": 3.8, "odds": "+105",
         "reason": "BOS limits 3PA aggressively. Curry shooting 37% from 3 in February.",
     },
 ]
 
 
+# ── PYDANTIC MODELS ───────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -310,17 +466,82 @@ def get_effective_key(request_key: str) -> str:
     return key
 
 
-@app.get("/api/games")
-def get_games():
-    return {"games": GAMES}
+# ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
-@app.get("/api/standings")
-def get_standings():
-    return {"standings": STANDINGS}
+@app.get("/api/games")
+async def get_games():
+    async with httpx.AsyncClient() as client:
+        espn_games = await fetch_espn_games(client)
+        odds_map   = await fetch_odds(client)
+
+    if not espn_games:
+        # Fall back to mock data if ESPN is unreachable
+        return {"games": MOCK_GAMES, "source": "mock"}
+
+    # Merge odds into ESPN game data
+    result = []
+    for g in espn_games:
+        gid = g["id"]
+        o   = odds_map.get(gid, {})
+
+        # Win probs — derive from moneyline if available
+        home_prob = away_prob = 50.0
+        if o.get("homeOdds") and o.get("awayOdds"):
+            try:
+                hd = american_to_decimal(o["homeOdds"])
+                ad = american_to_decimal(o["awayOdds"])
+                total = (1/hd) + (1/ad)
+                home_prob = round((1/hd) / total * 100, 1)
+                away_prob = round((1/ad) / total * 100, 1)
+            except Exception:
+                pass
+
+        result.append({
+            **g,
+            "homeWinProb": home_prob,
+            "awayWinProb": away_prob,
+            "homeOdds": o.get("homeOdds"),
+            "awayOdds": o.get("awayOdds"),
+            "spread": o.get("spread"),
+            "ou": o.get("ou"),
+            "ouDir": None,
+            "analysis": {
+                "best_bet": "Click REFRESH ↺ for a live Gemini analysis.",
+                "ou": None,
+                "props": None,
+            },
+        })
+
+    return {"games": result, "source": "live"}
+
 
 @app.get("/api/props")
-def get_props():
-    return {"props": PROPS}
+async def get_props():
+    async with httpx.AsyncClient() as client:
+        injuries = await fetch_espn_injuries(client)
+        live_props = await fetch_player_props(client, [])
+
+    if live_props:
+        # Filter out injured players automatically
+        filtered = [
+            p for p in live_props
+            if p["player"].lower() not in injuries
+        ]
+        return {"props": filtered, "source": "live", "injured_out": list(injuries)}
+
+    # Fall back to mock props, still filtered by injuries
+    filtered_mock = [
+        p for p in MOCK_PROPS
+        if p["player"].lower() not in injuries
+    ]
+    return {"props": filtered_mock, "source": "mock", "injured_out": list(injuries)}
+
+
+@app.get("/api/injuries")
+async def get_injuries():
+    async with httpx.AsyncClient() as client:
+        injured = await fetch_espn_injuries(client)
+    return {"injured_out": sorted(injured)}
 
 
 @app.post("/api/parlay")
@@ -346,30 +567,43 @@ def calculate_parlay(req: ParlayRequest):
 @app.post("/api/analyze")
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
-    game = next((g for g in GAMES if g["id"] == req.game_id), None)
+
+    async with httpx.AsyncClient() as client:
+        espn_games = await fetch_espn_games(client)
+        injuries   = await fetch_espn_injuries(client)
+
+    games_to_search = espn_games if espn_games else MOCK_GAMES
+    game = next((g for g in games_to_search if g["id"] == req.game_id), None)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    if game["status"] == "upcoming":
+    system_prompt = build_system_prompt(games_to_search, injuries)
+    is_live  = game["status"] == "live"
+    is_final = game["status"] == "final"
+
+    if is_final:
+        raise HTTPException(status_code=400, detail="Game is already over.")
+
+    if is_live:
         prompt = (
-            f"Betting analysis: {game['awayName']} @ {game['homeName']}. "
-            f"Win probs: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
-            f"Spread: {game['spread']}. O/U: {game['ou']}. ML: {game['away']} {game['awayOdds']} / {game['home']} {game['homeOdds']}. "
-            f"Give: (1) Best bet (2) O/U lean (3) Top player prop. 4-5 sentences total."
+            f"Live betting: {game['awayName']} {game.get('awayScore',0)} "
+            f"@ {game['homeName']} {game.get('homeScore',0)} "
+            f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
+            f"Give: (1) Best live bet (2) Total lean (3) Player to target. Sharp and brief."
         )
     else:
         prompt = (
-            f"Live betting: {game['awayName']} {game['awayScore']} @ {game['homeName']} {game['homeScore']} "
-            f"(Q{game.get('quarter','?')} {game.get('clock','')}). "
-            f"Win prob: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
-            f"Give: (1) Best live bet (2) Total lean (3) Player to target. Sharp and brief."
+            f"Pre-game betting analysis: {game['awayName']} @ {game['homeName']}.\n"
+            f"Spread: {game.get('spread','N/A')}. O/U: {game.get('ou','N/A')}. "
+            f"ML: {game.get('awayOdds','N/A')} / {game.get('homeOdds','N/A')}.\n"
+            f"Give: (1) Best bet (2) O/U lean (3) Top player prop. 4-5 sentences total."
         )
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{GEMINI_URL}?key={key}",
             json={
-                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {"maxOutputTokens": 350, "temperature": 0.75},
             },
@@ -385,6 +619,16 @@ async def analyze_game(req: AnalyzeRequest):
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     key = get_effective_key(req.api_key)
+
+    async with httpx.AsyncClient() as client:
+        espn_games = await fetch_espn_games(client)
+        injuries   = await fetch_espn_injuries(client)
+
+    system_prompt = build_system_prompt(
+        espn_games if espn_games else MOCK_GAMES,
+        injuries,
+    )
+
     contents = [
         {"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
         for m in req.messages
@@ -393,7 +637,7 @@ async def chat(req: ChatRequest):
         resp = await client.post(
             f"{GEMINI_URL}?key={key}",
             json={
-                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": contents,
                 "generationConfig": {"maxOutputTokens": 600, "temperature": 0.75},
             },
@@ -408,7 +652,11 @@ async def chat(req: ChatRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
+    return {
+        "status": "ok",
+        "has_server_key": bool(GEMINI_API_KEY),
+        "has_odds_key": bool(ODDS_API_KEY),
+    }
 
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"

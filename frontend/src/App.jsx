@@ -1451,30 +1451,37 @@ const Loader = () => {
   }, []);
   return (
     <div style={{
-      minHeight:"100vh", display:"flex", flexDirection:"column",
+      position:"fixed", inset:0,
+      display:"flex", flexDirection:"column",
       alignItems:"center", justifyContent:"center",
-      background:T.bg, gap:28,
     }}>
       <img
         src="/static/loading.png"
         alt="DublPlay"
-        style={{ width:110, height:110, borderRadius:24, objectFit:"cover", boxShadow:"0 8px 32px rgba(0,0,0,0.5)" }}
+        style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}
       />
-      <span style={{
-        width:36, height:36,
-        border:"3px solid rgba(255,255,255,0.08)",
-        borderTopColor:T.green,
-        borderRadius:"50%",
-        display:"inline-block",
-        animation:"spin 0.8s linear infinite",
-      }} />
-      <span key={msgIdx} style={{
-        color:T.text2, fontSize:13, letterSpacing:"0.06em",
-        minWidth:180, textAlign:"center",
-        animation:"fadeUp 0.3s ease",
+      <div style={{
+        position:"relative", display:"flex", flexDirection:"column",
+        alignItems:"center", gap:20,
+        background:"rgba(0,0,0,0.45)", borderRadius:16,
+        padding:"32px 40px", backdropFilter:"blur(6px)",
       }}>
-        {LOAD_MESSAGES[msgIdx]}
-      </span>
+        <span style={{
+          width:36, height:36,
+          border:"3px solid rgba(255,255,255,0.15)",
+          borderTopColor:T.green,
+          borderRadius:"50%",
+          display:"inline-block",
+          animation:"spin 0.8s linear infinite",
+        }} />
+        <span key={msgIdx} style={{
+          color:"#fff", fontSize:13, letterSpacing:"0.06em",
+          minWidth:180, textAlign:"center",
+          animation:"fadeUp 0.3s ease",
+        }}>
+          {LOAD_MESSAGES[msgIdx]}
+        </span>
+      </div>
     </div>
   );
 };

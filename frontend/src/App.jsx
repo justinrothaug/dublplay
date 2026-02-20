@@ -1453,7 +1453,8 @@ const Loader = () => {
     <div style={{
       position:"fixed", inset:0,
       display:"flex", flexDirection:"column",
-      alignItems:"center", justifyContent:"center",
+      alignItems:"center", justifyContent:"flex-end",
+      paddingBottom:"12vh",
     }}>
       <img
         src="/static/loading.png"

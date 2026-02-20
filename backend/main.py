@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import httpx
 import os
 import pathlib
-import math
 
 app = FastAPI(title="NBA Edge API")
 
@@ -27,17 +26,152 @@ LEADERS: West – OKC 42-14, SAS 38-16, DEN 35-20. East – DET 40-13, BOS 35-19
 Give sharp, direct betting analysis. Use betting terminology (ATS, ML, O/U, value, etc.).
 Be concise. Always note entertainment-only disclaimer briefly at end."""
 
-# Static game/standings data (in production, replace with live sportsbook API)
 GAMES = [
-    {"id":"nyk-det","status":"live","quarter":4,"clock":"7:21","home":"NYK","away":"DET","homeName":"Knicks","awayName":"Pistons","homeScore":88,"awayScore":104,"homeWinProb":18,"awayWinProb":82},
-    {"id":"chi-tor","status":"live","quarter":3,"clock":"5:09","home":"CHI","away":"TOR","homeName":"Bulls","awayName":"Raptors","homeScore":64,"awayScore":74,"homeWinProb":28,"awayWinProb":72},
-    {"id":"sas-phx","status":"live","quarter":2,"clock":"Half","home":"SAS","away":"PHX","homeName":"Spurs","awayName":"Suns","homeScore":61,"awayScore":49,"homeWinProb":67,"awayWinProb":33},
-    {"id":"cle-bkn","status":"final","home":"CLE","away":"BKN","homeName":"Cavaliers","awayName":"Nets","homeScore":112,"awayScore":84},
-    {"id":"cha-hou","status":"final","home":"CHA","away":"HOU","homeName":"Hornets","awayName":"Rockets","homeScore":101,"awayScore":105},
-    {"id":"lal-dal","status":"final","home":"LAL","away":"DAL","homeName":"Lakers","awayName":"Mavericks","homeScore":124,"awayScore":104},
-    {"id":"gsw-bos","status":"upcoming","home":"GSW","away":"BOS","homeName":"Warriors","awayName":"Celtics","time":"7:00 PM PT","homeWinProb":32.2,"awayWinProb":67.8,"homeOdds":"+148","awayOdds":"-175","spread":"BOS -5.5","ou":"224.5"},
-    {"id":"sac-orl","status":"upcoming","home":"SAC","away":"ORL","homeName":"Kings","awayName":"Magic","time":"7:00 PM PT","homeWinProb":23.9,"awayWinProb":76.1,"homeOdds":"+210","awayOdds":"-255","spread":"ORL -7","ou":"215.0"},
-    {"id":"lac-den","status":"upcoming","home":"LAC","away":"DEN","homeName":"Clippers","awayName":"Nuggets","time":"7:30 PM PT","homeWinProb":37.6,"awayWinProb":62.4,"homeOdds":"+105","awayOdds":"-125","spread":"DEN -3","ou":"221.5"},
+    {
+        "id": "nyk-det",
+        "status": "live",
+        "quarter": 4,
+        "clock": "7:21",
+        "home": "NYK", "away": "DET",
+        "homeName": "Knicks", "awayName": "Pistons",
+        "homeScore": 88, "awayScore": 104,
+        "homeWinProb": 18, "awayWinProb": 82,
+        # Live moneylines & total
+        "homeOdds": "+480", "awayOdds": "-700",
+        "ou": "202.5", "ouDir": "OVER",
+        "spread": "DET -16.5",
+        "analysis": {
+            "best_bet": "DET ML (-700) — only for those already in. Live cover at -16.5 is where the value is. Pistons have dominated every quarter.",
+            "ou": "OVER 202.5 — both teams are still pushing. Currently at 192 combined, averaging 24+ pts per remaining Q4 minute.",
+            "props": "Cade Cunningham has 28 pts, 7 ast with 7:21 left. Hammering his points OVER for any remaining live props."
+        },
+    },
+    {
+        "id": "chi-tor",
+        "status": "live",
+        "quarter": 3,
+        "clock": "5:09",
+        "home": "CHI", "away": "TOR",
+        "homeName": "Bulls", "awayName": "Raptors",
+        "homeScore": 64, "awayScore": 74,
+        "homeWinProb": 28, "awayWinProb": 72,
+        "homeOdds": "+280", "awayOdds": "-380",
+        "ou": "218.5", "ouDir": "UNDER",
+        "spread": "TOR -10.5",
+        "analysis": {
+            "best_bet": "TOR ML or -10.5 spread. Raptors have a 10-point lead in Q3 with Scottie Barnes controlling the game.",
+            "ou": "UNDER 218.5 — Both defenses tightened in Q3. Only 138 pts with ~17 mins left. Pace suggests landing under 220.",
+            "props": "Scottie Barnes 25+ pts is live. He has 19 in Q3 and Toronto keeps running plays through him."
+        },
+    },
+    {
+        "id": "sas-phx",
+        "status": "live",
+        "quarter": 2,
+        "clock": "Halftime",
+        "home": "SAS", "away": "PHX",
+        "homeName": "Spurs", "awayName": "Suns",
+        "homeScore": 61, "awayScore": 49,
+        "homeWinProb": 67, "awayWinProb": 33,
+        "homeOdds": "-230", "awayOdds": "+185",
+        "ou": "228.5", "ouDir": "OVER",
+        "spread": "SAS -12.5",
+        "analysis": {
+            "best_bet": "SAS ML at -230 has value given Wembanyama's dominant first half (22 pts, 9 reb). Spurs are running PHX off the floor.",
+            "ou": "OVER 228.5 — 110 combined at half. SAS offense is clicking at 61 pts, second half should open up.",
+            "props": "Victor Wembanyama 30+ pts live is in play. He has 22 with a full second half ahead against a depleted PHX defense."
+        },
+    },
+    {
+        "id": "cle-bkn",
+        "status": "final",
+        "home": "CLE", "away": "BKN",
+        "homeName": "Cavaliers", "awayName": "Nets",
+        "homeScore": 112, "awayScore": 84,
+        "homeWinProb": 100, "awayWinProb": 0,
+        "homeOdds": None, "awayOdds": None,
+        "ou": None, "spread": None,
+        "analysis": {
+            "best_bet": "CLE covered easily as -9 favorites. Mobley & Mitchell combined for 58 pts.",
+            "ou": "Final 196 — went UNDER 214.5 total. BKN's offense completely shut down in the second half.",
+            "props": "Donovan Mitchell scored 31. Anyone who had his points OVER 27.5 cashed comfortably."
+        },
+    },
+    {
+        "id": "cha-hou",
+        "status": "final",
+        "home": "CHA", "away": "HOU",
+        "homeName": "Hornets", "awayName": "Rockets",
+        "homeScore": 101, "awayScore": 105,
+        "homeWinProb": 0, "awayWinProb": 100,
+        "homeOdds": None, "awayOdds": None,
+        "ou": None, "spread": None,
+        "analysis": {
+            "best_bet": "HOU ML cashed. Rockets won outright as slight road favorites (-130). Şengün delivered the game-winner.",
+            "ou": "Final 206 — went UNDER 214 total. Low-scoring fourth quarter kept it just under.",
+            "props": "Alperen Şengün: 24 pts, 14 reb, 6 ast. His PRA OVER 38.5 hit with room to spare."
+        },
+    },
+    {
+        "id": "lal-dal",
+        "status": "final",
+        "home": "LAL", "away": "DAL",
+        "homeName": "Lakers", "awayName": "Mavericks",
+        "homeScore": 124, "awayScore": 104,
+        "homeWinProb": 100, "awayWinProb": 0,
+        "homeOdds": None, "awayOdds": None,
+        "ou": None, "spread": None,
+        "analysis": {
+            "best_bet": "LAL blowout — covered -7 by +13. LeBron's triple-double sealed it.",
+            "ou": "OVER 224.5 cashed — 228 combined. Lakers' up-tempo pace in the second half did it.",
+            "props": "LeBron James: 28 pts, 12 reb, 11 ast. Triple-double OVER props were the play of the night."
+        },
+    },
+    {
+        "id": "gsw-bos",
+        "status": "upcoming",
+        "home": "GSW", "away": "BOS",
+        "homeName": "Warriors", "awayName": "Celtics",
+        "time": "7:00 PM PT",
+        "homeWinProb": 32.2, "awayWinProb": 67.8,
+        "homeOdds": "+148", "awayOdds": "-175",
+        "spread": "BOS -5.5", "ou": "224.5",
+        "analysis": {
+            "best_bet": "BOS -5.5 ATS — Celtics are 8-2 ATS on the road this season. GSW ranks 24th in defensive efficiency. Tatum likely goes off.",
+            "ou": "LEAN OVER 224.5 — Warriors play at a top-5 pace, Celtics have the firepower. Both teams averaging 118+ PPG in Feb.",
+            "props": "Jayson Tatum OVER 27.5 pts (-115) is the top prop. He's averaging 31.2 in last 5 road games and GSW gives up 118+ at home."
+        },
+    },
+    {
+        "id": "sac-orl",
+        "status": "upcoming",
+        "home": "SAC", "away": "ORL",
+        "homeName": "Kings", "awayName": "Magic",
+        "time": "7:00 PM PT",
+        "homeWinProb": 23.9, "awayWinProb": 76.1,
+        "homeOdds": "+210", "awayOdds": "-255",
+        "spread": "ORL -7", "ou": "215.0",
+        "analysis": {
+            "best_bet": "ORL ML (-255) — Magic are the 2nd-best team by net rating. Banchero is a mismatch nightmare for SAC who ranks 29th in defense.",
+            "ou": "LEAN UNDER 215 — Orlando plays elite team defense (4th in points allowed). Kings without key bench pieces tonight.",
+            "props": "Paolo Banchero OVER 24.5 pts (-118) — has 28+ in 4 of last 5 games, and SAC has no answer for him at the 4."
+        },
+    },
+    {
+        "id": "lac-den",
+        "status": "upcoming",
+        "home": "LAC", "away": "DEN",
+        "homeName": "Clippers", "awayName": "Nuggets",
+        "time": "7:30 PM PT",
+        "homeWinProb": 37.6, "awayWinProb": 62.4,
+        "homeOdds": "+105", "awayOdds": "-125",
+        "spread": "DEN -3", "ou": "221.5",
+        "analysis": {
+            "best_bet": "DEN -3 ATS — Nuggets are 7-1-1 ATS as road favorites this season. Jokić in a must-win stretch for playoff seeding.",
+            "ou": "OVER 221.5 — Jokić demands double teams and opens up shooters. LAC allows 117+ PPG at home, DEN scores 118+.",
+            "props": "Nikola Jokić OVER 12.5 reb (-130) — double-doubles in 8 straight, and LAC ranks 28th in reb defense. Hammer it."
+        },
+    },
 ]
 
 STANDINGS = {
@@ -63,7 +197,6 @@ STANDINGS = {
     ],
 }
 
-# Props with rich analytics: edge_score, L5/L10/L15 hit rates, streak, avg, odds
 PROPS = [
     {
         "player": "Paolo Banchero",
@@ -156,32 +289,24 @@ class AnalyzeRequest(BaseModel):
     api_key: str = ""
 
 class ParlayRequest(BaseModel):
-    odds: list[str]  # American odds strings like "-110", "+150"
+    odds: list[str]
 
 
 def american_to_decimal(odds_str: str) -> float:
-    """Convert American odds string to decimal odds."""
     o = int(odds_str.replace("+", ""))
-    if o > 0:
-        return (o / 100) + 1
-    else:
-        return (100 / abs(o)) + 1
+    return (o / 100) + 1 if o > 0 else (100 / abs(o)) + 1
 
 
 def decimal_to_american(decimal: float) -> str:
-    """Convert decimal odds to American odds string."""
     if decimal >= 2.0:
-        american = (decimal - 1) * 100
-        return f"+{int(round(american))}"
-    else:
-        american = -100 / (decimal - 1)
-        return f"{int(round(american))}"
+        return f"+{int(round((decimal - 1) * 100))}"
+    return f"{int(round(-100 / (decimal - 1)))}"
 
 
 def get_effective_key(request_key: str) -> str:
     key = request_key or GEMINI_API_KEY
     if not key:
-        raise HTTPException(status_code=400, detail="No Gemini API key provided. Set GEMINI_API_KEY env var or pass in request.")
+        raise HTTPException(status_code=400, detail="No Gemini API key provided.")
     return key
 
 
@@ -189,11 +314,9 @@ def get_effective_key(request_key: str) -> str:
 def get_games():
     return {"games": GAMES}
 
-
 @app.get("/api/standings")
 def get_standings():
     return {"standings": STANDINGS}
-
 
 @app.get("/api/props")
 def get_props():
@@ -203,34 +326,20 @@ def get_props():
 @app.post("/api/parlay")
 def calculate_parlay(req: ParlayRequest):
     if len(req.odds) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 legs for a parlay")
-    if len(req.odds) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 legs")
-
+        raise HTTPException(status_code=400, detail="Need at least 2 legs")
     try:
-        decimal_odds = [american_to_decimal(o) for o in req.odds]
+        decimals = [american_to_decimal(o) for o in req.odds]
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid odds format. Use American odds like -110 or +150")
-
-    combined_decimal = 1.0
-    for d in decimal_odds:
-        combined_decimal *= d
-
-    combined_american = decimal_to_american(combined_decimal)
-    implied_prob = round((1 / combined_decimal) * 100, 1)
-
-    # Payout per $100 stake
-    if combined_decimal >= 2.0:
-        payout_per_100 = round((combined_decimal - 1) * 100, 2)
-    else:
-        payout_per_100 = round((combined_decimal - 1) * 100, 2)
-
+        raise HTTPException(status_code=400, detail="Invalid odds format")
+    combined = 1.0
+    for d in decimals:
+        combined *= d
     return {
         "legs": len(req.odds),
-        "combined_odds": combined_american,
-        "combined_decimal": round(combined_decimal, 3),
-        "implied_prob": implied_prob,
-        "payout_per_100": payout_per_100,
+        "combined_odds": decimal_to_american(combined),
+        "combined_decimal": round(combined, 3),
+        "implied_prob": round((1 / combined) * 100, 1),
+        "payout_per_100": round((combined - 1) * 100, 2),
     }
 
 
@@ -242,15 +351,19 @@ async def analyze_game(req: AnalyzeRequest):
         raise HTTPException(status_code=404, detail="Game not found")
 
     if game["status"] == "upcoming":
-        prompt = (f"Betting analysis: {game['awayName']} @ {game['homeName']}. "
-                  f"Win probs: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
-                  f"Spread: {game['spread']}. O/U: {game['ou']}. ML: {game['away']} {game['awayOdds']} / {game['home']} {game['homeOdds']}. "
-                  f"Best play in 3-4 sentences.")
+        prompt = (
+            f"Betting analysis: {game['awayName']} @ {game['homeName']}. "
+            f"Win probs: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
+            f"Spread: {game['spread']}. O/U: {game['ou']}. ML: {game['away']} {game['awayOdds']} / {game['home']} {game['homeOdds']}. "
+            f"Give: (1) Best bet (2) O/U lean (3) Top player prop. 4-5 sentences total."
+        )
     else:
-        prompt = (f"Live betting: {game['awayName']} {game['awayScore']} @ {game['homeName']} {game['homeScore']} "
-                  f"(Q{game.get('quarter','?')} {game.get('clock','')}). "
-                  f"Win prob: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
-                  f"Any live value? Brief and sharp.")
+        prompt = (
+            f"Live betting: {game['awayName']} {game['awayScore']} @ {game['homeName']} {game['homeScore']} "
+            f"(Q{game.get('quarter','?')} {game.get('clock','')}). "
+            f"Win prob: {game['away']} {game['awayWinProb']}%, {game['home']} {game['homeWinProb']}%. "
+            f"Give: (1) Best live bet (2) Total lean (3) Player to target. Sharp and brief."
+        )
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -258,7 +371,7 @@ async def analyze_game(req: AnalyzeRequest):
             json={
                 "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 400, "temperature": 0.75},
+                "generationConfig": {"maxOutputTokens": 350, "temperature": 0.75},
             },
             timeout=30,
         )
@@ -298,13 +411,10 @@ def health():
     return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
 
 
-# ── Serve React build (production) ───────────────────────────────────────────
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
     def serve_spa(full_path: str):
-        """Catch-all: serve index.html for React Router."""
-        index = STATIC_DIR / "index.html"
-        return FileResponse(str(index))
+        return FileResponse(str(STATIC_DIR / "index.html"))

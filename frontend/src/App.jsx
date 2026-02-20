@@ -624,7 +624,7 @@ function TopPickCard({ pick, rank, onPickOdds }) {
         </div>
         {/* Pick text */}
         <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
-          {pick.text}
+          {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
         </div>
       </div>
     </div>

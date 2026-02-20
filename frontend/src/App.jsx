@@ -542,7 +542,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
       </div>
 
       {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
-      <TopPicksSection games={ordered} aiOverrides={aiOverrides} />
+      <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds} />
 
       {/* Horizontal scroll rail */}
       <div style={{
@@ -566,11 +566,13 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
 }
 
 // ── TOP PICKS (top 3 individual bets ranked by Dubl Score) ───────────────────
-function TopPickCard({ pick, rank }) {
+function TopPickCard({ pick, rank, onPickOdds }) {
   const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const color = isBet ? T.green : T.gold;
+  const oddsMatch = pick.text.match(/([+-]\d{2,3})/);
+  const extractedOdds = oddsMatch ? oddsMatch[1] : "-110";
   return (
     <div style={{
       background: T.card,
@@ -580,7 +582,8 @@ function TopPickCard({ pick, rank }) {
     }}>
       <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
       <div style={{ padding:"12px 14px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        {/* Top row: rank/type badge + score */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
             <span style={{
@@ -591,19 +594,42 @@ function TopPickCard({ pick, rank }) {
           </div>
           <EdgeCircle score={pick.score} />
         </div>
-        <div style={{ fontSize:11, color:T.text3, marginBottom:5 }}>
-          {pick.game.awayName} @ {pick.game.homeName}
-          {pick.game.status === "live" && <span style={{ color:T.red, marginLeft:6, fontWeight:700 }}>LIVE</span>}
+        {/* Team logos row */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+          <TeamBadge abbr={pick.game.away} size={32} />
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:10, color:T.text2, fontWeight:600 }}>
+              {pick.game.awayName} <span style={{ color:T.text3 }}>@</span> {pick.game.homeName}
+              {pick.game.status === "live" && <span style={{ color:T.red, marginLeft:6, fontWeight:700 }}>LIVE</span>}
+            </div>
+          </div>
+          <TeamBadge abbr={pick.game.home} size={32} />
         </div>
-        <span style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
+        {/* Pick text */}
+        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5, marginBottom:10 }}>
           {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
-        </span>
+        </div>
+        {/* Calc button */}
+        {onPickOdds && (
+          <button
+            onClick={() => onPickOdds(extractedOdds)}
+            style={{
+              width:"100%", background:"rgba(255,255,255,0.05)",
+              border:`1px solid ${T.border}`, borderRadius:8,
+              color:T.gold, fontSize:11, fontWeight:700,
+              padding:"7px 0", cursor:"pointer", letterSpacing:"0.06em",
+              fontFamily:"inherit",
+            }}
+          >
+            💰 PAYOUT CALC
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function TopPicksSection({ games, aiOverrides }) {
+function TopPicksSection({ games, aiOverrides, onPickOdds }) {
   const picks = [];
   for (const g of games) {
     if (g.status === "final") continue;
@@ -620,7 +646,7 @@ function TopPicksSection({ games, aiOverrides }) {
     <div style={{ padding:"0 20px", marginBottom:16 }}>
       <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
       <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))" }}>
-        {top.map((pick,i) => <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} />)}
+        {top.map((pick,i) => <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onPickOdds={onPickOdds} />)}
       </div>
     </div>
   );
@@ -642,8 +668,9 @@ function BestBetsSection({ props }) {
 // ── PAYOUT CALC POPUP (bottom-sheet, iOS-optimized) ───────────────────────────
 function CalcPopup({ onClose, initialOdds }) {
   const [odds, setOdds] = useState(initialOdds || "-110");
-  const [stake, setStake] = useState("100");
+  const [stake, setStake] = useState(() => localStorage.getItem("calc_stake") || "100");
   const payout = americanToPayout(odds, parseFloat(stake) || 0);
+  const handleStake = v => { setStake(v); localStorage.setItem("calc_stake", v); };
   const profit = payout ? (parseFloat(payout) - (parseFloat(stake) || 0)).toFixed(2) : null;
 
   return (
@@ -673,7 +700,7 @@ function CalcPopup({ onClose, initialOdds }) {
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           {[
             { label:"ODDS (e.g. -110, +150)", val:odds, set:setOdds, placeholder:"-110", inputMode:"text" },
-            { label:"STAKE ($)", val:stake, set:setStake, placeholder:"100", inputMode:"decimal" },
+            { label:"STAKE ($)", val:stake, set:handleStake, placeholder:"100", inputMode:"decimal" },
           ].map(f => (
             <div key={f.label}>
               <label style={{ display:"block", fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:7 }}>{f.label}</label>

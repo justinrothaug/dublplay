@@ -918,27 +918,18 @@ async def debug_odds():
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
-        injuries, pp_props, dk_props = await asyncio.gather(
+        injuries, pp_props = await asyncio.gather(
             fetch_espn_injuries(client),
             fetch_prizepicks_props(client),
-            fetch_draftkings_props(client),
             return_exceptions=True,
         )
     if isinstance(injuries, Exception):
         injuries = set()
     if isinstance(pp_props, Exception):
         pp_props = []
-    if isinstance(dk_props, Exception):
-        dk_props = []
 
-    # Priority: PrizePicks (free, no key, real lines) → DraftKings (real, public)
-    # Never fall back to estimated/mock — return empty if both sources fail
-    props  = pp_props or dk_props
-    source = "prizepicks" if pp_props else ("draftkings" if dk_props else "none")
-
-    # Filter injured players (both sources already remove lines for injured players,
-    # but ESPN injury feed gives us an extra safety net)
-    filtered = [p for p in props if p["player"].lower() not in injuries]
+    filtered = [p for p in pp_props if p["player"].lower() not in injuries]
+    source = "prizepicks" if pp_props else "none"
     return {"props": filtered, "source": source, "injured_out": sorted(injuries)}
 
 

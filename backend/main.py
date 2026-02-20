@@ -882,17 +882,21 @@ async def analyze_game(req: AnalyzeRequest):
             f"Live: {game['awayName']} {game.get('awayScore',0)} "
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            "Respond with EXACTLY these 2 labeled lines, no other text:\n"
+            "Search for today's current player prop lines for this game on DraftKings or PrizePicks, then respond.\n"
+            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
             "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
+            "PLAYER_PROP: [Use the REAL current DraftKings/PrizePicks line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason'. Never invent a line.]"
         )
     else:
         prompt = (
             f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
-            "Respond with EXACTLY these 2 labeled lines, no other text:\n"
+            "Search for today's current player prop lines for this game on DraftKings or PrizePicks, then respond.\n"
+            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
             "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
+            "PLAYER_PROP: [Use the REAL current DraftKings/PrizePicks line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason'. Never invent a line.]"
         )
 
     async with httpx.AsyncClient() as client:
@@ -901,7 +905,8 @@ async def analyze_game(req: AnalyzeRequest):
             json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 500, "temperature": 0.7},
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 600, "temperature": 0.7},
             },
             timeout=30,
         )

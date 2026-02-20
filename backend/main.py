@@ -458,14 +458,30 @@ async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
             "https://api.prizepicks.com/projections",
             params={"league_id": "7", "per_page": "250", "single_stat": "true"},
             headers={
-                "User-Agent": "Mozilla/5.0 (compatible)",
-                "Accept": "application/json",
-                "Referer": "https://app.prizepicks.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Origin": "https://app.prizepicks.com",
+                "Referer": "https://app.prizepicks.com/board",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+                "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Connection": "keep-alive",
             },
             timeout=15,
         )
+        if r.status_code != 200:
+            import logging
+            logging.warning(f"PrizePicks API returned {r.status_code}: {r.text[:200]}")
+            return []
         data = r.json()
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"PrizePicks fetch error: {e}")
         return []
 
     # Build player lookup from "included" array
@@ -485,8 +501,9 @@ async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
         if proj.get("type") != "projection":
             continue
         attrs = proj.get("attributes", {})
-        if attrs.get("status") not in ("normal", "locked", None, ""):
-            continue  # skip injured_reserve / off_the_board etc.
+        # Skip lines that are explicitly pulled (injured reserve, suspended, etc.)
+        if attrs.get("status") in ("injured_reserve", "suspended", "out"):
+            continue
 
         raw_stat = attrs.get("stat_type", "")
         stat = STAT_MAP.get(raw_stat, raw_stat)
@@ -528,136 +545,6 @@ async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
         })
 
     cache_set("pp_props", props_out)
-    return props_out
-
-
-
-    """
-    Fetch NBA player props from DraftKings public sportsbook JSON endpoint.
-    Strategy:
-      1. Parse inline offers from the eventgroup (same structure as game lines).
-      2. If a prop subcategory has no inline offers, fetch it separately and try
-         both known DK response structures.
-    No API key required.
-    """
-    cached = cache_get("dk_props")
-    if cached is not None:
-        return cached
-
-    PROP_KEYWORDS = {
-        "points": "Points", "point": "Points",
-        "rebounds": "Rebounds", "rebound": "Rebounds",
-        "assists": "Assists", "assist": "Assists",
-        "threes": "3PM", "3-pointers": "3PM", "three": "3PM",
-        "blocks": "Blocks", "steals": "Steals",
-        "pts + reb + ast": "PRA", "pra": "PRA",
-    }
-
-    try:
-        r = await client.get(
-            "https://sportsbook.draftkings.com//sites/US-SB/api/v5/eventgroups/42648",
-            params={"format": "json"},
-            headers={"User-Agent": "Mozilla/5.0 (compatible)"},
-            timeout=15,
-        )
-        data = r.json()
-    except Exception:
-        return []
-
-    event_group = data.get("eventGroup", {})
-    props_out: list[dict] = []
-
-    def _parse_offers(offers_list: list, prop_type: str, matchup: str) -> list[dict]:
-        """Parse a list of offer rows into standardised prop dicts."""
-        results = []
-        for offer_row in offers_list:
-            for offer in (offer_row if isinstance(offer_row, list) else [offer_row]):
-                outcomes = offer.get("outcomes", [])
-                if len(outcomes) < 2:
-                    continue
-                player_name = outcomes[0].get("participant") or outcomes[0].get("label", "")
-                if not player_name or player_name.lower() in ("over", "under"):
-                    continue
-                over_out  = next((o for o in outcomes if o.get("label", "").lower() == "over"),  None)
-                under_out = next((o for o in outcomes if o.get("label", "").lower() == "under"), None)
-                if not over_out and not under_out:
-                    continue
-                line = (over_out or under_out).get("line", 0)
-                over_odds  = _fmt_american(over_out.get("oddsAmerican")  if over_out  else None)
-                under_odds = _fmt_american(under_out.get("oddsAmerican") if under_out else None)
-                rec = "OVER"
-                if over_out and under_out:
-                    ov = abs(int(over_out.get("oddsAmerican", -9999) or -9999))
-                    un = abs(int(under_out.get("oddsAmerican", -9999) or -9999))
-                    rec = "OVER" if ov <= un else "UNDER"
-                elif under_out:
-                    rec = "UNDER"
-                results.append({
-                    "player": player_name, "team": "—", "pos": "—", "game": matchup,
-                    "prop": f"{prop_type} {line}+", "rec": rec, "line": line,
-                    "conf": 60, "edge_score": 60, "l5": 60, "l10": 55, "l15": 50,
-                    "streak": 0, "avg": line,
-                    "odds": over_odds if rec == "OVER" else under_odds,
-                    "reason": f"Live DraftKings line · {matchup}",
-                })
-        return results
-
-    def _walk_offer_categories(eg: dict, prop_type: str, matchup: str) -> list[dict]:
-        """Walk both known DK response structures to find offers."""
-        found = []
-        # Structure A: eventGroup.offerCategories[].offerSubcategoryDescriptors[].offers
-        for oc in eg.get("offerCategories", []):
-            for sd in oc.get("offerSubcategoryDescriptors", []):
-                found.extend(_parse_offers(sd.get("offers", []), prop_type, matchup))
-        # Structure B: eventGroup.events[].offerCategories[].offerSubcategoryDescriptors[].offers
-        for ev in eg.get("events", []):
-            for oc in ev.get("offerCategories", []):
-                for sd in oc.get("offerSubcategoryDescriptors", []):
-                    found.extend(_parse_offers(sd.get("offers", []), prop_type, matchup))
-        return found
-
-    for event in event_group.get("events", [])[:10]:
-        event_id = event.get("eventId")
-        matchup  = f"{event.get('teamName1', '')} vs {event.get('teamName2', '')}"
-        needs_fetch: list[tuple] = []  # (cat_id, sub_id, prop_type) with no inline offers
-
-        for cat in event.get("offerCategories", []):
-            cat_name = cat.get("name", "").lower()
-            if "player" not in cat_name and "prop" not in cat_name:
-                continue
-            cat_id = cat.get("offerCategoryId")
-
-            for sub in cat.get("offerSubcategoryDescriptors", []):
-                sub_name  = sub.get("name", "").lower()
-                sub_id    = sub.get("offerSubcategoryId")
-                prop_type = next((label for kw, label in PROP_KEYWORDS.items() if kw in sub_name), None)
-                if not prop_type:
-                    continue
-
-                inline_offers = sub.get("offers", [])
-                if inline_offers:
-                    # Offers are embedded inline in the eventgroup — parse directly
-                    props_out.extend(_parse_offers(inline_offers, prop_type, matchup))
-                elif sub_id and cat_id and event_id:
-                    needs_fetch.append((cat_id, sub_id, prop_type))
-
-        # Fetch subcategories that had no inline data (cap at 6 per event)
-        for cat_id, sub_id, prop_type in needs_fetch[:6]:
-            try:
-                r2 = await client.get(
-                    f"https://sportsbook.draftkings.com//sites/US-SB/api/v5/events/{event_id}"
-                    f"/categories/{cat_id}/subcategories/{sub_id}",
-                    params={"format": "json"},
-                    headers={"User-Agent": "Mozilla/5.0 (compatible)"},
-                    timeout=10,
-                )
-                sub_data = r2.json()
-                eg = sub_data.get("eventGroup", {})
-                props_out.extend(_walk_offer_categories(eg, prop_type, matchup))
-            except Exception:
-                continue
-
-    cache_set("dk_props", props_out)
     return props_out
 
 
@@ -704,8 +591,7 @@ def build_system_prompt(games: list, injuries: set) -> str:
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
         "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
         "Always cite specific edges: matchup advantages, pace differentials, recent ATS records, "
-        "key injuries, rest advantages, or defensive rankings. "
-        "For player props, always name a real starter with a realistic line and a stats-based reason.\n"
+        "key injuries, rest advantages, or defensive rankings.\n"
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}\n"
@@ -996,19 +882,17 @@ async def analyze_game(req: AnalyzeRequest):
             f"Live: {game['awayName']} {game.get('awayScore',0)} "
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "Respond with EXACTLY these 2 labeled lines, no other text:\n"
             "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
-            "PLAYER_PROP: [REQUIRED — format EXACTLY like: 'Ja Morant OVER 24.5 Points' — real player in this game, realistic line, 1 sentence reason. Writing N/A is not allowed.]"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]"
         )
     else:
         prompt = (
             f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
-            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "Respond with EXACTLY these 2 labeled lines, no other text:\n"
             "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
-            "PLAYER_PROP: [REQUIRED — format EXACTLY like: 'Anthony Edwards OVER 27.5 Points' — must be a real starter in this game, a realistic line, and 1 sentence with a stats-based reason. Writing N/A is never acceptable.]"
+            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]"
         )
 
     async with httpx.AsyncClient() as client:

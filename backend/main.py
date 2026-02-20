@@ -622,6 +622,7 @@ def parse_gemini_analysis(text: str) -> dict:
 
     return {
         "best_bet":       extract("BEST_BET"),
+        "bet_team":       (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
         "ou":             extract("OU_LEAN"),
         "props":          extract("PLAYER_PROP"),
         "dubl_score_bet": extract_score("DUBL_SCORE_BET"),
@@ -1190,6 +1191,7 @@ async def analyze_game(req: AnalyzeRequest):
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
             "BEST_BET: [team bet ONLY — moneyline or live spread, never a player prop. State the exact line and why right now]\n"
+            f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"
@@ -1202,6 +1204,7 @@ async def analyze_game(req: AnalyzeRequest):
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
             "BEST_BET: [team bet ONLY — ATS or ML, never a player prop. State the exact line and give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
+            f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"

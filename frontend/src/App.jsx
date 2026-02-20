@@ -365,10 +365,11 @@ function AnalysisPanel({ analysis, isLive, loading }) {
 
   return (
     <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
-      <div style={{ marginBottom:10 }}>
+      <div style={{ marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700 }}>
           dublplay analysis
         </span>
+        {analysis.dubl_score != null && <EdgeCircle score={analysis.dubl_score} />}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
         {items.length === 0 && loading && (
@@ -527,6 +528,9 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         </span>
       </div>
 
+      {/* Top 3 game picks by Dubl Score */}
+      <TopGamesSection games={ordered} aiOverrides={aiOverrides} />
+
       {/* Horizontal scroll rail */}
       <div style={{
         display:"flex", gap:12, overflowX:"auto", scrollSnapType:"x mandatory",
@@ -542,6 +546,64 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             aiOverride={aiOverrides[g.id]}
             onPickOdds={onPickOdds}
           />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── TOP GAME PICKS (top 3 by Dubl Score) ─────────────────────────────────────
+function TopGameCard({ game, analysis, rank }) {
+  const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
+  const ec = edgeColor(analysis.dubl_score);
+  const isLive = game.status === "live";
+  return (
+    <div style={{
+      background: T.card,
+      border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+      borderRadius:14, overflow:"hidden",
+      animation:`fadeUp ${0.1+rank*0.07}s ease`,
+    }}>
+      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
+      <div style={{ padding:"12px 14px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+          <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
+          <EdgeCircle score={analysis.dubl_score} />
+        </div>
+        <div style={{ fontWeight:800, fontSize:14, color:T.text, marginBottom:3 }}>
+          {game.awayName} @ {game.homeName}
+        </div>
+        {isLive && (
+          <div style={{ fontSize:10, color:T.red, fontWeight:700, marginBottom:5 }}>
+            LIVE · Q{game.quarter} {game.clock}
+          </div>
+        )}
+        {analysis.best_bet && (
+          <div style={{ marginTop:5 }}>
+            <span style={{ fontSize:9, fontWeight:700, color:T.green, letterSpacing:"0.06em", marginRight:5 }}>✦ BEST BET</span>
+            <span style={{ fontSize:11, color:T.text2, lineHeight:1.5 }}>
+              {analysis.best_bet.length > 90 ? analysis.best_bet.slice(0,90)+"…" : analysis.best_bet}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TopGamesSection({ games, aiOverrides }) {
+  const top = games
+    .filter(g => g.status !== "final" && aiOverrides[g.id]?.dubl_score != null)
+    .map(g => ({ game: g, analysis: aiOverrides[g.id] }))
+    .sort((a,b) => b.analysis.dubl_score - a.analysis.dubl_score)
+    .slice(0,3);
+  if (top.length === 0) return null;
+  return (
+    <div style={{ padding:"0 20px", marginBottom:16 }}>
+      <SectionLabel>TOP GAME PICKS — RANKED BY DUBL SCORE</SectionLabel>
+      <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))" }}>
+        {top.map(({game,analysis},i) => (
+          <TopGameCard key={game.id} game={game} analysis={analysis} rank={i+1} />
         ))}
       </div>
     </div>

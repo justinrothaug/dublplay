@@ -602,20 +602,29 @@ def build_system_prompt(games: list, injuries: set) -> str:
 
 
 def parse_gemini_analysis(text: str) -> dict:
-    """Parse structured Gemini response into best_bet / ou / props."""
+    """Parse structured Gemini response into best_bet / ou / props / dubl_score."""
     def extract(marker: str) -> str | None:
         m = re.search(
-            rf'{marker}:\s*(.*?)(?=BEST_BET:|OU_LEAN:|PLAYER_PROP:|$)',
+            rf'{marker}:\s*(.*?)(?=BEST_BET:|OU_LEAN:|PLAYER_PROP:|DUBL_SCORE:|$)',
             text, re.DOTALL | re.IGNORECASE,
         )
         if not m:
             return None
         return m.group(1).strip().replace("**", "").strip() or None
 
+    dubl_score = None
+    sm = re.search(r'DUBL_SCORE:\s*([0-9]+(?:\.[0-9]+)?)', text, re.IGNORECASE)
+    if sm:
+        try:
+            dubl_score = round(min(5.0, max(1.0, float(sm.group(1)))), 1)
+        except ValueError:
+            pass
+
     return {
-        "best_bet": extract("BEST_BET"),
-        "ou":       extract("OU_LEAN"),
-        "props":    extract("PLAYER_PROP"),
+        "best_bet":   extract("BEST_BET"),
+        "ou":         extract("OU_LEAN"),
+        "props":      extract("PLAYER_PROP"),
+        "dubl_score": dubl_score,
     }
 
 
@@ -1180,20 +1189,22 @@ async def analyze_game(req: AnalyzeRequest):
             f"@ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
-            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "Respond with EXACTLY these 4 labeled lines, no other text:\n"
             "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
-            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']"
+            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
+            "DUBL_SCORE: [single float 1.0-5.0 — your overall confidence across all 3 picks, where 5.0 = strongest edge]"
         )
     else:
         prompt = (
             f"Pre-game: {game['awayName']} ({away_ml}) @ {game['homeName']} ({home_ml}). "
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
-            "Respond with EXACTLY these 3 labeled lines, no other text:\n"
+            "Respond with EXACTLY these 4 labeled lines, no other text:\n"
             "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
-            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']"
+            "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
+            "DUBL_SCORE: [single float 1.0-5.0 — your overall confidence across all 3 picks, where 5.0 = strongest edge]"
         )
 
     async with httpx.AsyncClient() as client:
@@ -1203,7 +1214,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 600, "temperature": 0.7},
+                "generationConfig": {"maxOutputTokens": 700, "temperature": 0.7},
             },
             timeout=30,
         )

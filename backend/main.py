@@ -8,6 +8,7 @@ import os
 import pathlib
 import time
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 app = FastAPI(title="dublplay API")
@@ -101,18 +102,61 @@ def full_name_to_abbr(full_name: str) -> str:
     """Convert a full NBA team name (from The Odds API) to ESPN abbreviation."""
     if full_name in NBA_FULL_TO_ABBR:
         return NBA_FULL_TO_ABBR[full_name]
-    # Fallback: try first 3 chars through the existing norm_abbr map
     return norm_abbr(full_name[:3].upper())
 
 
-async def fetch_espn_games(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch today's NBA games from ESPN unofficial scoreboard API."""
-    cached = cache_get("espn_games")
+# Nickname/city → abbreviation for DraftKings which may use short names
+TEAM_NICKNAME_TO_ABBR: dict[str, str] = {
+    "Hawks": "ATL", "Celtics": "BOS", "Nets": "BKN", "Hornets": "CHA",
+    "Bulls": "CHI", "Cavaliers": "CLE", "Mavericks": "DAL", "Nuggets": "DEN",
+    "Pistons": "DET", "Warriors": "GSW", "Rockets": "HOU", "Pacers": "IND",
+    "Clippers": "LAC", "Lakers": "LAL", "Grizzlies": "MEM", "Heat": "MIA",
+    "Bucks": "MIL", "Timberwolves": "MIN", "Pelicans": "NOP", "Knicks": "NYK",
+    "Thunder": "OKC", "Magic": "ORL", "76ers": "PHI", "Sixers": "PHI",
+    "Suns": "PHX", "Trail Blazers": "POR", "Blazers": "POR", "Kings": "SAC",
+    "Spurs": "SAS", "Raptors": "TOR", "Jazz": "UTA", "Wizards": "WAS",
+}
+
+
+def any_name_to_abbr(name: str) -> str:
+    """Handle full team names, nicknames, and abbreviations from any source."""
+    if not name:
+        return ""
+    name = name.strip()
+    if name in NBA_FULL_TO_ABBR:
+        return NBA_FULL_TO_ABBR[name]
+    parts = name.split()
+    if parts:
+        # Try last word (e.g., "Celtics", "Warriors")
+        if parts[-1] in TEAM_NICKNAME_TO_ABBR:
+            return TEAM_NICKNAME_TO_ABBR[parts[-1]]
+        # Try last two words (e.g., "Trail Blazers")
+        if len(parts) >= 2:
+            two = f"{parts[-2]} {parts[-1]}"
+            if two in TEAM_NICKNAME_TO_ABBR:
+                return TEAM_NICKNAME_TO_ABBR[two]
+    if len(name) <= 3:
+        return norm_abbr(name.upper())
+    return norm_abbr(name[:3].upper())
+
+
+# Sticky odds: pre-game lines that persist even after game goes live/final
+_sticky_odds: dict[str, dict] = {}
+
+
+async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
+    """Fetch NBA games from ESPN unofficial scoreboard API for a given date (YYYYMMDD)."""
+    cache_key = f"espn_games_{date_str or 'today'}"
+    cached = cache_get(cache_key)
     if cached is not None:
         return cached
 
+    params = {}
+    if date_str:
+        params["dates"] = date_str
+
     try:
-        r = await client.get(ESPN_SCOREBOARD_URL, timeout=10)
+        r = await client.get(ESPN_SCOREBOARD_URL, params=params, timeout=10)
         data = r.json()
     except Exception:
         return []
@@ -132,6 +176,8 @@ async def fetch_espn_games(client: httpx.AsyncClient) -> list[dict]:
             home_abbr = norm_abbr(home["team"]["abbreviation"])
             away_abbr = norm_abbr(away["team"]["abbreviation"])
             game_id = f"{away_abbr.lower()}-{home_abbr.lower()}"
+            if date_str:
+                game_id = f"{game_id}-{date_str}"
 
             g = {
                 "id": game_id,
@@ -155,11 +201,14 @@ async def fetch_espn_games(client: httpx.AsyncClient) -> list[dict]:
             if app_status == "upcoming":
                 g["time"] = event.get("date", "")[:16].replace("T", " ") + " UTC"
 
+            if date_str:
+                g["day"] = "tomorrow"
+
             games.append(g)
         except Exception:
             continue
 
-    cache_set("espn_games", games)
+    cache_set(cache_key, games)
     return games
 
 
@@ -187,69 +236,160 @@ async def fetch_espn_injuries(client: httpx.AsyncClient) -> set[str]:
     return out_players
 
 
-async def fetch_odds(client: httpx.AsyncClient) -> dict:
+async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
     """
-    Fetch NBA odds from The Odds API.
-    Returns dict keyed by rough game id -> {spread, ou, homeOdds, awayOdds}.
-    Requires ODDS_API_KEY env var.
+    Parse NBA game lines (spread/total/ML) from DraftKings public eventgroup.
+    No API key. Works for upcoming AND live games. Saves to sticky cache.
     """
-    if not ODDS_API_KEY:
-        return {}
-
-    cached = cache_get("odds")
+    cached = cache_get("dk_game_lines")
     if cached is not None:
         return cached
 
     try:
         r = await client.get(
-            f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "h2h,spreads,totals",
-                "oddsFormat": "american",
-            },
-            timeout=10,
+            "https://sportsbook.draftkings.com//sites/US-SB/api/v5/eventgroups/42648",
+            params={"format": "json"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible)"},
+            timeout=15,
         )
-        events = r.json()
+        data = r.json()
     except Exception:
         return {}
 
-    result = {}
-    for ev in events:
-        if not isinstance(ev, dict):
+    event_group = data.get("eventGroup", {})
+    result: dict = {}
+
+    for event in event_group.get("events", []):
+        # DK convention: teamName1 = away, teamName2 = home
+        team1 = event.get("teamName1", "")
+        team2 = event.get("teamName2", "")
+        away_abbr = any_name_to_abbr(team1)
+        home_abbr = any_name_to_abbr(team2)
+        if not away_abbr or not home_abbr:
             continue
-        home_full = ev.get("home_team", "")
-        away_full = ev.get("away_team", "")
-        home = full_name_to_abbr(home_full)
-        away = full_name_to_abbr(away_full)
-        key  = f"{away.lower()}-{home.lower()}"
+        key = f"{away_abbr.lower()}-{home_abbr.lower()}"
 
         odds_data: dict = {}
-        for bm in ev.get("bookmakers", []):
-            if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
+        for cat in event.get("offerCategories", []):
+            cat_name = cat.get("name", "").lower()
+            if "player" in cat_name or "prop" in cat_name:
                 continue
-            for market in bm.get("markets", []):
-                mk = market["key"]
-                outcomes = {o["name"]: o["price"] for o in market.get("outcomes", [])}
-                if mk == "h2h":
-                    odds_data["homeOdds"] = _fmt_american(outcomes.get(home_full, 0))
-                    odds_data["awayOdds"] = _fmt_american(outcomes.get(away_full, 0))
-                elif mk == "spreads":
-                    for o in market.get("outcomes", []):
-                        if full_name_to_abbr(o["name"]) == home:
-                            odds_data["spread"] = f"{home} {_sign(o['point'])}"
-                elif mk == "totals":
-                    for o in market.get("outcomes", []):
-                        if o["name"] == "Over":
-                            odds_data["ou"] = str(o["point"])
-            break  # first matching bookmaker is enough
+            for sub in cat.get("offerSubcategoryDescriptors", []):
+                for offer_row in sub.get("offers", []):
+                    offers = offer_row if isinstance(offer_row, list) else [offer_row]
+                    for offer in offers:
+                        outcomes = offer.get("outcomes", [])
+                        if len(outcomes) < 2:
+                            continue
+                        labels_lower = [o.get("label", "").lower() for o in outcomes]
+
+                        # Total: Over/Under
+                        if "over" in labels_lower and "under" in labels_lower:
+                            if "ou" not in odds_data:
+                                for o in outcomes:
+                                    if o.get("label", "").lower() == "over":
+                                        pt = o.get("line") or o.get("points")
+                                        if pt:
+                                            odds_data["ou"] = str(pt)
+                            continue
+
+                        has_line = any(o.get("line") not in (None, 0, 0.0) for o in outcomes)
+                        if has_line:
+                            # Spread: find the home team's line
+                            if "spread" not in odds_data:
+                                for o in outcomes:
+                                    participant = o.get("participant") or o.get("label", "")
+                                    abbr = any_name_to_abbr(participant)
+                                    if abbr == home_abbr:
+                                        ln = o.get("line", 0)
+                                        if ln:
+                                            odds_data["spread"] = f"{home_abbr} {_sign(ln)}"
+                        else:
+                            # Moneyline: map participants to home/away
+                            for o in outcomes:
+                                participant = o.get("participant") or o.get("label", "")
+                                abbr = any_name_to_abbr(participant)
+                                odds_val = _fmt_american(o.get("oddsAmerican"))
+                                if odds_val == "—":
+                                    continue
+                                if abbr == home_abbr and "homeOdds" not in odds_data:
+                                    odds_data["homeOdds"] = odds_val
+                                elif abbr == away_abbr and "awayOdds" not in odds_data:
+                                    odds_data["awayOdds"] = odds_val
 
         if odds_data:
             result[key] = odds_data
+            # Persist so live/final games still show the line
+            _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
 
-    cache_set("odds", result)
+    cache_set("dk_game_lines", result)
     return result
+
+
+async def fetch_odds(client: httpx.AsyncClient) -> dict:
+    """
+    Fetch NBA odds. Tries The Odds API first (requires ODDS_API_KEY),
+    then falls back to DraftKings game lines (free, works live too).
+    All fetched odds are saved to sticky cache for use by live/final games.
+    """
+    if ODDS_API_KEY:
+        cached = cache_get("odds")
+        if cached is not None:
+            return cached
+
+        try:
+            r = await client.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": "h2h,spreads,totals",
+                    "oddsFormat": "american",
+                },
+                timeout=10,
+            )
+            events = r.json()
+        except Exception:
+            events = []
+
+        if isinstance(events, list) and events:
+            result: dict = {}
+            for ev in events:
+                if not isinstance(ev, dict):
+                    continue
+                home_full = ev.get("home_team", "")
+                away_full = ev.get("away_team", "")
+                home = full_name_to_abbr(home_full)
+                away = full_name_to_abbr(away_full)
+                key  = f"{away.lower()}-{home.lower()}"
+                odds_data: dict = {}
+                for bm in ev.get("bookmakers", []):
+                    if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
+                        continue
+                    for market in bm.get("markets", []):
+                        mk = market["key"]
+                        outcomes = {o["name"]: o["price"] for o in market.get("outcomes", [])}
+                        if mk == "h2h":
+                            odds_data["homeOdds"] = _fmt_american(outcomes.get(home_full, 0))
+                            odds_data["awayOdds"] = _fmt_american(outcomes.get(away_full, 0))
+                        elif mk == "spreads":
+                            for o in market.get("outcomes", []):
+                                if full_name_to_abbr(o["name"]) == home:
+                                    odds_data["spread"] = f"{home} {_sign(o['point'])}"
+                        elif mk == "totals":
+                            for o in market.get("outcomes", []):
+                                if o["name"] == "Over":
+                                    odds_data["ou"] = str(o["point"])
+                    break
+                if odds_data:
+                    result[key] = odds_data
+                    _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
+            if result:
+                cache_set("odds", result)
+                return result
+
+    # Fall back to DraftKings (free, no key, shows live game lines too)
+    return await fetch_draftkings_game_lines(client)
 
 
 async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
@@ -520,23 +660,15 @@ def get_effective_key(request_key: str) -> str:
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
-@app.get("/api/games")
-async def get_games():
-    async with httpx.AsyncClient() as client:
-        espn_games = await fetch_espn_games(client)
-        odds_map   = await fetch_odds(client)
-
-    if not espn_games:
-        # Fall back to mock data if ESPN is unreachable
-        return {"games": MOCK_GAMES, "source": "mock"}
-
-    # Merge odds into ESPN game data
+def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
+    """Merge odds into ESPN game list, falling back to sticky cache."""
     result = []
     for g in espn_games:
         gid = g["id"]
-        o   = odds_map.get(gid, {})
+        # For the odds lookup, strip the date suffix we added for tomorrow
+        odds_key = gid.rsplit("-", 1)[0] if g.get("day") == "tomorrow" else gid
+        o = odds_map.get(odds_key) or _sticky_odds.get(odds_key, {})
 
-        # Win probs — derive from moneyline if available
         home_prob = away_prob = 50.0
         if o.get("homeOdds") and o.get("awayOdds"):
             try:
@@ -557,14 +689,60 @@ async def get_games():
             "spread": o.get("spread"),
             "ou": o.get("ou"),
             "ouDir": None,
-            "analysis": {
-                "best_bet": "Click REFRESH ↺ for a live Gemini analysis.",
-                "ou": None,
-                "props": None,
-            },
+            "analysis": {"best_bet": None, "ou": None, "props": None},
         })
+    return result
 
-    return {"games": result, "source": "live"}
+
+@app.get("/api/games")
+async def get_games():
+    tomorrow_str = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
+
+    async with httpx.AsyncClient() as client:
+        today_games, tomorrow_games, odds_map = await asyncio.gather(
+            fetch_espn_games(client),
+            fetch_espn_games(client, tomorrow_str),
+            fetch_odds(client),
+        )
+
+    if not today_games and not tomorrow_games:
+        return {"games": MOCK_GAMES, "source": "mock"}
+
+    all_games = _merge_odds(today_games or [], odds_map) + _merge_odds(tomorrow_games or [], odds_map)
+    return {"games": all_games, "source": "live"}
+
+
+@app.get("/api/debug")
+async def debug_odds():
+    """Diagnostic endpoint — check Odds API key and what data is available."""
+    info: dict = {
+        "odds_api_key_set": bool(ODDS_API_KEY),
+        "sticky_odds_games": list(_sticky_odds.keys()),
+        "dk_cache_fresh": cache_get("dk_game_lines") is not None,
+        "odds_api_cache_fresh": cache_get("odds") is not None,
+    }
+    if ODDS_API_KEY:
+        async with httpx.AsyncClient() as client:
+            try:
+                r = await client.get(
+                    f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
+                    params={"apiKey": ODDS_API_KEY, "regions": "us",
+                            "markets": "h2h", "oddsFormat": "american"},
+                    timeout=10,
+                )
+                events = r.json()
+                if isinstance(events, list):
+                    info["odds_api_game_count"] = len(events)
+                    info["odds_api_games"] = [
+                        {"home": ev.get("home_team"), "away": ev.get("away_team"),
+                         "bookmakers": len(ev.get("bookmakers", []))}
+                        for ev in events[:10]
+                    ]
+                else:
+                    info["odds_api_error"] = events
+            except Exception as e:
+                info["odds_api_exception"] = str(e)
+    return info
 
 
 @app.get("/api/props")
@@ -629,11 +807,17 @@ def calculate_parlay(req: ParlayRequest):
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
 
-    async with httpx.AsyncClient() as client:
-        espn_games = await fetch_espn_games(client)
-        injuries   = await fetch_espn_injuries(client)
+    tomorrow_str = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
 
-    games_to_search = espn_games if espn_games else MOCK_GAMES
+    async with httpx.AsyncClient() as client:
+        today_games, tomorrow_games, injuries = await asyncio.gather(
+            fetch_espn_games(client),
+            fetch_espn_games(client, tomorrow_str),
+            fetch_espn_injuries(client),
+        )
+
+    all_espn = (today_games or []) + (tomorrow_games or [])
+    games_to_search = all_espn if all_espn else MOCK_GAMES
     game = next((g for g in games_to_search if g["id"] == req.game_id), None)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")

@@ -553,7 +553,7 @@ function BestBetsSection({ props }) {
   const top = [...props].sort((a,b) => b.edge_score - a.edge_score).slice(0,3);
   return (
     <div style={{ marginBottom:28 }}>
-      <SectionLabel>TOP AI PICKS — RANKED BY EDGE SCORE</SectionLabel>
+      <SectionLabel>TOP AI PICKS — RANKED BY DUBL SCORE</SectionLabel>
       <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
         {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
       </div>
@@ -738,6 +738,19 @@ function PropsTab({ props, parlay, toggleParlay }) {
   const [filter, setFilter] = useState("all");
   const [sortCol, setSortCol] = useState("edge_score");
   const [sortDir, setSortDir] = useState("desc");
+  const [search, setSearch] = useState("");
+  const [statCat, setStatCat] = useState("all");
+
+  const statCategories = [
+    {id:"all",label:"All Stats"},
+    {id:"Points",label:"Points"},
+    {id:"Rebounds",label:"Rebounds"},
+    {id:"Assists",label:"Assists"},
+    {id:"3PM",label:"3-Pointers"},
+    {id:"Blocks",label:"Blocks"},
+    {id:"Steals",label:"Steals"},
+  ];
+
   const filters = [
     {id:"all",label:"ALL"},
     {id:"over",label:"OVER"},
@@ -745,7 +758,14 @@ function PropsTab({ props, parlay, toggleParlay }) {
     {id:"hot",label:"🔥 HOT"},
   ];
   const sorted = props
-    .filter(p => filter==="over"?p.rec==="OVER":filter==="under"?p.rec==="UNDER":filter==="hot"?p.streak>=3:true)
+    .filter(p => {
+      if (filter==="over" && p.rec!=="OVER") return false;
+      if (filter==="under" && p.rec!=="UNDER") return false;
+      if (filter==="hot" && p.streak<3) return false;
+      if (statCat!=="all" && p.stat!==statCat) return false;
+      if (search && !p.player.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    })
     .sort((a,b)=>(sortDir==="desc"?-1:1)*(a[sortCol]-b[sortCol]));
   const doSort = col => { if(sortCol===col) setSortDir(d=>d==="desc"?"asc":"desc"); else{setSortCol(col);setSortDir("desc");} };
   const Th = ({col,children}) => (
@@ -766,9 +786,42 @@ function PropsTab({ props, parlay, toggleParlay }) {
       {/* Divider */}
       <div style={{ borderTop:`1px solid ${T.border}`, marginBottom:22 }} />
 
+      {/* Search + Stat Category row */}
+      <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search player..."
+          style={{
+            flex:"1 1 160px", minWidth:0,
+            background:T.cardAlt, border:`1px solid ${search ? T.greenBdr : T.borderBr}`,
+            borderRadius:8, color:T.text, padding:"8px 12px",
+            fontSize:13, fontFamily:"inherit",
+            outline:"none",
+          }}
+        />
+        <select
+          value={statCat}
+          onChange={e => setStatCat(e.target.value)}
+          style={{
+            background:T.cardAlt, border:`1px solid ${statCat!=="all" ? T.greenBdr : T.borderBr}`,
+            borderRadius:8, color:statCat!=="all" ? T.green : T.text2,
+            padding:"8px 12px", fontSize:12, fontFamily:"inherit",
+            fontWeight:700, cursor:"pointer", outline:"none",
+          }}
+        >
+          {statCategories.map(c => (
+            <option key={c.id} value={c.id} style={{ background:T.card }}>{c.label}</option>
+          ))}
+        </select>
+      </div>
+
       {/* Full props table */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
-        <SectionLabel noMargin>ALL PLAYER PROPS · AI RANKED</SectionLabel>
+        <SectionLabel noMargin>
+          {sorted.length} PLAYER PROPS · AI RANKED
+        </SectionLabel>
         <div style={{ display:"flex", gap:6 }}>
           {filters.map(f=>(
             <button key={f.id} onClick={()=>setFilter(f.id)} style={{
@@ -794,7 +847,7 @@ function PropsTab({ props, parlay, toggleParlay }) {
                 <Th col="l15">L15</Th>
                 <Th col="streak">STRK</Th>
                 <Th col="avg">AVG</Th>
-                <Th col="edge_score">EDGE</Th>
+                <Th col="edge_score">DUBL</Th>
                 <Th>ODDS</Th>
               </tr>
             </thead>

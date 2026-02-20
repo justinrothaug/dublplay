@@ -431,8 +431,11 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
 async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
     """
     Fetch NBA player props from DraftKings public sportsbook JSON endpoint.
-    No API key required. DraftKings automatically removes lines for
-    scratched/injured players, so OUT players simply won't appear.
+    Strategy:
+      1. Parse inline offers from the eventgroup (same structure as game lines).
+      2. If a prop subcategory has no inline offers, fetch it separately and try
+         both known DK response structures.
+    No API key required.
     """
     cached = cache_get("dk_props")
     if cached is not None:
@@ -447,8 +450,6 @@ async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
         "pts + reb + ast": "PRA", "pra": "PRA",
     }
 
-    props_out: list[dict] = []
-
     try:
         r = await client.get(
             "https://sportsbook.draftkings.com//sites/US-SB/api/v5/eventgroups/42648",
@@ -461,33 +462,84 @@ async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
         return []
 
     event_group = data.get("eventGroup", {})
+    props_out: list[dict] = []
+
+    def _parse_offers(offers_list: list, prop_type: str, matchup: str) -> list[dict]:
+        """Parse a list of offer rows into standardised prop dicts."""
+        results = []
+        for offer_row in offers_list:
+            for offer in (offer_row if isinstance(offer_row, list) else [offer_row]):
+                outcomes = offer.get("outcomes", [])
+                if len(outcomes) < 2:
+                    continue
+                player_name = outcomes[0].get("participant") or outcomes[0].get("label", "")
+                if not player_name or player_name.lower() in ("over", "under"):
+                    continue
+                over_out  = next((o for o in outcomes if o.get("label", "").lower() == "over"),  None)
+                under_out = next((o for o in outcomes if o.get("label", "").lower() == "under"), None)
+                if not over_out and not under_out:
+                    continue
+                line = (over_out or under_out).get("line", 0)
+                over_odds  = _fmt_american(over_out.get("oddsAmerican")  if over_out  else None)
+                under_odds = _fmt_american(under_out.get("oddsAmerican") if under_out else None)
+                rec = "OVER"
+                if over_out and under_out:
+                    ov = abs(int(over_out.get("oddsAmerican", -9999) or -9999))
+                    un = abs(int(under_out.get("oddsAmerican", -9999) or -9999))
+                    rec = "OVER" if ov <= un else "UNDER"
+                elif under_out:
+                    rec = "UNDER"
+                results.append({
+                    "player": player_name, "team": "—", "pos": "—", "game": matchup,
+                    "prop": f"{prop_type} {line}+", "rec": rec, "line": line,
+                    "conf": 60, "edge_score": 60, "l5": 60, "l10": 55, "l15": 50,
+                    "streak": 0, "avg": line,
+                    "odds": over_odds if rec == "OVER" else under_odds,
+                    "reason": f"Live DraftKings line · {matchup}",
+                })
+        return results
+
+    def _walk_offer_categories(eg: dict, prop_type: str, matchup: str) -> list[dict]:
+        """Walk both known DK response structures to find offers."""
+        found = []
+        # Structure A: eventGroup.offerCategories[].offerSubcategoryDescriptors[].offers
+        for oc in eg.get("offerCategories", []):
+            for sd in oc.get("offerSubcategoryDescriptors", []):
+                found.extend(_parse_offers(sd.get("offers", []), prop_type, matchup))
+        # Structure B: eventGroup.events[].offerCategories[].offerSubcategoryDescriptors[].offers
+        for ev in eg.get("events", []):
+            for oc in ev.get("offerCategories", []):
+                for sd in oc.get("offerSubcategoryDescriptors", []):
+                    found.extend(_parse_offers(sd.get("offers", []), prop_type, matchup))
+        return found
 
     for event in event_group.get("events", [])[:10]:
-        event_id   = event.get("eventId")
-        team1      = event.get("teamName1", "")
-        team2      = event.get("teamName2", "")
-        matchup    = f"{team1} vs {team2}"
+        event_id = event.get("eventId")
+        matchup  = f"{event.get('teamName1', '')} vs {event.get('teamName2', '')}"
+        needs_fetch: list[tuple] = []  # (cat_id, sub_id, prop_type) with no inline offers
 
-        # Collect category + subcategory IDs that look like player props
-        prop_subs = []
         for cat in event.get("offerCategories", []):
             cat_name = cat.get("name", "").lower()
             if "player" not in cat_name and "prop" not in cat_name:
                 continue
             cat_id = cat.get("offerCategoryId")
-            for sub in cat.get("offerSubcategoryDescriptors", []):
-                sub_id   = sub.get("offerSubcategoryId")
-                sub_name = sub.get("name", "").lower()
-                # Map subcategory name to prop type
-                prop_type = None
-                for kw, label in PROP_KEYWORDS.items():
-                    if kw in sub_name:
-                        prop_type = label
-                        break
-                if prop_type and sub_id:
-                    prop_subs.append((cat_id, sub_id, prop_type))
 
-        for cat_id, sub_id, prop_type in prop_subs:
+            for sub in cat.get("offerSubcategoryDescriptors", []):
+                sub_name  = sub.get("name", "").lower()
+                sub_id    = sub.get("offerSubcategoryId")
+                prop_type = next((label for kw, label in PROP_KEYWORDS.items() if kw in sub_name), None)
+                if not prop_type:
+                    continue
+
+                inline_offers = sub.get("offers", [])
+                if inline_offers:
+                    # Offers are embedded inline in the eventgroup — parse directly
+                    props_out.extend(_parse_offers(inline_offers, prop_type, matchup))
+                elif sub_id and cat_id and event_id:
+                    needs_fetch.append((cat_id, sub_id, prop_type))
+
+        # Fetch subcategories that had no inline data (cap at 6 per event)
+        for cat_id, sub_id, prop_type in needs_fetch[:6]:
             try:
                 r2 = await client.get(
                     f"https://sportsbook.draftkings.com//sites/US-SB/api/v5/events/{event_id}"
@@ -497,57 +549,73 @@ async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
                     timeout=10,
                 )
                 sub_data = r2.json()
+                eg = sub_data.get("eventGroup", {})
+                props_out.extend(_walk_offer_categories(eg, prop_type, matchup))
             except Exception:
                 continue
 
-            # Parse the nested offers structure
-            for offer_cat in sub_data.get("eventGroup", {}).get("offerCategories", []):
-                for sub_desc in offer_cat.get("offerSubcategoryDescriptors", []):
-                    for offer_row in sub_desc.get("offers", []):
-                        for offer in (offer_row if isinstance(offer_row, list) else [offer_row]):
-                            outcomes = offer.get("outcomes", [])
-                            if len(outcomes) < 2:
-                                continue
-                            player_name = outcomes[0].get("participant") or outcomes[0].get("label", "")
-                            if not player_name:
-                                continue
-
-                            over_out  = next((o for o in outcomes if o.get("label","").lower() == "over"),  None)
-                            under_out = next((o for o in outcomes if o.get("label","").lower() == "under"), None)
-                            if not over_out and not under_out:
-                                continue
-
-                            line = (over_out or under_out).get("line", 0)
-                            over_odds  = _fmt_american(over_out.get("oddsAmerican")  if over_out  else None)
-                            under_odds = _fmt_american(under_out.get("oddsAmerican") if under_out else None)
-
-                            # Pick better side by smaller absolute odds (closer to even)
-                            rec = "OVER"
-                            if over_out and under_out:
-                                ov = abs(int(over_out.get("oddsAmerican", -9999) or -9999))
-                                un = abs(int(under_out.get("oddsAmerican", -9999) or -9999))
-                                rec = "OVER" if ov <= un else "UNDER"
-                            elif under_out:
-                                rec = "UNDER"
-
-                            props_out.append({
-                                "player":     player_name,
-                                "team":       "—",
-                                "pos":        "—",
-                                "game":       matchup,
-                                "prop":       f"{prop_type} {line}+",
-                                "rec":        rec,
-                                "line":       line,
-                                "conf":       60,
-                                "edge_score": 60,
-                                "l5": 60, "l10": 55, "l15": 50,
-                                "streak":     0,
-                                "avg":        line,
-                                "odds":       over_odds if rec == "OVER" else under_odds,
-                                "reason":     f"Live DraftKings line · {matchup}",
-                            })
-
     cache_set("dk_props", props_out)
+    return props_out
+
+
+# ── STAR PLAYER PROP LINES (fallback when DK unavailable) ─────────────────────
+# Approximate 2024-25 season lines used to show real game matchups when DK fails
+TEAM_STAR_PROPS: dict[str, list[tuple]] = {
+    "BOS": [("Jaylen Brown", "Points", 23.5, "-112"), ("Jayson Tatum", "Points", 27.5, "-110")],
+    "NYK": [("Jalen Brunson", "Points", 25.5, "-115"), ("Karl-Anthony Towns", "Points", 21.5, "-110")],
+    "MIL": [("Giannis Antetokounmpo", "Points", 29.5, "-118"), ("Damian Lillard", "Points", 24.5, "-112")],
+    "CLE": [("Donovan Mitchell", "Points", 24.5, "-115"), ("Evan Mobley", "Rebounds", 8.5, "-115")],
+    "IND": [("Tyrese Haliburton", "Assists", 9.5, "-112"), ("Pascal Siakam", "Points", 21.5, "-110")],
+    "ORL": [("Paolo Banchero", "Points", 24.5, "-112"), ("Franz Wagner", "Points", 20.5, "-110")],
+    "MIA": [("Tyler Herro", "Points", 21.5, "-112"), ("Bam Adebayo", "Rebounds", 9.5, "-115")],
+    "CHI": [("Zach LaVine", "Points", 22.5, "-110"), ("Nikola Vucevic", "Rebounds", 10.5, "-112")],
+    "ATL": [("Trae Young", "Assists", 10.5, "-115"), ("Jalen Johnson", "Points", 20.5, "-110")],
+    "TOR": [("Scottie Barnes", "Points", 18.5, "-110"), ("Immanuel Quickley", "Assists", 6.5, "-108")],
+    "DET": [("Cade Cunningham", "Points", 23.5, "-112"), ("Cade Cunningham", "Assists", 6.5, "-110")],
+    "CHA": [("LaMelo Ball", "Points", 23.5, "-112"), ("LaMelo Ball", "Assists", 6.5, "-112")],
+    "PHI": [("Tyrese Maxey", "Points", 25.5, "-112"), ("Joel Embiid", "Rebounds", 10.5, "-115")],
+    "BKN": [("Cam Thomas", "Points", 22.5, "-110"), ("Nic Claxton", "Rebounds", 9.5, "-110")],
+    "WAS": [("Kyle Kuzma", "Points", 18.5, "-110"), ("Jordan Poole", "Points", 18.5, "-110")],
+    "OKC": [("Shai Gilgeous-Alexander", "Points", 29.5, "-115"), ("Jalen Williams", "Points", 22.5, "-112")],
+    "DEN": [("Nikola Jokic", "Points", 27.5, "-115"), ("Nikola Jokic", "Rebounds", 11.5, "-118")],
+    "MIN": [("Anthony Edwards", "Points", 26.5, "-112"), ("Rudy Gobert", "Rebounds", 11.5, "-115")],
+    "UTA": [("Lauri Markkanen", "Points", 21.5, "-112"), ("Walker Kessler", "Rebounds", 10.5, "-115")],
+    "POR": [("Anfernee Simons", "Points", 20.5, "-110"), ("Jerami Grant", "Points", 18.5, "-110")],
+    "SAC": [("De'Aaron Fox", "Points", 25.5, "-112"), ("Domantas Sabonis", "Rebounds", 12.5, "-118")],
+    "GSW": [("Stephen Curry", "Points", 28.5, "-115"), ("Stephen Curry", "3PM", 3.5, "-115")],
+    "LAL": [("LeBron James", "Points", 24.5, "-110"), ("Anthony Davis", "Rebounds", 11.5, "-115")],
+    "LAC": [("James Harden", "Assists", 8.5, "-115"), ("Kawhi Leonard", "Points", 22.5, "-112")],
+    "PHX": [("Devin Booker", "Points", 26.5, "-115"), ("Kevin Durant", "Points", 27.5, "-112")],
+    "NOP": [("Brandon Ingram", "Points", 23.5, "-112"), ("CJ McCollum", "Points", 19.5, "-110")],
+    "DAL": [("Luka Doncic", "Points", 32.5, "-115"), ("Kyrie Irving", "Points", 24.5, "-112")],
+    "HOU": [("Alperen Sengun", "Points", 19.5, "-112"), ("Jalen Green", "Points", 22.5, "-112")],
+    "MEM": [("Ja Morant", "Points", 24.5, "-112"), ("Desmond Bane", "Points", 19.5, "-110")],
+    "SAS": [("Victor Wembanyama", "Points", 23.5, "-112"), ("Victor Wembanyama", "Rebounds", 9.5, "-115")],
+}
+
+
+def generate_game_props(games: list) -> list[dict]:
+    """
+    Generate estimated props from today's actual ESPN game data.
+    Used as a fallback when DraftKings API is unavailable so the Props tab
+    always shows real game matchups instead of stale mock data.
+    """
+    props_out = []
+    for game in games:
+        if game.get("status") == "final":
+            continue
+        away = game.get("away", "")
+        home = game.get("home", "")
+        matchup = f"{game.get('awayName', away)} vs {game.get('homeName', home)}"
+        for abbr in [away, home]:
+            for player, stat, line, odds in TEAM_STAR_PROPS.get(abbr, [])[:1]:
+                props_out.append({
+                    "player": player, "team": abbr, "pos": "—", "game": matchup,
+                    "prop": f"{stat} {line}+", "rec": "OVER", "line": line,
+                    "conf": 60, "edge_score": 65, "l5": 60, "l10": 57, "l15": 53,
+                    "streak": 0, "avg": line, "odds": odds,
+                    "reason": f"Estimated line — live DraftKings data unavailable · {matchup}",
+                })
     return props_out
 
 
@@ -646,39 +714,6 @@ MOCK_GAMES = [
     },
 ]
 
-MOCK_PROPS = [
-    {
-        "player": "Paolo Banchero", "team": "ORL", "pos": "F", "game": "SAC vs ORL",
-        "prop": "Points 24.5+", "rec": "OVER", "line": 24.5, "conf": 74, "edge_score": 85,
-        "l5": 80, "l10": 70, "l15": 67, "streak": 4, "avg": 26.8, "odds": "-118",
-        "reason": "28+ pts in 4 of last 5. SAC defense ranks 29th overall.",
-    },
-    {
-        "player": "Jaylen Brown", "team": "BOS", "pos": "F", "game": "GSW vs BOS",
-        "prop": "Points 30.5+", "rec": "OVER", "line": 30.5, "conf": 70, "edge_score": 79,
-        "l5": 60, "l10": 60, "l15": 53, "streak": 0, "avg": 27.4, "odds": "-110",
-        "reason": "Tatum OUT — Brown becomes the #1 option with full usage bump.",
-    },
-    {
-        "player": "Nikola Jokić", "team": "DEN", "pos": "C", "game": "LAC vs DEN",
-        "prop": "Rebounds 12.5+", "rec": "OVER", "line": 12.5, "conf": 68, "edge_score": 74,
-        "l5": 80, "l10": 70, "l15": 60, "streak": 4, "avg": 13.4, "odds": "-130",
-        "reason": "Double-doubles in 8 straight. LAC ranks 28th in reb defense.",
-    },
-    {
-        "player": "Alperen Şengün", "team": "HOU", "pos": "C", "game": "Recent Form",
-        "prop": "Pts+Reb+Ast 38.5+", "rec": "OVER", "line": 38.5, "conf": 65, "edge_score": 69,
-        "l5": 60, "l10": 60, "l15": 53, "streak": 2, "avg": 40.1, "odds": "-110",
-        "reason": "Triple-double threat in 3 of last 4. Massive usage rate at center.",
-    },
-    {
-        "player": "Stephen Curry", "team": "GSW", "pos": "G", "game": "GSW vs BOS",
-        "prop": "3PM 4.5", "rec": "UNDER", "line": 4.5, "conf": 61, "edge_score": 63,
-        "l5": 60, "l10": 50, "l15": 47, "streak": 2, "avg": 3.8, "odds": "+105",
-        "reason": "BOS limits 3PA aggressively. Curry shooting 37% from 3 in February.",
-    },
-]
-
 
 # ── PYDANTIC MODELS ───────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
@@ -723,21 +758,25 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
     Merge odds into ESPN game list.
     Priority: ESPN embedded odds > Odds API/DK > sticky cache.
     Uses g.get() (not pop) to avoid mutating the shared ESPN cache.
+    Tomorrow game IDs include a date suffix (e.g. orl-phx-20260221) but
+    the odds_map keys do not — strip it before lookup.
     """
     result = []
     for g in espn_games:
         gid = g["id"]
-        o = odds_map.get(gid) or {}
-        sticky = _sticky_odds.get(gid, {})
+        # Strip YYYYMMDD suffix so tomorrow games match odds_map keys
+        base_id = re.sub(r'-\d{8}$', '', gid)
+        o = odds_map.get(base_id) or odds_map.get(gid) or {}
+        sticky = _sticky_odds.get(base_id) or _sticky_odds.get(gid) or {}
 
         spread   = g.get("espn_spread")   or o.get("spread")   or sticky.get("spread")
         ou       = g.get("espn_ou")        or o.get("ou")       or sticky.get("ou")
         homeOdds = g.get("espn_homeOdds")  or o.get("homeOdds") or sticky.get("homeOdds")
         awayOdds = g.get("espn_awayOdds")  or o.get("awayOdds") or sticky.get("awayOdds")
 
-        # Persist lines so live/final cards still show them after books pull the line
+        # Persist under base_id so both today and tomorrow lookups can find it
         if any([spread, ou, homeOdds]):
-            _sticky_odds[gid] = {k: v for k, v in {
+            _sticky_odds[base_id] = {k: v for k, v in {
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds
             }.items() if v}
 
@@ -835,32 +874,30 @@ async def debug_odds():
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
-        # Run injury fetch + DraftKings props in parallel
-        injuries, dk_props = await asyncio.gather(
+        injuries, dk_props, espn_games = await asyncio.gather(
             fetch_espn_injuries(client),
             fetch_draftkings_props(client),
+            fetch_espn_games(client),
             return_exceptions=True,
         )
     if isinstance(injuries, Exception):
         injuries = set()
     if isinstance(dk_props, Exception):
         dk_props = []
+    if isinstance(espn_games, Exception):
+        espn_games = []
 
     if dk_props:
         # DraftKings already removes injured players' lines automatically,
         # but we double-filter with ESPN injuries as a safety net
-        filtered = [
-            p for p in dk_props
-            if p["player"].lower() not in injuries
-        ]
+        filtered = [p for p in dk_props if p["player"].lower() not in injuries]
         return {"props": filtered, "source": "draftkings", "injured_out": sorted(injuries)}
 
-    # Fall back to mock props, filtered by ESPN injuries
-    filtered_mock = [
-        p for p in MOCK_PROPS
-        if p["player"].lower() not in injuries
-    ]
-    return {"props": filtered_mock, "source": "mock", "injured_out": sorted(injuries)}
+    # Fall back to estimated props based on today's REAL game matchups
+    # (never show stale mock data with wrong game names)
+    game_props = generate_game_props(espn_games) if espn_games else []
+    filtered = [p for p in game_props if p["player"].lower() not in injuries]
+    return {"props": filtered, "source": "estimated", "injured_out": sorted(injuries)}
 
 
 @app.get("/api/injuries")
@@ -913,7 +950,9 @@ async def analyze_game(req: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="Game is already over.")
 
     # Resolve odds: sticky cache (populated by get_games) → ESPN embedded → N/A
-    sticky = _sticky_odds.get(req.game_id, {})
+    # Strip date suffix so tomorrow game IDs (e.g. orl-phx-20260221) find cached odds
+    base_game_id = re.sub(r'-\d{8}$', '', req.game_id)
+    sticky = _sticky_odds.get(base_game_id) or _sticky_odds.get(req.game_id) or {}
     ou_line   = sticky.get("ou")       or game.get("espn_ou")       or "N/A"
     spread_ln = sticky.get("spread")   or game.get("espn_spread")   or "N/A"
     away_ml   = sticky.get("awayOdds") or game.get("espn_awayOdds") or "N/A"

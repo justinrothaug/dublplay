@@ -626,12 +626,12 @@ function TopPicksSection({ games, aiOverrides }) {
   );
 }
 
-// ── BEST BETS (top 3 cards) ───────────────────────────────────────────────────
+// ── TOP PLAYER PROPS (top 3 cards) ───────────────────────────────────────────
 function BestBetsSection({ props }) {
   const top = [...props].sort((a,b) => b.edge_score - a.edge_score).slice(0,3);
   return (
     <div style={{ marginBottom:28 }}>
-      <SectionLabel>TOP AI PICKS — RANKED BY DUBL SCORE</SectionLabel>
+      <SectionLabel>TOP PLAYER PROPS — RANKED BY EDGE SCORE</SectionLabel>
       <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
         {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
       </div>

@@ -831,11 +831,18 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
         logging.warning(f"Gemini props JSON parse failed: {e}")
         return []
 
+    VALID_STATS = {"points", "rebounds", "assists", "3pm", "blocks", "steals",
+                   "pts", "reb", "ast", "blk", "stl", "threes", "three-pointers"}
     out = []
     for p in raw:
         try:
             line = float(p.get("line", 0))
             stat = str(p.get("stat", ""))
+            # Drop non-standard prop types (first basket, triple-double, combined, etc.)
+            if stat.lower() not in VALID_STATS and "+" in stat:
+                continue
+            if any(kw in stat.lower() for kw in ("basket", "triple", "double", "combo", "score first")):
+                continue
             rec  = str(p.get("rec", "OVER")).upper()
             over_o  = str(p.get("over_odds", "-115"))
             under_o = str(p.get("under_odds", "+105"))
@@ -987,13 +994,6 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     """Use Gemini with Google Search grounding to get real NBA player prop lines."""
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    game_lines = []
-    for g in games:
-        if g.get("status") == "final":
-            continue
-        game_lines.append(f"  - {g.get('awayName','?')} @ {g.get('homeName','?')}")
-    games_block = "\n".join(game_lines) if game_lines else "  (no games found)"
-
     _PROPS_JSON_SCHEMA = (
         '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
         '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
@@ -1002,19 +1002,17 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
     )
 
     prompt = (
-        f"Today is {today_str}. Tonight's NBA games:\n{games_block}\n\n"
-        "Use Google Search to find tonight's NBA player prop lines from sportsbooks "
-        "(DraftKings, FanDuel, BetMGM) for points, rebounds, assists, 3-pointers, blocks, and steals.\n"
-        f"Output a raw JSON array of 40-50 props covering many players across all tonight's games. Schema per element:\n{_PROPS_JSON_SCHEMA}\n"
-        "Rules:\n"
-        "- Use REAL lines from search results\n"
+        f"Search for the top 50 NBA player props for {today_str}. "
+        "Include at least one prop per game. "
+        "Only standard over/under props: points, rebounds, assists, 3-pointers made, blocks, steals. "
+        "No parlays, no first basket, no combined stats.\n\n"
+        f"Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
         "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
         "- l5/l10/l15: integer hit-rate % for OVER in last 5/10/15 games (0-100)\n"
         "- streak: consecutive games OVER the line (0 if none)\n"
-        "- avg: season average for this stat\n"
-        "- edge_score: float 1.0-5.0 strength of edge\n"
-        "- Only include games scheduled for today\n"
-        "IMPORTANT: Output ONLY the JSON array. Start your response with [ and end with ]. "
+        "- avg: player season average for this stat\n"
+        "- edge_score: float 1.0-5.0 your confidence in this pick\n"
+        "IMPORTANT: Output ONLY the JSON array. Start with [ and end with ]. "
         "No explanations, no preamble, no markdown fences."
     )
 
@@ -1191,7 +1189,7 @@ async def analyze_game(req: AnalyzeRequest):
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
-            "BEST_BET: [specific live bet — team, current line if known, sharp reason why right now]\n"
+            "BEST_BET: [team bet ONLY — moneyline or live spread, never a player prop. State the exact line and why right now]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"
@@ -1203,7 +1201,7 @@ async def analyze_game(req: AnalyzeRequest):
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
-            "BEST_BET: [your top pick ATS or ML — state the exact line, give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
+            "BEST_BET: [team bet ONLY — ATS or ML, never a player prop. State the exact line and give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"

@@ -172,7 +172,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -238,7 +238,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
       {/* ── Teams + Score / Win% ── */}
       <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         {/* Away */}
-        <div style={{ flex:1 }}>
+        <div
+          style={{ flex:1, cursor: game.awayOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={game.awayOdds && onPickOdds ? () => onPickOdds(game.awayOdds) : undefined}
+          title={game.awayOdds ? `Calc: ${game.awayName} ${game.awayOdds}` : undefined}
+        >
           <TeamBadge abbr={game.away} size={44} />
           <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.awayName}</div>
           {isUp && (
@@ -274,7 +278,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
         </div>
 
         {/* Home */}
-        <div style={{ flex:1, textAlign:"right" }}>
+        <div
+          style={{ flex:1, textAlign:"right", cursor: game.homeOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={game.homeOdds && onPickOdds ? () => onPickOdds(game.homeOdds) : undefined}
+          title={game.homeOdds ? `Calc: ${game.homeName} ${game.homeOdds}` : undefined}
+        >
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <TeamBadge abbr={game.home} size={44} />
           </div>
@@ -289,10 +297,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
       {(game.spread || game.ou || game.homeOdds) && (
         <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
           {game.spread && (
-            <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal} />
+            <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal}
+              onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.ou && (
-            <OddsCol label="TOTAL" value={`${game.ou}${isLive ? ` ${game.ouDir}` : ""}`} highlight={!isFinal} />
+            <OddsCol label="TOTAL" value={`${game.ou}${isLive ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+              onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.homeOdds && game.awayOdds && (
             <OddsCol label="MONEYLINE" value={`${game.awayOdds} / ${game.homeOdds}`} highlight={!isFinal} />
@@ -313,9 +323,9 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride }) {
   );
 }
 
-function OddsCol({ label, value, highlight }) {
+function OddsCol({ label, value, highlight, onClick }) {
   return (
-    <div style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}` }}>
+    <div onClick={onClick} style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}`, cursor: onClick ? "pointer" : "default" }}>
       <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:4 }}>{label}</div>
       <div style={{ fontSize:12, fontWeight:700, color: highlight ? T.text : T.text2 }}>{value}</div>
     </div>
@@ -482,7 +492,7 @@ function FinalResultsPanel({ game }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -530,6 +540,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             onRefresh={onRefresh}
             loadingRefresh={loadingIds.has(g.id)}
             aiOverride={aiOverrides[g.id]}
+            onPickOdds={onPickOdds}
           />
         ))}
       </div>
@@ -551,8 +562,8 @@ function BestBetsSection({ props }) {
 }
 
 // ── PAYOUT CALC POPUP (bottom-sheet, iOS-optimized) ───────────────────────────
-function CalcPopup({ onClose }) {
-  const [odds, setOdds] = useState("-110");
+function CalcPopup({ onClose, initialOdds }) {
+  const [odds, setOdds] = useState(initialOdds || "-110");
   const [stake, setStake] = useState("100");
   const payout = americanToPayout(odds, parseFloat(stake) || 0);
   const profit = payout ? (parseFloat(payout) - (parseFloat(stake) || 0)).toFixed(2) : null;
@@ -1029,7 +1040,7 @@ export default function App() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
-  const [showCalc, setShowCalc] = useState(false);
+  const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -1152,7 +1163,7 @@ export default function App() {
                 cursor: "pointer",
               }}>{label}</button>
             ))}
-            <button onClick={() => setShowCalc(true)} style={{
+            <button onClick={() => setCalcSeed("-110")} style={{
               background: "transparent",
               border: `1px solid ${T.border}`,
               color: T.gold,
@@ -1188,6 +1199,7 @@ export default function App() {
           lastUpdated={lastUpdated}
           aiOverrides={aiOverrides}
           upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
+          onPickOdds={odds => setCalcSeed(odds)}
         />
       )}
 
@@ -1199,7 +1211,7 @@ export default function App() {
       )}
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
-      {showCalc && <CalcPopup onClose={() => setShowCalc(false)} />}
+      {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
     </div>
   );
 }

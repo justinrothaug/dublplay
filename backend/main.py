@@ -809,8 +809,14 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
     if not match:
         logging.warning(f"No JSON array in Gemini props response: {text[:300]}")
         return []
+    raw_json = match.group()
+    # Gemini sometimes embeds literal control characters inside string values,
+    # which is invalid JSON. Replace all control chars with a space — structural
+    # whitespace becomes a space (still valid), and embedded newlines in strings
+    # are sanitized too.
+    raw_json = re.sub(r'[\x00-\x1f\x7f]', ' ', raw_json)
     try:
-        raw = json.loads(match.group())
+        raw = json.loads(raw_json)
     except Exception as e:
         logging.warning(f"Gemini props JSON parse failed: {e}")
         return []
@@ -953,7 +959,7 @@ async def fetch_odds_api_player_props(client: httpx.AsyncClient) -> list[dict]:
                         "l5": 0, "l10": 0, "l15": 0,
                         "streak":     0,
                         "avg":        float(line),
-                        "edge_score": round(abs(over_price - under_price) / 30, 1),
+                        "edge_score": min(5.0, max(1.0, round(abs(over_price - under_price) / 20 + 1.0, 1))),
                         "matchup":    matchup,
                         "reason":     f"Live {bm_name} line",
                     })

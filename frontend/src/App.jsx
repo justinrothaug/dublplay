@@ -373,6 +373,11 @@ function AnalysisPanel({ analysis, isLive, isFinal, onRefresh, loading, hasOverr
         )}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {items.length === 0 && (
+          <span style={{ fontSize:11, color:T.text3, lineHeight:1.6 }}>
+            {loading ? <><Spinner /> Analyzing...</> : "Tap REFRESH ↺ for AI analysis"}
+          </span>
+        )}
         {items.map((item, i) => (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
@@ -490,14 +495,30 @@ function FinalResultsPanel({ game }) {
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
 function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides }) {
-  const liveGames     = games.filter(g => g.status === "live");
-  const upcomingGames = games.filter(g => g.status === "upcoming");
-  const finalGames    = games.filter(g => g.status === "final");
-  const ordered = [...liveGames, ...upcomingGames, ...finalGames];
+  const liveGames      = games.filter(g => g.status === "live"     && !g.day);
+  const todayUpcoming  = games.filter(g => g.status === "upcoming" && !g.day);
+  const finalGames     = games.filter(g => g.status === "final"    && !g.day);
+  const tomorrowGames  = games.filter(g => g.day === "tomorrow");
+  const ordered = [...liveGames, ...todayUpcoming, ...finalGames];
 
   const fmtTime = d => d
     ? d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })
     : null;
+
+  // Divider card between today and tomorrow
+  const TomorrowDivider = () => (
+    <div style={{
+      display:"flex", alignItems:"center", alignSelf:"stretch",
+      padding:"0 4px", flexShrink:0,
+    }}>
+      <div style={{
+        writingMode:"vertical-rl", transform:"rotate(180deg)",
+        fontSize:9, fontWeight:700, letterSpacing:"0.12em",
+        color:T.text3, padding:"12px 6px",
+        borderLeft:`1px solid ${T.border}`,
+      }}>TOMORROW</div>
+    </div>
+  );
 
   return (
     <div>
@@ -509,13 +530,16 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides })
             <span style={{ fontSize:11, fontWeight:700, color:T.red, letterSpacing:"0.06em" }}>{liveGames.length} LIVE</span>
           </div>
         )}
-        {upcomingGames.length > 0 && (
+        {todayUpcoming.length > 0 && (
           <span style={{ fontSize:11, fontWeight:700, color:T.green, letterSpacing:"0.06em" }}>
-            {upcomingGames.length} TONIGHT
+            {todayUpcoming.length} TONIGHT
           </span>
         )}
         {finalGames.length > 0 && (
           <span style={{ fontSize:11, color:T.text3, letterSpacing:"0.06em" }}>{finalGames.length} FINAL</span>
+        )}
+        {tomorrowGames.length > 0 && (
+          <span style={{ fontSize:11, color:T.accent, letterSpacing:"0.06em" }}>{tomorrowGames.length} TOMORROW</span>
         )}
         <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
           {liveGames.length > 0
@@ -531,6 +555,16 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides })
         scrollbarWidth:"none",
       }}>
         {ordered.map(g => (
+          <GameCard
+            key={g.id}
+            game={g}
+            onRefresh={onRefresh}
+            loadingRefresh={loadingIds.has(g.id)}
+            aiOverride={aiOverrides[g.id]}
+          />
+        ))}
+        {tomorrowGames.length > 0 && ordered.length > 0 && <TomorrowDivider />}
+        {tomorrowGames.map(g => (
           <GameCard
             key={g.id}
             game={g}

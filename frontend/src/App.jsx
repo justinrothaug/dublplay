@@ -38,6 +38,64 @@ const americanToPayout = (oddsStr, stake) => {
 const edgeColor = s => s >= 80 ? T.green : s >= 65 ? T.gold : T.red;
 const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
+// ── FINAL GAME RESULT CALCULATOR ──────────────────────────────────────────────
+// Given a final game, returns what actually hit: spread, total, moneyline
+function calcFinalResults(game) {
+  if (game.status !== "final") return null;
+  const home = game.homeScore ?? 0;
+  const away = game.awayScore ?? 0;
+  const combined = home + away;
+
+  // Moneyline
+  const mlWinner = home > away ? game.home : game.away;
+  const mlWinnerName = home > away ? game.homeName : game.awayName;
+  const margin = Math.abs(home - away);
+
+  // Total (O/U)
+  let totalResult = null;
+  if (game.ou) {
+    const line = parseFloat(game.ou);
+    if (!isNaN(line)) {
+      totalResult = {
+        label: `${game.ou} O/U`,
+        combined,
+        hit: combined > line ? "OVER" : combined < line ? "UNDER" : "PUSH",
+      };
+    }
+  }
+
+  // Spread — parse "DET -16.5" or "BOS -2.5"
+  let spreadResult = null;
+  if (game.spread) {
+    const m = game.spread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
+    if (m) {
+      const favAbbr = m[1];
+      const line    = parseFloat(m[2]); // negative = favored
+      const favScore = favAbbr === game.home ? home : away;
+      const dogScore = favAbbr === game.home ? away : home;
+      const actualMargin = favScore - dogScore;        // positive = fav won
+      const needed = Math.abs(line);                    // how much fav needed to win by
+      const favName = favAbbr === game.home ? game.homeName : game.awayName;
+      const dogAbbr = favAbbr === game.home ? game.away : game.home;
+      const dogName = favAbbr === game.home ? game.awayName : game.homeName;
+
+      let hit;
+      if (actualMargin > needed) hit = "fav";       // fav covered
+      else if (actualMargin < needed) hit = "dog";  // dog covered
+      else hit = "push";
+
+      spreadResult = {
+        favAbbr, favName, dogAbbr, dogName,
+        line: line, // e.g. -16.5
+        hit,
+        actualMargin,
+      };
+    }
+  }
+
+  return { mlWinner, mlWinnerName, margin, totalResult, spreadResult };
+}
+
 // Parse Gemini free-text into best_bet / ou / props
 // Handles numbered formats like: (1) ... (2) ... (3) ... or 1. ... 2. ... 3. ...
 function parseGeminiText(text) {
@@ -239,15 +297,18 @@ function GameCard({ game, onRefresh, loadingRefresh }) {
         </div>
       )}
 
-      {/* ── AI Analysis ── */}
-      <AnalysisPanel
-        analysis={displayAnalysis}
-        isLive={isLive}
-        isFinal={isFinal}
-        onRefresh={(!isFinal && onRefresh) ? () => onRefresh(game.id, setAiText) : null}
-        loading={loadingRefresh}
-        hasOverride={!!aiText}
-      />
+      {/* ── Results (final) or Analysis (live/upcoming) ── */}
+      {isFinal
+        ? <FinalResultsPanel game={game} />
+        : <AnalysisPanel
+            analysis={displayAnalysis}
+            isLive={isLive}
+            isFinal={false}
+            onRefresh={onRefresh ? () => onRefresh(game.id, setAiText) : null}
+            loading={loadingRefresh}
+            hasOverride={!!aiText}
+          />
+      }
     </div>
   );
 }
@@ -322,6 +383,107 @@ function AnalysisPanel({ analysis, isLive, isFinal, onRefresh, loading, hasOverr
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ── FINAL RESULTS PANEL ───────────────────────────────────────────────────────
+function FinalResultsPanel({ game }) {
+  const r = calcFinalResults(game);
+  if (!r) return null;
+
+  const HitBadge = ({ hit, trueVal, falseVal }) => {
+    const won = hit === trueVal;
+    const push = hit === "push" || hit === "PUSH";
+    return (
+      <span style={{
+        fontSize:9, fontWeight:800, letterSpacing:"0.06em",
+        color: push ? T.gold : won ? T.green : T.red,
+        background: push ? "rgba(245,166,35,0.12)" : won ? T.greenDim : T.redDim,
+        border: `1px solid ${push ? "rgba(245,166,35,0.3)" : won ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+        borderRadius:4, padding:"2px 6px",
+      }}>
+        {push ? "PUSH" : won ? "✓ HIT" : "✗ MISS"}
+      </span>
+    );
+  };
+
+  return (
+    <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
+      <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:10 }}>
+        FINAL RESULTS
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+
+        {/* Moneyline winner */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+            <span style={{ color:T.green, fontSize:10 }}>🏆</span>
+            <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>MONEYLINE</span>
+            <span style={{ fontSize:11, color:T.text }}>{r.mlWinnerName} won by {r.margin}</span>
+          </div>
+        </div>
+
+        {/* Spread */}
+        {r.spreadResult && (() => {
+          const s = r.spreadResult;
+          const label = `${s.favName} ${s.line > 0 ? "+" : ""}${s.line}`;
+          const dogLabel = `${s.dogName} +${Math.abs(s.line)}`;
+          return (
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ display:"flex", gap:7, alignItems:"center", flex:1, minWidth:0 }}>
+                <span style={{ color:"#a78bfa", fontSize:10 }}>⊖</span>
+                <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>SPREAD</span>
+                <span style={{ fontSize:11, color:T.text2, whiteSpace:"nowrap" }}>
+                  {s.hit === "fav"
+                    ? `${s.favName} covered (won by ${Math.abs(Math.round(s.actualMargin))})`
+                    : s.hit === "push"
+                    ? `Push — won by exactly ${Math.abs(s.line)}`
+                    : `${s.dogName} +${Math.abs(s.line)} covered`}
+                </span>
+              </div>
+              <div style={{ display:"flex", gap:5, flexShrink:0, marginLeft:8 }}>
+                <span style={{ fontSize:9, color:T.text3 }}>{label}</span>
+                <HitBadge hit={s.hit} trueVal="fav" />
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Total */}
+        {r.totalResult && (
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ display:"flex", gap:7, alignItems:"center", flex:1 }}>
+              <span style={{ color:T.gold, fontSize:10 }}>◉</span>
+              <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>TOTAL</span>
+              <span style={{ fontSize:11, color:T.text2 }}>
+                {r.totalResult.combined} combined — {r.totalResult.hit} {r.totalResult.label}
+              </span>
+            </div>
+            <HitBadge hit={r.totalResult.hit} trueVal={game.analysis?.ou?.includes("OVER") ? "OVER" : "UNDER"} />
+          </div>
+        )}
+
+        {/* AI notes */}
+        {game.analysis?.best_bet && (
+          <div style={{ marginTop:4, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
+            <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.08em", marginBottom:5 }}>PRE-GAME NOTES</div>
+            {[
+              { icon:"✦", label:"BEST BET",   text:game.analysis.best_bet, color:T.green },
+              { icon:"◉", label:"O/U LEAN",   text:game.analysis.ou,       color:T.gold  },
+              { icon:"▸", label:"PLAYER PROP", text:game.analysis.props,   color:"#a78bfa" },
+            ].filter(i => i.text).map((item, i) => (
+              <div key={i} style={{ display:"flex", gap:7, alignItems:"flex-start", marginBottom:4 }}>
+                <span style={{ color:item.color, fontSize:9, marginTop:1, flexShrink:0 }}>{item.icon}</span>
+                <div style={{ flex:1 }}>
+                  <span style={{ fontSize:8, fontWeight:700, color:item.color, letterSpacing:"0.06em", marginRight:5 }}>{item.label}</span>
+                  <span style={{ fontSize:10, color:T.text3, lineHeight:1.5 }}>{item.text}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -207,119 +207,126 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
     return result
 
 
-async def fetch_player_props(client: httpx.AsyncClient, espn_game_ids: list[str]) -> list[dict]:
+async def fetch_draftkings_props(client: httpx.AsyncClient) -> list[dict]:
     """
-    Fetch player prop lines from The Odds API for today's games.
-    Markets: player_points, player_rebounds, player_assists
-    Returns list of prop dicts in our schema.
-    Requires ODDS_API_KEY.
+    Fetch NBA player props from DraftKings public sportsbook JSON endpoint.
+    No API key required. DraftKings automatically removes lines for
+    scratched/injured players, so OUT players simply won't appear.
     """
-    if not ODDS_API_KEY:
-        return []
-
-    cached = cache_get("props")
+    cached = cache_get("dk_props")
     if cached is not None:
         return cached
 
-    # First get event IDs from the odds API
+    PROP_KEYWORDS = {
+        "points": "Points", "point": "Points",
+        "rebounds": "Rebounds", "rebound": "Rebounds",
+        "assists": "Assists", "assist": "Assists",
+        "threes": "3PM", "3-pointers": "3PM", "three": "3PM",
+        "blocks": "Blocks", "steals": "Steals",
+        "pts + reb + ast": "PRA", "pra": "PRA",
+    }
+
+    props_out: list[dict] = []
+
     try:
         r = await client.get(
-            f"{ODDS_API_BASE}/sports/basketball_nba/events/",
-            params={"apiKey": ODDS_API_KEY},
-            timeout=10,
+            "https://sportsbook.draftkings.com//sites/US-SB/api/v5/eventgroups/42648",
+            params={"format": "json"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible)"},
+            timeout=15,
         )
-        events = r.json()
+        data = r.json()
     except Exception:
         return []
 
-    props_out = []
-    markets = ["player_points", "player_rebounds", "player_assists", "player_threes"]
-    market_labels = {
-        "player_points": "Points",
-        "player_rebounds": "Rebounds",
-        "player_assists": "Assists",
-        "player_threes": "3PM",
-    }
+    event_group = data.get("eventGroup", {})
 
-    for ev in events[:6]:  # limit to first 6 games to stay within rate limits
-        event_id = ev.get("id")
-        home = norm_abbr(ev.get("home_team", "")[:3].upper())
-        away = norm_abbr(ev.get("away_team", "")[:3].upper())
-        matchup = f"{away} vs {home}"
+    for event in event_group.get("events", [])[:10]:
+        event_id   = event.get("eventId")
+        team1      = event.get("teamName1", "")
+        team2      = event.get("teamName2", "")
+        matchup    = f"{team1} vs {team2}"
 
-        try:
-            r2 = await client.get(
-                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": ",".join(markets),
-                    "oddsFormat": "american",
-                },
-                timeout=10,
-            )
-            ev_odds = r2.json()
-        except Exception:
-            continue
-
-        seen: dict = {}  # player+market -> best line
-        for bm in ev_odds.get("bookmakers", []):
-            if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
+        # Collect category + subcategory IDs that look like player props
+        prop_subs = []
+        for cat in event.get("offerCategories", []):
+            cat_name = cat.get("name", "").lower()
+            if "player" not in cat_name and "prop" not in cat_name:
                 continue
-            for market in bm.get("markets", []):
-                mk = market["key"]
-                label = market_labels.get(mk)
-                if not label:
-                    continue
-                for outcome in market.get("outcomes", []):
-                    player = outcome.get("description", outcome.get("name", ""))
-                    point  = outcome.get("point")
-                    price  = outcome.get("price")
-                    side   = outcome.get("name", "")  # "Over" / "Under"
-                    if not player or point is None:
-                        continue
-                    pk = f"{player}|{mk}"
-                    if pk not in seen:
-                        seen[pk] = {
-                            "player": player,
-                            "market": mk,
-                            "label": label,
-                            "line": point,
-                            "over_odds": None,
-                            "under_odds": None,
-                            "matchup": matchup,
-                            "home": home, "away": away,
-                        }
-                    if side == "Over":
-                        seen[pk]["over_odds"] = price
-                    else:
-                        seen[pk]["under_odds"] = price
+            cat_id = cat.get("offerCategoryId")
+            for sub in cat.get("offerSubcategoryDescriptors", []):
+                sub_id   = sub.get("offerSubcategoryId")
+                sub_name = sub.get("name", "").lower()
+                # Map subcategory name to prop type
+                prop_type = None
+                for kw, label in PROP_KEYWORDS.items():
+                    if kw in sub_name:
+                        prop_type = label
+                        break
+                if prop_type and sub_id:
+                    prop_subs.append((cat_id, sub_id, prop_type))
 
-        for pk, p in seen.items():
-            over  = p["over_odds"]
-            under = p["under_odds"]
-            if over is None and under is None:
+        for cat_id, sub_id, prop_type in prop_subs:
+            try:
+                r2 = await client.get(
+                    f"https://sportsbook.draftkings.com//sites/US-SB/api/v5/events/{event_id}"
+                    f"/categories/{cat_id}/subcategories/{sub_id}",
+                    params={"format": "json"},
+                    headers={"User-Agent": "Mozilla/5.0 (compatible)"},
+                    timeout=10,
+                )
+                sub_data = r2.json()
+            except Exception:
                 continue
-            rec = "OVER" if (over is not None and (under is None or abs(over) <= abs(under))) else "UNDER"
-            odds_val = over if rec == "OVER" else under
-            props_out.append({
-                "player": p["player"],
-                "team": p["away"] if p["player"].lower() in p["away"].lower() else "—",
-                "pos": "—",
-                "game": p["matchup"],
-                "prop": f"{p['label']} {p['line']}+",
-                "rec": rec,
-                "line": p["line"],
-                "conf": 60,
-                "edge_score": 60,
-                "l5": 60, "l10": 55, "l15": 50,
-                "streak": 0,
-                "avg": p["line"],
-                "odds": _fmt_american(odds_val),
-                "reason": f"Live line from The Odds API · {p['matchup']}",
-            })
 
-    cache_set("props", props_out)
+            # Parse the nested offers structure
+            for offer_cat in sub_data.get("eventGroup", {}).get("offerCategories", []):
+                for sub_desc in offer_cat.get("offerSubcategoryDescriptors", []):
+                    for offer_row in sub_desc.get("offers", []):
+                        for offer in (offer_row if isinstance(offer_row, list) else [offer_row]):
+                            outcomes = offer.get("outcomes", [])
+                            if len(outcomes) < 2:
+                                continue
+                            player_name = outcomes[0].get("participant") or outcomes[0].get("label", "")
+                            if not player_name:
+                                continue
+
+                            over_out  = next((o for o in outcomes if o.get("label","").lower() == "over"),  None)
+                            under_out = next((o for o in outcomes if o.get("label","").lower() == "under"), None)
+                            if not over_out and not under_out:
+                                continue
+
+                            line = (over_out or under_out).get("line", 0)
+                            over_odds  = _fmt_american(over_out.get("oddsAmerican")  if over_out  else None)
+                            under_odds = _fmt_american(under_out.get("oddsAmerican") if under_out else None)
+
+                            # Pick better side by smaller absolute odds (closer to even)
+                            rec = "OVER"
+                            if over_out and under_out:
+                                ov = abs(int(over_out.get("oddsAmerican", -9999) or -9999))
+                                un = abs(int(under_out.get("oddsAmerican", -9999) or -9999))
+                                rec = "OVER" if ov <= un else "UNDER"
+                            elif under_out:
+                                rec = "UNDER"
+
+                            props_out.append({
+                                "player":     player_name,
+                                "team":       "—",
+                                "pos":        "—",
+                                "game":       matchup,
+                                "prop":       f"{prop_type} {line}+",
+                                "rec":        rec,
+                                "line":       line,
+                                "conf":       60,
+                                "edge_score": 60,
+                                "l5": 60, "l10": 55, "l15": 50,
+                                "streak":     0,
+                                "avg":        line,
+                                "odds":       over_odds if rec == "OVER" else under_odds,
+                                "reason":     f"Live DraftKings line · {matchup}",
+                            })
+
+    cache_set("dk_props", props_out)
     return props_out
 
 
@@ -518,23 +525,32 @@ async def get_games():
 @app.get("/api/props")
 async def get_props():
     async with httpx.AsyncClient() as client:
-        injuries = await fetch_espn_injuries(client)
-        live_props = await fetch_player_props(client, [])
+        # Run injury fetch + DraftKings props in parallel
+        injuries, dk_props = await asyncio.gather(
+            fetch_espn_injuries(client),
+            fetch_draftkings_props(client),
+            return_exceptions=True,
+        )
+    if isinstance(injuries, Exception):
+        injuries = set()
+    if isinstance(dk_props, Exception):
+        dk_props = []
 
-    if live_props:
-        # Filter out injured players automatically
+    if dk_props:
+        # DraftKings already removes injured players' lines automatically,
+        # but we double-filter with ESPN injuries as a safety net
         filtered = [
-            p for p in live_props
+            p for p in dk_props
             if p["player"].lower() not in injuries
         ]
-        return {"props": filtered, "source": "live", "injured_out": list(injuries)}
+        return {"props": filtered, "source": "draftkings", "injured_out": sorted(injuries)}
 
-    # Fall back to mock props, still filtered by injuries
+    # Fall back to mock props, filtered by ESPN injuries
     filtered_mock = [
         p for p in MOCK_PROPS
         if p["player"].lower() not in injuries
     ]
-    return {"props": filtered_mock, "source": "mock", "injured_out": list(injuries)}
+    return {"props": filtered_mock, "source": "mock", "injured_out": sorted(injuries)}
 
 
 @app.get("/api/injuries")

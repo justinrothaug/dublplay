@@ -1039,20 +1039,55 @@ async def get_props():
         props: list[dict] = []
         source = "none"
 
-        # 1. Try The Odds API player props (real bookmaker lines + real odds)
-        if ODDS_API_KEY:
-            props = await fetch_odds_api_player_props(client)
-            if props:
+        # 1. Gemini first — rich stats (L5/L10/L15, streak, avg, edge_score)
+        if GEMINI_API_KEY:
+            espn_games = await fetch_espn_games(client)
+            # Run Gemini + Odds API in parallel so we can cross-check odds
+            gemini_task = asyncio.create_task(
+                fetch_gemini_props(client, GEMINI_API_KEY, espn_games or [])
+            )
+            odds_task = asyncio.create_task(
+                fetch_odds_api_player_props(client)
+            ) if ODDS_API_KEY else None
+
+            gemini_props = await gemini_task
+            live_props = await odds_task if odds_task else []
+
+            if gemini_props:
+                # Build a lookup: (player_lower, stat_lower) -> live prop
+                live_index: dict[tuple, dict] = {}
+                for lp in live_props:
+                    key = (lp["player"].lower(), lp["stat"].lower())
+                    live_index[key] = lp
+
+                # Cross-check: overwrite odds+line with live bookmaker data where available
+                verified = 0
+                for gp in gemini_props:
+                    key = (gp["player"].lower(), gp["stat"].lower())
+                    if key in live_index:
+                        lp = live_index[key]
+                        gp["over_odds"]  = lp["over_odds"]
+                        gp["under_odds"] = lp["under_odds"]
+                        gp["line"]       = lp["line"]
+                        gp["prop"]       = lp["prop"]
+                        # Update the recommended-side odds to match
+                        gp["odds"] = gp["over_odds"] if gp["rec"] == "OVER" else gp["under_odds"]
+                        verified += 1
+
+                props  = gemini_props
+                source = "gemini" if verified == 0 else f"gemini+odds({verified} verified)"
+
+            elif live_props:
+                # Gemini returned nothing — fall back to Odds API alone
+                props  = live_props
                 source = "odds_api"
 
-        # 2. Try Gemini with Google Search grounding (searches for real lines)
-        if not props and GEMINI_API_KEY:
-            espn_games = await fetch_espn_games(client)
-            props = await fetch_gemini_props(client, GEMINI_API_KEY, espn_games or [])
-            if props:
-                source = "gemini"
+        elif ODDS_API_KEY:
+            # No Gemini key — use Odds API only
+            props  = await fetch_odds_api_player_props(client)
+            source = "odds_api" if props else "none"
 
-        # 3. Try PrizePicks as last resort
+        # 3. Last resort: PrizePicks
         if not props:
             try:
                 props = await fetch_prizepicks_props(client)

@@ -1269,6 +1269,10 @@ def health():
     }
 
 
+USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"
+USER_STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=USER_STATIC_DIR), name="user_static")
+
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")

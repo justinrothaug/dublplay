@@ -1456,7 +1456,7 @@ const Loader = () => {
       background:T.bg, gap:28,
     }}>
       <img
-        src="/loading.png"
+        src="/static/loading.png"
         alt="DublPlay"
         style={{ width:110, height:110, borderRadius:24, objectFit:"cover", boxShadow:"0 8px 32px rgba(0,0,0,0.5)" }}
       />

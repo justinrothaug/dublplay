@@ -821,6 +821,8 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
             line = float(p.get("line", 0))
             stat = str(p.get("stat", ""))
             rec  = str(p.get("rec", "OVER")).upper()
+            over_o  = str(p.get("over_odds", "-115"))
+            under_o = str(p.get("under_odds", "+105"))
             out.append({
                 "player":     str(p.get("player", "")),
                 "team":       str(p.get("team", "")),
@@ -828,8 +830,9 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
                 "stat":       stat,
                 "prop":       f"{stat} O/U {line}",
                 "line":       line,
-                "over_odds":  str(p.get("over_odds", "-115")),
-                "under_odds": str(p.get("under_odds", "+105")),
+                "over_odds":  over_o,
+                "under_odds": under_o,
+                "odds":       over_o if rec == "OVER" else under_o,
                 "rec":        rec,
                 "l5":         int(p.get("l5", 50)),
                 "l10":        int(p.get("l10", 50)),
@@ -934,6 +937,8 @@ async def fetch_odds_api_player_props(client: httpx.AsyncClient) -> list[dict]:
                     under_price = under.get("price", -110)
                     rec = "OVER" if over_price >= under_price else "UNDER"
 
+                    over_fmt  = _fmt_american(over_price)
+                    under_fmt = _fmt_american(under_price)
                     props_out.append({
                         "player":     player_name,
                         "team":       "",
@@ -941,8 +946,9 @@ async def fetch_odds_api_player_props(client: httpx.AsyncClient) -> list[dict]:
                         "stat":       stat,
                         "prop":       f"{stat} O/U {line}",
                         "line":       float(line),
-                        "over_odds":  _fmt_american(over_price),
-                        "under_odds": _fmt_american(under_price),
+                        "over_odds":  over_fmt,
+                        "under_odds": under_fmt,
+                        "odds":       over_fmt if rec == "OVER" else under_fmt,
                         "rec":        rec,
                         "l5": 0, "l10": 0, "l15": 0,
                         "streak":     0,

@@ -12,5 +12,5 @@ services:
       - ODDS_API_KEY=${ODDS_API_KEY:-}
       - PORT=7860
     volumes:
-      - ./static:/app/backend/user_static
+      - ./static:/app/user_static
     restart: unless-stopped

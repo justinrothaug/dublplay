@@ -544,6 +544,24 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
       {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
       <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds} />
 
+      {/* League / view bar */}
+      <div style={{
+        display:"flex", alignItems:"center", gap:0,
+        margin:"4px 20px 12px", borderRadius:10,
+        background:"rgba(255,255,255,0.04)", border:`1px solid ${T.border}`,
+        overflow:"hidden",
+      }}>
+        <div style={{
+          padding:"8px 16px", fontSize:11, fontWeight:800,
+          color:T.gold, letterSpacing:"0.1em",
+          borderRight:`1px solid ${T.border}`,
+        }}>NBA</div>
+        <div style={{
+          padding:"8px 16px", fontSize:11, fontWeight:700,
+          color:T.text1, letterSpacing:"0.06em", flex:1,
+        }}>All Games</div>
+      </div>
+
       {/* Horizontal scroll rail */}
       <div style={{
         display:"flex", gap:12, overflowX:"auto", scrollSnapType:"x mandatory",
@@ -639,7 +657,7 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
   return (
     <div style={{ padding:"0 20px", marginBottom:16 }}>
       <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))" }}>
+      <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(min(260px,calc(50vw - 25px)),1fr))" }}>
         {top.map((pick,i) => <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onPickOdds={onPickOdds} />)}
       </div>
     </div>

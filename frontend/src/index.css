@@ -12,13 +12,23 @@ body {
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
 input, textarea, button { font-family: inherit; }
-input:focus, textarea:focus { outline: none; }
-button { cursor: pointer; transition: filter 0.15s, opacity 0.15s; }
+input:focus, textarea:focus { outline: none; box-shadow: 0 0 0 2px rgba(99,202,138,0.2); }
+button { cursor: pointer; transition: filter 0.15s, opacity 0.15s, transform 0.1s; }
 button:hover:not(:disabled) { filter: brightness(1.12); }
+button:active:not(:disabled) { transform: scale(0.97); }
 button:disabled { cursor: not-allowed; }
 
-@keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:0.2} }
-@keyframes fadeUp  { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-@keyframes spin    { to{transform:rotate(360deg)} }
+/* Table row hover */
+tbody tr:hover { background: rgba(255,255,255,0.025) !important; }
+
+@keyframes pulse    { 0%,100%{opacity:1} 50%{opacity:0.2} }
+@keyframes fadeUp   { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+@keyframes spin     { to{transform:rotate(360deg)} }
+@keyframes slideUp  { from{opacity:0;transform:translateY(100%)} to{opacity:1;transform:translateY(0)} }
+@keyframes shimmer  {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}

@@ -35,8 +35,10 @@ except ImportError:
     _FIREBASE_AVAILABLE = False
 
 _firestore_db = None
-# Tracks which YYYYMMDD dates have already been synced from Firestore into memory
-_firestore_loaded_dates: set[str] = set()
+# Timestamp (time.time()) of the last Firestore sync per date — replaces the
+# one-shot set so multiple replicas re-sync every FIRESTORE_SYNC_TTL seconds.
+_firestore_last_synced: dict[str, float] = {}
+FIRESTORE_SYNC_TTL = 300  # re-read Firestore every 5 minutes per replica
 # ISO-string timestamp of when odds were last written to Firestore, keyed by date
 _odds_updated_at: dict[str, str] = {}
 
@@ -1007,12 +1009,12 @@ async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # ── 1. Sync Firestore → memory once per date per process instance ──────────
-    if date_str not in _firestore_loaded_dates:
+    # ── 1. Sync Firestore → memory (TTL-based so all replicas stay aligned) ─────
+    if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
         stored = _load_odds_from_firestore(date_str)
         if stored:
             _sticky_odds.update(stored)
-        _firestore_loaded_dates.add(date_str)
+        _firestore_last_synced[date_str] = time.time()
 
     # ── 2. Fetch live ESPN game data (always needed for scores / status) ───────
     #       If we already have odds in memory, skip the blocking odds API call

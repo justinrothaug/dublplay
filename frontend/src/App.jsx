@@ -1436,6 +1436,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
+  const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -1498,6 +1499,25 @@ export default function App() {
           }));
       });
   }, [dataLoaded, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 5) Re-analyze whenever a game transitions to live (runs on every 30s poll)
+  useEffect(() => {
+    if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
+    const newlyLive = games.filter(g => g.status === "live" && !analyzedLiveRef.current.has(g.id));
+    if (newlyLive.length === 0) return;
+    newlyLive.forEach(g => {
+      analyzedLiveRef.current.add(g.id);
+      setLoadingIds(prev => new Set([...prev, g.id]));
+      api.analyze(g.id, apiKey, selectedDate)
+        .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
+        .catch(console.error)
+        .finally(() => setLoadingIds(prev => {
+          const next = new Set(prev);
+          next.delete(g.id);
+          return next;
+        }));
+    });
+  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {

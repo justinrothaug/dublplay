@@ -969,7 +969,7 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
   return (
     <div style={{ padding:"0 16px", marginBottom:14 }}>
       <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:8, gridTemplateColumns:"repeat(3,1fr)" }}>
+      <div style={{ display:"grid", gap:8, gridTemplateColumns:"repeat(3,minmax(100px,155px))" }}>
         {top.map((pick,i) => (
           <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onExpand={setExpandedPick} />
         ))}

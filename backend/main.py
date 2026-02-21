@@ -659,7 +659,7 @@ def build_system_prompt(games: list, injuries: set) -> str:
 
 def parse_gemini_analysis(text: str) -> dict:
     """Parse structured Gemini response into best_bet / ou / props / dubl scores."""
-    stoppers = "BEST_BET:|OU_LEAN:|PLAYER_PROP:|DUBL_SCORE_BET:|DUBL_SCORE_OU:|$"
+    stoppers = "BEST_BET:|BET_TEAM:|OU_LEAN:|PLAYER_PROP:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
         m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', text, re.DOTALL | re.IGNORECASE)
@@ -681,8 +681,10 @@ def parse_gemini_analysis(text: str) -> dict:
         "bet_team":       (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
         "ou":             extract("OU_LEAN"),
         "props":          extract("PLAYER_PROP"),
-        "dubl_score_bet": extract_score("DUBL_SCORE_BET"),
-        "dubl_score_ou":  extract_score("DUBL_SCORE_OU"),
+        "dubl_score_bet":     extract_score("DUBL_SCORE_BET"),
+        "dubl_reasoning_bet": extract("DUBL_REASONING_BET"),
+        "dubl_score_ou":      extract_score("DUBL_SCORE_OU"),
+        "dubl_reasoning_ou":  extract("DUBL_REASONING_OU"),
     }
 
 
@@ -1255,8 +1257,10 @@ async def analyze_game(req: AnalyzeRequest):
             f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"
-            "DUBL_SCORE_OU: [single float 1.0-5.0 — confidence in the O/U lean, where 5.0 = strongest edge]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — VALUE score, not just confidence. Weigh edge vs. the live price: a heavy favorite (-400+) scores lower even if likely (juice kills value); an undervalued side with real edge scores higher. Never give 5.0 to a -500+ live line.]\n"
+            "DUBL_REASONING_BET: [1 sentence: your edge, the current price, and whether the juice is worth it]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — VALUE score: how strong is the pace/foul/scoring-rate edge vs. the -110 juice? Only score high if a concrete stat drives the lean.]\n"
+            "DUBL_REASONING_OU: [1 sentence: the key live stat or trend driving the lean and your confidence]"
         )
     else:
         prompt = (
@@ -1268,8 +1272,10 @@ async def analyze_game(req: AnalyzeRequest):
             f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
             f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [single float 1.0-5.0 — confidence in the Best Bet, where 5.0 = strongest edge]\n"
-            "DUBL_SCORE_OU: [single float 1.0-5.0 — confidence in the O/U lean, where 5.0 = strongest edge]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — VALUE score, not just confidence. Weigh your edge against the price: a heavy favorite (-500+) scores lower even if likely (bad payout); a well-priced underdog or undervalued side with real edge scores higher. 5.0 = clear edge at a price that pays.]\n"
+            "DUBL_REASONING_BET: [1 sentence: your edge, the odds, and why the price is or isn't worth it]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — VALUE score: how strong is the statistical/situational edge vs. the -110 juice? Only score high if pace data, injuries, or trends back the lean — not just a guess.]\n"
+            "DUBL_REASONING_OU: [1 sentence: the key stat or factor driving the lean and whether it justifies the -110]"
         )
 
     async with httpx.AsyncClient() as client:

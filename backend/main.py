@@ -1237,28 +1237,29 @@ async def analyze_game(req: AnalyzeRequest):
     if is_final:
         raise HTTPException(status_code=400, detail="Game is already over.")
 
-    # Resolve odds: sticky cache (populated by get_games) → ESPN embedded → N/A
+    # Resolve odds: ESPN embedded (freshest) → sticky cache → N/A
     # Strip date suffix so tomorrow game IDs (e.g. orl-phx-20260221) find cached odds
     base_game_id = re.sub(r'-\d{8}$', '', req.game_id)
     sticky = _sticky_odds.get(base_game_id) or _sticky_odds.get(req.game_id) or {}
-    ou_line   = sticky.get("ou")       or game.get("espn_ou")       or "N/A"
-    spread_ln = sticky.get("spread")   or game.get("espn_spread")   or "N/A"
-    away_ml   = sticky.get("awayOdds") or game.get("espn_awayOdds") or "N/A"
-    home_ml   = sticky.get("homeOdds") or game.get("espn_homeOdds") or "N/A"
+    ou_line   = game.get("espn_ou")       or sticky.get("ou")       or "N/A"
+    spread_ln = game.get("espn_spread")   or sticky.get("spread")   or "N/A"
+    away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
+    home_ml   = game.get("espn_homeOdds") or sticky.get("homeOdds") or "N/A"
 
     if is_live:
         prompt = (
-            f"Live: {game['awayName']} {game.get('awayScore',0)} "
-            f"@ {game['homeName']} {game.get('homeScore',0)} "
+            f"Live: {game['awayName']} ({away_ml}) {game.get('awayScore',0)} "
+            f"@ {game['homeName']} ({home_ml}) {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
+            f"Spread: {spread_ln}. O/U: {ou_line}.\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
-            "BEST_BET: [team bet ONLY — moneyline or live spread, never a player prop. State the exact line and why right now]\n"
+            "BEST_BET: [Format: 'TEAM LINE — 1-2 sentence reason with specific live edge (score situation, foul trouble, hot/cold shooting, pace). NEVER just the line alone — always include the reasoning.]\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — project the final score with pace/foul situation/current scoring rate reasoning]\n"
+            f"OU_LEAN: [Format: 'OVER/UNDER {ou_line} — 1-2 sentence reason citing pace, foul situation, or current scoring rate']\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — VALUE score, not just confidence. Weigh edge vs. the live price: a heavy favorite (-400+) scores lower even if likely (juice kills value); an undervalued side with real edge scores higher. Never give 5.0 to a -500+ live line.]\n"
-            "DUBL_REASONING_BET: [1 sentence: your edge, the current price, and whether the juice is worth it]\n"
+            "DUBL_REASONING_BET: [1 sentence: the current price and whether the juice is worth it at this live line]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — VALUE score: how strong is the pace/foul/scoring-rate edge vs. the -110 juice? Only score high if a concrete stat drives the lean.]\n"
             "DUBL_REASONING_OU: [1 sentence: the key live stat or trend driving the lean and your confidence]"
         )
@@ -1268,12 +1269,12 @@ async def analyze_game(req: AnalyzeRequest):
             f"Spread: {spread_ln}. O/U: {ou_line}.\n"
             "Search for this game's player statistical over/under lines for tonight.\n"
             "Respond with EXACTLY these 5 labeled lines, no other text:\n"
-            "BEST_BET: [team bet ONLY — ATS or ML, never a player prop. State the exact line and give 2 specific reasons: matchup edge, recent form, pace, injury impact, or schedule spot]\n"
+            "BEST_BET: [Format: 'TEAM LINE — 2-sentence reason with specific edge (matchup, recent form, pace, injury, schedule spot). NEVER just the line alone — always include the reasoning.]\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — just the abbreviation of the team you are betting on]\n"
-            f"OU_LEAN: [OVER or UNDER {ou_line} — must cite at least one of: pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer. 1-2 sentences]\n"
+            f"OU_LEAN: [Format: 'OVER/UNDER {ou_line} — 1-2 sentences citing pace (pts/100 possessions), defensive rank, recent scoring trend, or injury to key scorer']\n"
             "PLAYER_PROP: [Use the actual current over/under line you found. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — VALUE score, not just confidence. Weigh your edge against the price: a heavy favorite (-500+) scores lower even if likely (bad payout); a well-priced underdog or undervalued side with real edge scores higher. 5.0 = clear edge at a price that pays.]\n"
-            "DUBL_REASONING_BET: [1 sentence: your edge, the odds, and why the price is or isn't worth it]\n"
+            "DUBL_REASONING_BET: [1 sentence: the price and why it is or isn't worth it]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — VALUE score: how strong is the statistical/situational edge vs. the -110 juice? Only score high if pace data, injuries, or trends back the lean — not just a guess.]\n"
             "DUBL_REASONING_OU: [1 sentence: the key stat or factor driving the lean and whether it justifies the -110]"
         )

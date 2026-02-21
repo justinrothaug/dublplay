@@ -150,12 +150,12 @@ function useFavoritePicks() {
   };
 }
 
-function BookmarkBtn({ active, onClick }) {
+function BookmarkBtn({ active, onClick, light }) {
   return (
     <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
       background:"none", border:"none", cursor:"pointer",
       padding:"2px 4px", flexShrink:0,
-      color: active ? T.gold : "rgba(255,255,255,0.18)",
+      color: active ? T.gold : light ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.18)",
       fontSize:15, lineHeight:1,
       WebkitTapHighlightColor:"transparent",
       transition:"color 0.15s",
@@ -212,7 +212,6 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
   const staticAnalysis = game.analysis;
   const displayAnalysis = aiOverride || staticAnalysis;
-  // Use lines from Gemini analysis when available — single source of truth
   const L = aiOverride?.lines || {};
   const dispSpread         = L.spread   || game.spread;
   const dispOu             = L.ou       || game.ou;
@@ -221,10 +220,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const dispHomeSpreadOdds = game.homeSpreadOdds;
   const dispAwaySpreadOdds = game.awaySpreadOdds;
 
+  const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
+  const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
+
   return (
     <div style={{
-      background: T.card,
-      border: `1px solid ${isLive ? "rgba(248,70,70,0.3)" : T.border}`,
+      border: `1px solid ${isLive ? "rgba(248,70,70,0.35)" : "rgba(255,255,255,0.09)"}`,
       borderRadius: 16,
       scrollSnapAlign: "start",
       flexShrink: 0,
@@ -233,108 +234,108 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
       display: "flex",
       flexDirection: "column",
     }}>
-      {/* ── Top gradient bar ── */}
-      <div style={{
-        height: 3,
-        background: isLive
-          ? "linear-gradient(90deg,#f84646,#ff8c00)"
-          : isFinal
-          ? `linear-gradient(90deg,${TEAM_COLORS[game.away]||"#555"},${TEAM_COLORS[game.home]||"#555"})`
-          : `linear-gradient(90deg,${TEAM_COLORS[game.away]||T.green},${T.green})`,
-      }} />
 
-      {/* ── Status row ── */}
-      <div style={{ padding:"12px 16px 0", display:"flex", justifyContent:"space-between", alignItems:"center", boxSizing:"border-box", minHeight:40 }}>
-        {isLive && (
-          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-            <span style={{ width:7, height:7, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
-            <span style={{ color:T.red, fontSize:11, fontWeight:700, letterSpacing:"0.08em" }}>
-              LIVE · Q{game.quarter} {game.clock}
-            </span>
-          </div>
-        )}
-        {isFinal && <span style={{ color:T.text3, fontSize:11, fontWeight:700, letterSpacing:"0.08em" }}>FINAL</span>}
-        {isUp && game.time && (
-          <span style={{ color:T.green, fontSize:11, fontWeight:700 }}>
-            ⏰ {new Date(game.time).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
-          </span>
-        )}
-        {isLive && (
-          <div style={{ display:"flex", gap:6 }}>
-            <WinProbChip pct={game.awayWinProb} abbr={game.away} />
-            <WinProbChip pct={game.homeWinProb} abbr={game.home} />
-          </div>
-        )}
-      </div>
+      {/* ── HERO ── */}
+      <div style={{ position:"relative", overflow:"hidden" }}>
+        {/* Card template background */}
+        <div style={{
+          position:"absolute", inset:0,
+          backgroundImage:"url('/static/card.png')",
+          backgroundSize:"100% auto",
+          backgroundPosition:"top center",
+          backgroundRepeat:"no-repeat",
+          zIndex:0,
+        }} />
+        {/* Team color blend overlay */}
+        <div style={{
+          position:"absolute", inset:0,
+          background:`linear-gradient(112deg, ${awayC} 47%, ${homeC} 47%)`,
+          mixBlendMode:"color",
+          zIndex:1,
+        }} />
+        {/* Readability overlay */}
+        <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
-      {/* ── Injury alert ── */}
-      {game.injuryAlert && isUp && (
-        <div style={{ margin:"8px 16px 0", background:"rgba(248,70,70,0.08)", border:"1px solid rgba(248,70,70,0.2)", borderRadius:7, padding:"5px 10px", fontSize:10, color:T.red, fontWeight:600 }}>
-          {game.injuryAlert}
-        </div>
-      )}
-
-      {/* ── Teams + Score / Win% ── */}
-      <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        {/* Away */}
-        <div
-          style={{ flex:1, cursor: dispAwayOdds && onPickOdds ? "pointer" : "default" }}
-          onClick={dispAwayOdds && onPickOdds ? () => onPickOdds(dispAwayOdds) : undefined}
-          title={dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
-        >
-          <TeamBadge abbr={game.away} size={44} />
-          <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.awayName}</div>
-          {isUp && (
-            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{dispAwayOdds}</div>
-          )}
-        </div>
-
-        {/* Center */}
-        <div style={{ textAlign:"center", padding:"0 10px" }}>
-          {(isLive || isFinal) ? (
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <span style={{ fontSize:36, fontWeight:800, color: awayLeads ? T.text : T.text3, lineHeight:1 }}>
-                {game.awayScore}
-              </span>
-              <span style={{ color:T.text3, fontSize:16 }}>–</span>
-              <span style={{ fontSize:36, fontWeight:800, color: homeLeads ? T.text : T.text3, lineHeight:1 }}>
-                {game.homeScore}
-              </span>
-            </div>
-          ) : (
-            <div>
-              <div style={{ display:"flex", alignItems:"center", gap:4, justifyContent:"center" }}>
-                <span style={{ fontSize:20, fontWeight:800, color:T.text }}>{game.awayWinProb}%</span>
-                <span style={{ color:T.text3, fontSize:12 }}>vs</span>
-                <span style={{ fontSize:20, fontWeight:800, color:T.text }}>{game.homeWinProb}%</span>
+        {/* Content */}
+        <div style={{ position:"relative", zIndex:3, padding:"12px 14px 16px" }}>
+          {/* Top row: injury alert / win-prob chips */}
+          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
+            {game.injuryAlert && isUp ? (
+              <div style={{ flex:1, background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, marginRight:8 }}>
+                ⚠ {game.injuryAlert}
               </div>
-              <div style={{ width:110, height:5, borderRadius:3, background:"rgba(255,255,255,0.07)", overflow:"hidden", margin:"8px auto 0" }}>
-                <div style={{ height:"100%", width:`${game.awayWinProb}%`, background:T.green, borderRadius:3, transition:"width 0.6s" }} />
+            ) : <div style={{ flex:1 }} />}
+            {(game.awayWinProb != null && game.homeWinProb != null) && (
+              <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
+                <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
               </div>
-              <div style={{ color:T.text3, fontSize:9, marginTop:4, letterSpacing:"0.04em" }}>WIN PROBABILITY</div>
-            </div>
-          )}
-        </div>
-
-        {/* Home */}
-        <div
-          style={{ flex:1, textAlign:"right", cursor: dispHomeOdds && onPickOdds ? "pointer" : "default" }}
-          onClick={dispHomeOdds && onPickOdds ? () => onPickOdds(dispHomeOdds) : undefined}
-          title={dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
-        >
-          <div style={{ display:"flex", justifyContent:"flex-end" }}>
-            <TeamBadge abbr={game.home} size={44} />
+            )}
           </div>
-          <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.homeName}</div>
-          {isUp && (
-            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{dispHomeOdds}</div>
-          )}
+
+          {/* Teams + Score */}
+          <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:8 }}>
+            {/* Away */}
+            <div style={{ flexShrink:0 }}>
+              <TeamBadge abbr={game.away} size={44} />
+              <div style={{ color:"#fff", fontSize:20, fontWeight:900, lineHeight:1.2, marginTop:5, letterSpacing:"-0.02em" }}>{game.away}</div>
+              <div style={{ color:"rgba(255,255,255,0.65)", fontSize:10, fontWeight:500 }}>{game.awayName}</div>
+            </div>
+
+            {/* Center */}
+            <div style={{ flex:1, textAlign:"center", paddingBottom:2 }}>
+              {(isLive || isFinal) ? (
+                <>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                    <span style={{ fontSize:38, fontWeight:900, color: awayLeads ? "#fff" : "rgba(255,255,255,0.4)", lineHeight:1 }}>{game.awayScore}</span>
+                    <span style={{ color:"rgba(255,255,255,0.35)", fontSize:16 }}>–</span>
+                    <span style={{ fontSize:38, fontWeight:900, color: homeLeads ? "#fff" : "rgba(255,255,255,0.4)", lineHeight:1 }}>{game.homeScore}</span>
+                  </div>
+                  <div style={{ marginTop:8 }}>
+                    {isLive ? (
+                      <div style={{ display:"inline-flex", alignItems:"center", gap:5, background:"rgba(0,0,0,0.6)", borderRadius:20, padding:"4px 12px" }}>
+                        <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite", flexShrink:0 }} />
+                        <span style={{ color:"#fff", fontSize:10, fontWeight:700, letterSpacing:"0.05em" }}>Q{game.quarter} {game.clock}</span>
+                      </div>
+                    ) : (
+                      <span style={{ color:"rgba(255,255,255,0.55)", fontSize:10, fontWeight:700, letterSpacing:"0.12em" }}>FINAL</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}>
+                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{game.awayWinProb}%</span>
+                    <span style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>vs</span>
+                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{game.homeWinProb}%</span>
+                  </div>
+                  <div style={{ marginTop:3, color:"rgba(255,255,255,0.4)", fontSize:8, letterSpacing:"0.1em", fontWeight:700 }}>WIN PROBABILITY</div>
+                  {game.time && (
+                    <div style={{ marginTop:8, display:"inline-flex", alignItems:"center", background:"rgba(0,0,0,0.55)", borderRadius:20, padding:"4px 11px" }}>
+                      <span style={{ color:"#fff", fontSize:10, fontWeight:700 }}>
+                        {new Date(game.time).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Home */}
+            <div style={{ flexShrink:0, textAlign:"right" }}>
+              <div style={{ display:"flex", justifyContent:"flex-end" }}>
+                <TeamBadge abbr={game.home} size={44} />
+              </div>
+              <div style={{ color:"#fff", fontSize:20, fontWeight:900, lineHeight:1.2, marginTop:5, letterSpacing:"-0.02em" }}>{game.home}</div>
+              <div style={{ color:"rgba(255,255,255,0.65)", fontSize:10, fontWeight:500 }}>{game.homeName}</div>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ── Odds strip ── */}
       {(dispSpread || dispOu || dispHomeOdds) && (
-        <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", background:"#0f0d0a" }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />
@@ -379,6 +380,15 @@ function WinProbChip({ pct, abbr }) {
     <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:6, padding:"3px 7px", textAlign:"center" }}>
       <div style={{ fontSize:10, fontWeight:800, color: pct > 50 ? T.green : T.text2 }}>{pct}%</div>
       <div style={{ fontSize:8, color:T.text3 }}>{abbr}</div>
+    </div>
+  );
+}
+
+function HeroWinChip({ pct, abbr }) {
+  return (
+    <div style={{ background:"rgba(0,0,0,0.55)", borderRadius:6, padding:"3px 8px", textAlign:"center" }}>
+      <div style={{ fontSize:10, fontWeight:800, color: pct > 50 ? T.green : "rgba(255,255,255,0.65)" }}>{pct}%</div>
+      <div style={{ fontSize:8, color:"rgba(255,255,255,0.5)", letterSpacing:"0.04em" }}>{abbr}</div>
     </div>
   );
 }
@@ -469,15 +479,15 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
   const showFallbackOu = isLive && game && game.ou && items.length === 0 && !loading;
 
   return (
-    <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
+    <div style={{ background:"#f4ede1", padding:"12px 16px 14px", flex:1 }}>
       <div style={{ marginBottom:10 }}>
-        <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700 }}>
+        <span style={{ fontSize:9, color:"#a09078", letterSpacing:"0.1em", fontWeight:700 }}>
           dublplay analysis
         </span>
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ display:"flex", flexDirection:"column" }}>
         {items.length === 0 && loading && (
-          <span style={{ fontSize:11, color:T.text3, lineHeight:1.6 }}>
+          <span style={{ fontSize:11, color:"#9a8a7a", lineHeight:1.6 }}>
             <Spinner /> Analyzing...
           </span>
         )}
@@ -488,7 +498,7 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
               <span style={{ color:T.gold, fontSize:10, marginTop:1, flexShrink:0 }}>◉</span>
               <div style={{ flex:1, display:"flex", alignItems:"center", flexWrap:"wrap", gap:4 }}>
                 <span style={{ fontSize:9, fontWeight:700, color:T.gold, letterSpacing:"0.06em" }}>TOTAL (LIVE)</span>
-                <span style={{ fontSize:11, color:T.text2 }}>O/U {game.ou}</span>
+                <span style={{ fontSize:11, color:"#4a3a2e" }}>O/U {game.ou}</span>
                 <span style={{
                   fontSize:8, fontWeight:800, letterSpacing:"0.08em",
                   color: pacingOver ? T.red : T.green,
@@ -504,10 +514,10 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
           const pickId = game ? `${game.id}-${item.type}` : null;
           const isFav = pickId ? (favorites?.has(pickId) ?? false) : false;
           return (
-          <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+          <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start", paddingTop: i > 0 ? 10 : 0, marginTop: i > 0 ? 10 : 0, borderTop: i > 0 ? "1px solid rgba(0,0,0,0.07)" : "none" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
             <div style={{ flex:1 }}>
-              <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:2 }}>
+              <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:3 }}>
                 <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
                 {/* O/U on-track badge */}
                 {item.isOu && isLive && ouOnTrack !== null && (
@@ -530,11 +540,11 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
                   </span>
                 )}
               </div>
-              <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
+              <span style={{ fontSize:11, color:"#4a3a2e", lineHeight:1.6 }}>{item.text}</span>
             </div>
             <ScorePip score={item.score} reasoning={item.reasoning} />
             {pickId && onFavorite && (
-              <BookmarkBtn active={isFav} onClick={() => isFav
+              <BookmarkBtn light active={isFav} onClick={() => isFav
                 ? onFavorite.remove(pickId)
                 : onFavorite.add({
                     id: pickId, type: item.type,
@@ -593,9 +603,9 @@ function FinalResultsPanel({ game, aiOverride }) {
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
       <div style={{ display:"flex", gap:6, alignItems:"center", minWidth:0, flex:1 }}>
         <span style={{ color:iconColor, fontSize:10, flexShrink:0 }}>{icon}</span>
-        <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>
-        {line && <span style={{ fontSize:10, color: line === "N/A" ? T.text3 : T.text, fontWeight: line === "N/A" ? 400 : 700, flexShrink:0 }}>{line}</span>}
-        {sub && <span style={{ fontSize:10, color:T.text3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>→ {sub}</span>}
+        <span style={{ fontSize:9, fontWeight:700, color:"#a09078", letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>
+        {line && <span style={{ fontSize:10, color: line === "N/A" ? "#a09078" : "#2a2218", fontWeight: line === "N/A" ? 400 : 700, flexShrink:0 }}>{line}</span>}
+        {sub && <span style={{ fontSize:10, color:"#8a7a6a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>→ {sub}</span>}
       </div>
       {result && <span style={{ fontSize:11, fontWeight:800, flexShrink:0, color: resultColor }}>{result}</span>}
     </div>
@@ -610,8 +620,8 @@ function FinalResultsPanel({ game, aiOverride }) {
   const home = game.homeScore ?? 0;
 
   return (
-    <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
-      <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:10 }}>
+    <div style={{ background:"#f4ede1", padding:"12px 16px 14px", flex:1 }}>
+      <div style={{ fontSize:9, color:"#a09078", letterSpacing:"0.1em", fontWeight:700, marginBottom:10 }}>
         FINAL RESULTS
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>

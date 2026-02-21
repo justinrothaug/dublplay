@@ -740,49 +740,52 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
 
   return (
     <div>
-      {/* Section labels + last updated */}
-      <div style={{ padding:"18px 20px 12px", display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-        {liveGames.length > 0 && (
-          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-            <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
-            <span style={{ fontSize:11, fontWeight:700, color:T.red, letterSpacing:"0.06em" }}>{liveGames.length} LIVE</span>
-          </div>
-        )}
-        {upcomingGames.length > 0 && (
-          <span style={{ fontSize:11, fontWeight:700, color:T.green, letterSpacing:"0.06em" }}>
-            {upcomingGames.length} {upcomingLabel || "TONIGHT"}
-          </span>
-        )}
-        {finalGames.length > 0 && (
-          <span style={{ fontSize:11, color:T.text3, letterSpacing:"0.06em" }}>{finalGames.length} FINAL</span>
-        )}
-        <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
-          {liveGames.length > 0
-            ? `↻ auto-refreshing${lastUpdated ? ` · odds from ${fmtTime(lastUpdated)}` : ""}`
-            : lastUpdated ? `odds from ${fmtTime(lastUpdated)}` : ""}
-        </span>
+      {/* Top picks (auto) + My Picks — very top of tab */}
+      <div style={{ paddingTop:14 }}>
+        <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds}
+          favs={favorites?.picks} onRemoveFav={onFavorite?.remove} />
       </div>
 
-      {/* Top picks (auto) + My Picks (user-saved) in one scroll */}
-      <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds}
-        favs={favorites?.picks} onRemoveFav={onFavorite?.remove} />
-
-      {/* League / view bar */}
+      {/* League / view bar with game counts + last updated on the right */}
       <div style={{
         display:"flex", alignItems:"center", gap:0,
-        margin:"4px 20px 12px", borderRadius:10,
+        margin:"0 20px 12px", borderRadius:10,
         background:"rgba(255,255,255,0.04)", border:`1px solid ${T.border}`,
         overflow:"hidden",
       }}>
         <div style={{
-          padding:"8px 16px", fontSize:11, fontWeight:800,
+          padding:"8px 14px", fontSize:11, fontWeight:800,
           color:T.gold, letterSpacing:"0.1em",
-          borderRight:`1px solid ${T.border}`,
+          borderRight:`1px solid ${T.border}`, flexShrink:0,
         }}>NBA</div>
         <div style={{
-          padding:"8px 16px", fontSize:11, fontWeight:700,
-          color:T.text1, letterSpacing:"0.06em", flex:1,
+          padding:"8px 14px", fontSize:11, fontWeight:700,
+          color:T.text1, letterSpacing:"0.06em", flexShrink:0,
+          borderRight:`1px solid ${T.border}`,
         }}>All Games</div>
+        {/* Counts */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 14px", flex:1 }}>
+          {liveGames.length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
+              <span style={{ fontSize:10, fontWeight:700, color:T.red, letterSpacing:"0.05em" }}>{liveGames.length} LIVE</span>
+            </div>
+          )}
+          {upcomingGames.length > 0 && (
+            <span style={{ fontSize:10, fontWeight:700, color:T.green, letterSpacing:"0.05em" }}>
+              {upcomingGames.length} {upcomingLabel || "TONIGHT"}
+            </span>
+          )}
+          {finalGames.length > 0 && (
+            <span style={{ fontSize:10, color:T.text3, letterSpacing:"0.05em" }}>{finalGames.length} FINAL</span>
+          )}
+        </div>
+        {/* Last updated */}
+        <span style={{ fontSize:9, color:T.text3, padding:"8px 12px", flexShrink:0 }}>
+          {liveGames.length > 0
+            ? `↻${lastUpdated ? ` ${fmtTime(lastUpdated)}` : ""}`
+            : lastUpdated ? fmtTime(lastUpdated) : ""}
+        </span>
       </div>
 
       {/* Horizontal scroll rail */}

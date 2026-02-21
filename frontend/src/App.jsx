@@ -1063,10 +1063,12 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
 function TopPicksSection({ games, aiOverrides, onPickOdds, favs, onRemoveFav }) {
   const [expandedPick, setExpandedPick] = useState(null);
 
-  // Auto-generated top picks
+  // Auto-generated top picks — skip games already saved in My Picks
+  const favGameIds = new Set((favs || []).map(p => p.gameId));
   const picks = [];
   for (const g of games) {
     if (g.status === "final") continue;
+    if (favGameIds.has(g.id)) continue;
     const a = aiOverrides[g.id];
     if (!a) continue;
     if (a.best_bet && a.dubl_score_bet != null)

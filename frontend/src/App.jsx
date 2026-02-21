@@ -535,13 +535,10 @@ function FinalResultsPanel({ game, aiOverride }) {
       <div style={{ display:"flex", gap:6, alignItems:"center", minWidth:0, flex:1 }}>
         <span style={{ color:iconColor, fontSize:10, flexShrink:0 }}>{icon}</span>
         <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>
-        {line && <span style={{ fontSize:10, color:T.text3, flexShrink:0 }}>{line}</span>}
-        {sub && <span style={{ fontSize:10, color:T.text2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>→ {sub}</span>}
+        {line && <span style={{ fontSize:10, color: line === "N/A" ? T.text3 : T.text, fontWeight: line === "N/A" ? 400 : 700, flexShrink:0 }}>{line}</span>}
+        {sub && <span style={{ fontSize:10, color:T.text3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>→ {sub}</span>}
       </div>
-      <span style={{
-        fontSize:11, fontWeight:800, flexShrink:0,
-        color: resultColor,
-      }}>{result}</span>
+      {result && <span style={{ fontSize:11, fontWeight:800, flexShrink:0, color: resultColor }}>{result}</span>}
     </div>
   );
 
@@ -560,61 +557,75 @@ function FinalResultsPanel({ game, aiOverride }) {
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
 
-        {/* Final score */}
-        <div style={{
-          display:"flex", justifyContent:"center", alignItems:"baseline", gap:10,
-          padding:"8px 0", borderRadius:8, background:"rgba(255,255,255,0.04)",
-          marginBottom:2,
-        }}>
-          <span style={{ fontSize:13, fontWeight:800, color: away > home ? T.text : T.text3 }}>{game.awayName}</span>
-          <span style={{ fontSize:20, fontWeight:900, color: away > home ? T.text : T.text3 }}>{away}</span>
-          <span style={{ fontSize:12, color:T.text3 }}>–</span>
-          <span style={{ fontSize:20, fontWeight:900, color: home > away ? T.text : T.text3 }}>{home}</span>
-          <span style={{ fontSize:13, fontWeight:800, color: home > away ? T.text : T.text3 }}>{game.homeName}</span>
-        </div>
-
         {/* Moneyline */}
         <ResultRow
           icon="🏆" iconColor={T.green}
-          label="MONEYLINE"
+          label="ML"
           line={dispAwayOdds && dispHomeOdds ? `${game.away} ${dispAwayOdds} / ${game.home} ${dispHomeOdds}` : null}
-          sub={`${r.mlWinnerName} wins +${r.margin}`}
-          result={r.mlWinnerName}
+          sub={`${r.mlWinnerName} wins by ${r.margin}`}
+          result={null}
           resultColor={T.green}
         />
 
-        {/* Spread */}
-        {s && (() => {
-          const lineStr = `${s.favAbbr} ${s.line > 0 ? "+" : ""}${s.line}`;
-          const sub = s.hit === "push"
-            ? `Push (won by exactly ${Math.abs(s.line)})`
-            : s.hit === "fav"
-            ? `${s.favName} covered (won by ${Math.abs(Math.round(s.actualMargin))})`
-            : `${s.dogName} +${Math.abs(s.line)} covered`;
-          const push = s.hit === "push";
+        {/* Spread — always render, show N/A when no line */}
+        {(() => {
+          if (s) {
+            const lineStr = `${s.favAbbr} ${s.line > 0 ? "+" : ""}${s.line}`;
+            const push = s.hit === "push";
+            const resultLabel = push ? "PUSH" : s.hit === "fav" ? `${s.favAbbr} CVR` : `${s.dogAbbr} CVR`;
+            const sub = push
+              ? `Push — won by exactly ${Math.abs(s.line)}`
+              : s.hit === "fav"
+              ? `${s.favName} covered (won by ${Math.abs(Math.round(s.actualMargin))})`
+              : `${s.dogName} +${Math.abs(s.line)} covered`;
+            return (
+              <ResultRow
+                icon="⊖" iconColor="#a78bfa"
+                label="SPREAD"
+                line={lineStr}
+                sub={sub}
+                result={resultLabel}
+                resultColor={push ? T.gold : T.green}
+              />
+            );
+          }
+          // No line data — still show the actual margin
           return (
             <ResultRow
               icon="⊖" iconColor="#a78bfa"
               label="SPREAD"
-              line={lineStr}
-              sub={sub}
-              result={push ? "PUSH" : s.hit === "fav" ? `${s.favAbbr} CVR` : `${s.dogAbbr} CVR`}
-              resultColor={push ? T.gold : T.text}
+              line="N/A"
+              sub={`${r.mlWinnerName} won by ${r.margin}`}
+              result={null}
+              resultColor={T.text3}
             />
           );
         })()}
 
-        {/* Total */}
-        {t && (() => {
-          const push = t.hit === "PUSH";
+        {/* Total — always render, show N/A when no line */}
+        {(() => {
+          const combinedScore = away + home;
+          if (t) {
+            const push = t.hit === "PUSH";
+            return (
+              <ResultRow
+                icon="◉" iconColor={T.gold}
+                label="TOTAL"
+                line={`O/U ${t.label.replace(" O/U","")}`}
+                sub={`${combinedScore} combined`}
+                result={push ? "PUSH" : t.hit}
+                resultColor={push ? T.gold : t.hit === "OVER" ? T.red : T.green}
+              />
+            );
+          }
           return (
             <ResultRow
               icon="◉" iconColor={T.gold}
               label="TOTAL"
-              line={`O/U ${t.label.replace(" O/U","")}`}
-              sub={`${t.combined} combined`}
-              result={push ? "PUSH" : t.hit}
-              resultColor={push ? T.gold : t.hit === "OVER" ? T.red : T.green}
+              line="N/A"
+              sub={`${combinedScore} combined`}
+              result={null}
+              resultColor={T.text3}
             />
           );
         })()}

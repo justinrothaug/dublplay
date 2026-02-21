@@ -301,7 +301,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
               onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.ou && (
-            <OddsCol label="TOTAL" value={`${game.ou}${isLive ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+            <OddsCol label="TOTAL" value={`${game.ou}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {game.homeOdds && game.awayOdds && (

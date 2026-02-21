@@ -872,15 +872,19 @@ function TopPickCard({ pick, rank, onExpand }) {
   const isBet = pick.type === "bet";
   const isLiveGame = pick.game.status === "live";
   const color = isBet ? T.green : T.gold;
-  const ouLineNum = pick.game?.ou || "";
   const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
+  // Parse direction and line from the START of the OU_LEAN text (e.g. "OVER 218.5 — reason")
+  // Using the full string with /under/i caused false matches on words like "under" in the reason.
+  const ouTextMatch = !isBet ? pick.text?.match(/^(over|under)\s+([\d.]+)/i) : null;
+  const ouDir = ouTextMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
+  const ouLineNum = ouTextMatch?.[2] || pick.game?.ou || "";
   const pickLabel = isBet
     ? `${pick.betTeam || "?"}${betLine ? ` ${betLine}` : ""}`
-    : /under/i.test(pick.text) ? `U ${ouLineNum}` : `O ${ouLineNum}`;
+    : `${ouDir} ${ouLineNum}`;
 
   // Live pace / margin for status badge
   const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
-  const isOver = !isBet && /over/i.test(pick.text);
+  const isOver = !isBet && ouDir === "O";
   const ouOnTrack = pace ? (isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
   let betMargin = null;
   if (isBet && isLiveGame && pick.betTeam) {

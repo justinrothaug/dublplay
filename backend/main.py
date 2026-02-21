@@ -1130,8 +1130,9 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
             playing_teams.add(g["home"].upper())
 
     prompt = (
-        f"Search for the top 25 NBA player props available right now on DraftKings or FanDuel for {today_str}. "
-        f"Only include players actually playing today. "
+        f"Search for NBA player props available right now on DraftKings or FanDuel for {today_str}. "
+        f"Return the top 50 props, with at least 5 props per game being played today. "
+        "Only include players actually playing today. "
         "Only standard props: points, rebounds, assists, 3-pointers made, blocks, steals. "
         "Do not guess or make up any data — only return props you find in your search.\n\n"
         f"Return ONLY a raw JSON array. Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"

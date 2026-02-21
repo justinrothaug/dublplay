@@ -1183,7 +1183,7 @@ function BetCalcCard() {
 }
 
 // ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
-function PropsTab({ props, parlay, toggleParlay }) {
+function PropsTab({ props, parlay, toggleParlay, onCalc }) {
   const [filter, setFilter] = useState("all");
   const [sortCol, setSortCol] = useState("edge_score");
   const [sortDir, setSortDir] = useState("desc");
@@ -1326,10 +1326,13 @@ function PropsTab({ props, parlay, toggleParlay }) {
                       <span style={{ fontSize:12, fontWeight:700, color:p.avg?T.text:T.text3 }}>{p.avg||"—"}</span>
                     </td>
                     <td style={{ padding:"12px" }}>
-                      <EdgeCircle score={p.edge_score} />
+                      <EdgeCircle score={p.edge_score} reasoning={p.reason} />
                     </td>
                     <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
-                      <span style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2 }}>{p.odds}</span>
+                      <span
+                        onClick={() => onCalc && onCalc(p.odds)}
+                        style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2, cursor:onCalc?"pointer":"default", textDecoration:onCalc?"underline dotted":"none" }}
+                      >{p.odds}</span>
                     </td>
                   </tr>
                 );
@@ -1765,7 +1768,7 @@ export default function App() {
               return existing.has(key) ? [] : [parsed];
             });
             const mergedProps = [...props, ...gamePropsList];
-            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} />;
+            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} onCalc={setCalcSeed} />;
           })()}
           {tab === "chat"  && <ChatTab apiKey={apiKey} />}
         </div>

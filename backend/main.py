@@ -1092,7 +1092,13 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
             })
         except Exception:
             continue
-    return out
+    # Deduplicate on (player, stat) — keep highest edge_score
+    seen: dict[tuple, dict] = {}
+    for p in out:
+        key = (p["player"].lower(), p["stat"].lower())
+        if key not in seen or (p.get("edge_score") or 0) > (seen[key].get("edge_score") or 0):
+            seen[key] = p
+    return list(seen.values())
 
 
 

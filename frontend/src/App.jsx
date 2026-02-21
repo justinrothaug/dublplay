@@ -990,13 +990,18 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
 }
 
 // ── TOP PLAYER PROPS (top 3 cards) ───────────────────────────────────────────
-function BestBetsSection({ props }) {
+function BestBetsSection({ props, games = [], onCalc }) {
   const top = [...props].sort((a,b) => (b.edge_score||0) - (a.edge_score||0)).slice(0,3);
+  function findGame(prop) {
+    if (!games.length || !prop.matchup) return null;
+    const teams = prop.matchup.split(/\s*[@–\-]\s*/).flatMap(s => s.trim().split(/\s+/)).filter(Boolean);
+    return games.find(g => teams.includes(g.away) || teams.includes(g.home)) || null;
+  }
   return (
     <div style={{ marginBottom:28 }}>
       <SectionLabel>TOP PLAYER PROPS</SectionLabel>
       <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
-        {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
+        {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} game={findGame(p)} onCalc={onCalc} />)}
       </div>
     </div>
   );
@@ -1075,41 +1080,78 @@ function CalcPopup({ onClose, initialOdds }) {
   );
 }
 
-function BestBetCard({ prop, rank }) {
+function BestBetCard({ prop, rank, game, onCalc }) {
   const over = prop.rec === "OVER";
-  const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
+  const rankColors = ["#f5a623","#9aa0b0","#cd7f32"];
+  const rankLabels = ["TOP PICK","2ND PICK","3RD PICK"];
+  const rc = rankColors[rank-1] || T.text3;
+  const isLive = game?.status === "live";
+  const ec = edgeColor(prop.edge_score);
   return (
     <div style={{
-      background: T.card, border:`1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+      background: T.card, border:`1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : isLive ? "rgba(248,70,70,0.25)" : T.border}`,
       borderRadius:14, overflow:"hidden", animation:`fadeUp ${0.1+rank*0.07}s ease`,
+      display:"flex", flexDirection:"column",
     }}>
-      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : T.border }} />
-      <div style={{ padding:"14px 16px" }}>
-        <div style={{ marginBottom:4 }}>
-          <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
+      {/* top accent */}
+      <div style={{ height:2, background: isLive ? "linear-gradient(90deg,#f84646,#ff8c00)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : T.border }} />
+
+      {/* live score banner */}
+      {isLive && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 14px", background:"rgba(248,70,70,0.08)", borderBottom:`1px solid rgba(248,70,70,0.15)` }}>
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
+            <span style={{ fontSize:9, color:T.red, fontWeight:800, letterSpacing:"0.08em" }}>LIVE · Q{game.quarter} {game.clock}</span>
+          </div>
+          <div style={{ fontSize:14, fontWeight:800, letterSpacing:"0.03em" }}>
+            <span style={{ color: game.awayScore >= game.homeScore ? T.text : T.text3 }}>{game.away} {game.awayScore}</span>
+            <span style={{ color:T.text3, margin:"0 6px" }}>–</span>
+            <span style={{ color: game.homeScore > game.awayScore ? T.text : T.text3 }}>{game.home} {game.homeScore}</span>
+          </div>
         </div>
-        <div style={{ marginBottom:8 }}>
-          <div style={{ color:T.text, fontWeight:800, fontSize:16 }}>{prop.player}</div>
-          <div style={{ color:T.text3, fontSize:11, marginTop:2 }}>{prop.team} · {prop.matchup}</div>
+      )}
+
+      <div style={{ padding:"12px 14px", flex:1, display:"flex", flexDirection:"column", gap:0 }}>
+        {/* rank + matchup */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:9 }}>
+          <span style={{ fontSize:9, color:rc, fontWeight:800, letterSpacing:"0.1em" }}>{rankLabels[rank-1] || `#${rank}`}</span>
+          {!isLive && <span style={{ fontSize:9, color:T.text3, fontWeight:500 }}>{prop.matchup}</span>}
         </div>
-        <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:10 }}>
-          <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 11px", fontSize:13, fontWeight:700, color:T.text }}>
+
+        {/* player name + DUBL score */}
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:4 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:17, fontWeight:800, color:T.text, lineHeight:1.2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{prop.player}</div>
+            <div style={{ fontSize:10, color:T.text3, marginTop:3 }}>{prop.team}{prop.pos ? ` · ${prop.pos}` : ""}</div>
+          </div>
+          <div style={{ flexShrink:0, marginTop:1 }}>
+            <EdgeCircle score={prop.edge_score} reasoning={prop.reason} />
+          </div>
+        </div>
+
+        {/* prop pill + REC badge + odds */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10, marginBottom: prop.avg != null ? 8 : 10 }}>
+          <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 10px", fontSize:12, fontWeight:700, color:T.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
             {prop.prop}
           </div>
-          <div style={{
-            background: over ? T.greenDim : T.redDim,
-            border:`1px solid ${over ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-            borderRadius:7, padding:"5px 10px", fontSize:11, fontWeight:700,
-            color: over ? T.green : T.red,
-          }}>
+          <div style={{ background: over ? T.greenDim : T.redDim, border:`1px solid ${over ? T.greenBdr : "rgba(248,70,70,0.3)"}`, borderRadius:7, padding:"5px 9px", fontSize:10, fontWeight:800, color: over ? T.green : T.red, flexShrink:0 }}>
             {prop.rec}
           </div>
-          <span style={{ color:T.text2, fontSize:12, marginLeft:"auto", fontWeight:700 }}>{prop.odds}</span>
+          <span
+            onClick={() => onCalc && onCalc(prop.odds)}
+            style={{ fontSize:13, fontWeight:800, color:T.text2, flexShrink:0, cursor:onCalc?"pointer":"default", textDecoration:onCalc?"underline dotted":"none" }}
+          >{prop.odds}</span>
         </div>
+
+        {/* avg */}
         {prop.avg != null && (
-          <div style={{ fontSize:11, color:T.text3, marginBottom:8 }}>Season avg: <strong style={{color:T.text2}}>{prop.avg}</strong></div>
+          <div style={{ fontSize:10, color:T.text3, marginBottom:8 }}>Season avg: <strong style={{color:T.text2}}>{prop.avg}</strong></div>
         )}
-        <p style={{ color:T.text2, fontSize:11, margin:0, lineHeight:1.65 }}>{prop.reason}</p>
+
+        {/* reason */}
+        {prop.reason && (
+          <p style={{ color:T.text2, fontSize:10, margin:0, lineHeight:1.65, marginTop:"auto", paddingTop:4 }}>{prop.reason}</p>
+        )}
       </div>
     </div>
   );
@@ -1183,7 +1225,7 @@ function BetCalcCard() {
 }
 
 // ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
-function PropsTab({ props, parlay, toggleParlay, onCalc }) {
+function PropsTab({ props, parlay, toggleParlay, onCalc, games }) {
   const [filter, setFilter] = useState("all");
   const [sortCol, setSortCol] = useState("edge_score");
   const [sortDir, setSortDir] = useState("desc");
@@ -1228,7 +1270,7 @@ function PropsTab({ props, parlay, toggleParlay, onCalc }) {
   return (
     <TabPane>
       {/* Best Bets at top */}
-      <BestBetsSection props={props} />
+      <BestBetsSection props={props} games={games} onCalc={onCalc} />
 
       {/* Divider */}
       <div style={{ borderTop:`1px solid ${T.border}`, marginBottom:22 }} />
@@ -1768,7 +1810,7 @@ export default function App() {
               return existing.has(key) ? [] : [parsed];
             });
             const mergedProps = [...props, ...gamePropsList];
-            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} onCalc={setCalcSeed} />;
+            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} onCalc={setCalcSeed} games={games} />;
           })()}
           {tab === "chat"  && <ChatTab apiKey={apiKey} />}
         </div>

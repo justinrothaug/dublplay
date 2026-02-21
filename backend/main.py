@@ -24,7 +24,6 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-ODDS_API_KEY   = os.getenv("ODDS_API_KEY", "").strip()   # strip() prevents HF Secrets trailing-newline bug
 
 # ── FIREBASE / FIRESTORE ───────────────────────────────────────────────────────
 try:
@@ -35,8 +34,12 @@ except ImportError:
     _FIREBASE_AVAILABLE = False
 
 _firestore_db = None
-# Tracks which YYYYMMDD dates have already been synced from Firestore into memory
-_firestore_loaded_dates: set[str] = set()
+# Timestamp (time.time()) of the last Firestore sync per date — replaces the
+# one-shot set so multiple replicas re-sync every FIRESTORE_SYNC_TTL seconds.
+_firestore_last_synced: dict[str, float] = {}
+FIRESTORE_SYNC_TTL = 300  # re-read Firestore every 5 minutes per replica
+# ISO-string timestamp of when odds were last written to Firestore, keyed by date
+_odds_updated_at: dict[str, str] = {}
 
 
 def _init_firestore():
@@ -72,7 +75,15 @@ def _load_odds_from_firestore(date_str: str) -> dict:
     try:
         doc = db.collection("nba_odds").document(date_str).get()
         if doc.exists:
-            return doc.to_dict().get("odds", {})
+            data = doc.to_dict()
+            ts = data.get("updated_at")
+            if ts is not None:
+                # Firestore Timestamp → datetime; fallback to str coercion
+                try:
+                    _odds_updated_at[date_str] = ts.isoformat()
+                except AttributeError:
+                    _odds_updated_at[date_str] = str(ts)
+            return data.get("odds", {})
     except Exception as e:
         logging.warning(f"Firestore read failed: {e}")
     return {}
@@ -88,13 +99,15 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
             {"odds": odds, "updated_at": fb_firestore.SERVER_TIMESTAMP},
             merge=True,
         )
+        # Record the save time in memory (server timestamp lands a few ms later,
+        # this is close enough for display purposes)
+        _odds_updated_at[date_str] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
-ODDS_API_BASE       = "https://api.the-odds-api.com/v4"
 
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 _cache: dict = {}
@@ -439,73 +452,8 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
 
 
 async def fetch_odds(client: httpx.AsyncClient) -> dict:
-    """
-    Fetch NBA odds. Tries The Odds API first (requires ODDS_API_KEY),
-    then falls back to DraftKings game lines (free, works live too).
-    All fetched odds are saved to sticky cache for use by live/final games.
-    """
-    if ODDS_API_KEY:
-        cached = cache_get("odds")
-        if cached is not None:
-            return cached
-
-        try:
-            r = await client.get(
-                f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": "h2h,spreads,totals",
-                    "oddsFormat": "american",
-                },
-                timeout=10,
-            )
-            events = r.json()
-        except Exception:
-            events = []
-
-        if isinstance(events, list) and events:
-            result: dict = {}
-            for ev in events:
-                if not isinstance(ev, dict):
-                    continue
-                home_full = ev.get("home_team", "")
-                away_full = ev.get("away_team", "")
-                home = full_name_to_abbr(home_full)
-                away = full_name_to_abbr(away_full)
-                key  = f"{away.lower()}-{home.lower()}"
-                odds_data: dict = {}
-                for bm in ev.get("bookmakers", []):
-                    if bm["key"] not in ("draftkings", "fanduel", "betmgm"):
-                        continue
-                    for market in bm.get("markets", []):
-                        mk = market["key"]
-                        outcomes = {o["name"]: o["price"] for o in market.get("outcomes", [])}
-                        if mk == "h2h":
-                            odds_data["homeOdds"] = _fmt_american(outcomes.get(home_full, 0))
-                            odds_data["awayOdds"] = _fmt_american(outcomes.get(away_full, 0))
-                        elif mk == "spreads":
-                            for o in market.get("outcomes", []):
-                                if full_name_to_abbr(o["name"]) == home:
-                                    odds_data["spread"] = f"{home} {_sign(o['point'])}"
-                        elif mk == "totals":
-                            for o in market.get("outcomes", []):
-                                if o["name"] == "Over":
-                                    odds_data["ou"] = str(o["point"])
-                    break
-                if odds_data:
-                    result[key] = odds_data
-                    _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
-            if result:
-                _save_sticky_odds()
-                cache_set("odds", result)
-                return result
-
-    # Fall back to DraftKings (free, no key, shows live game lines too)
-    dk = await fetch_draftkings_game_lines(client)
-    if dk:
-        return dk
-    return {}  # signal to caller to try Gemini fallback
+    """Fetch NBA game odds from DraftKings (free scrape, no key required)."""
+    return await fetch_draftkings_game_lines(client)
 
 
 async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dict:
@@ -994,12 +942,12 @@ async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # ── 1. Sync Firestore → memory once per date per process instance ──────────
-    if date_str not in _firestore_loaded_dates:
+    # ── 1. Sync Firestore → memory (TTL-based so all replicas stay aligned) ─────
+    if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
         stored = _load_odds_from_firestore(date_str)
         if stored:
             _sticky_odds.update(stored)
-        _firestore_loaded_dates.add(date_str)
+        _firestore_last_synced[date_str] = time.time()
 
     # ── 2. Fetch live ESPN game data (always needed for scores / status) ───────
     #       If we already have odds in memory, skip the blocking odds API call
@@ -1054,7 +1002,11 @@ async def get_games(date: Optional[str] = None):
                     if not g.get(field) and h.get(field):
                         g[field] = h[field]
 
-    return {"games": merged, "source": "live"}
+    return {
+        "games": merged,
+        "source": "live",
+        "odds_updated_at": _odds_updated_at.get(date_str),
+    }
 
 
 @app.get("/api/debug")
@@ -1066,43 +1018,12 @@ async def debug_odds():
     espn_ids = [g["id"] for g in espn_games]
 
     info: dict = {
-        "odds_api_key_set": bool(ODDS_API_KEY),
         "espn_game_ids": espn_ids,
         "sticky_odds_keys": list(_sticky_odds.keys()),
-        "odds_api_cache_fresh": cache_get("odds") is not None,
+        "dk_cache_fresh": cache_get("dk_game_lines") is not None,
+        "matched": [k for k in _sticky_odds if k in espn_ids],
+        "unmatched_espn": [k for k in espn_ids if k not in _sticky_odds],
     }
-
-    if ODDS_API_KEY:
-        async with httpx.AsyncClient() as client:
-            try:
-                r = await client.get(
-                    f"{ODDS_API_BASE}/sports/basketball_nba/odds/",
-                    params={"apiKey": ODDS_API_KEY, "regions": "us",
-                            "markets": "h2h,spreads,totals", "oddsFormat": "american"},
-                    timeout=10,
-                )
-                events = r.json()
-                if isinstance(events, list):
-                    odds_keys = []
-                    for ev in events:
-                        h = full_name_to_abbr(ev.get("home_team", "")).lower()
-                        a = full_name_to_abbr(ev.get("away_team", "")).lower()
-                        odds_keys.append(f"{a}-{h}")
-                    info["odds_api_game_count"] = len(events)
-                    info["odds_api_keys"] = odds_keys
-                    info["matched_ids"] = [k for k in odds_keys if k in espn_ids]
-                    info["unmatched_espn"] = [k for k in espn_ids if k not in odds_keys]
-                    info["unmatched_odds"] = [k for k in odds_keys if k not in espn_ids]
-                    info["sample_odds"] = [
-                        {"key": odds_keys[i],
-                         "bookmakers": len(ev.get("bookmakers", [])),
-                         "home": ev.get("home_team"), "away": ev.get("away_team")}
-                        for i, ev in enumerate(events[:5])
-                    ]
-                else:
-                    info["odds_api_error"] = events
-            except Exception as e:
-                info["odds_api_exception"] = str(e)
     return info
 
 
@@ -1164,127 +1085,19 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
     return out
 
 
-async def fetch_odds_api_player_props(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch real player props from The Odds API — actual bookmaker lines + odds."""
-    if not ODDS_API_KEY:
-        return []
-    cached = cache_get("player_props_odds")
-    if cached is not None:
-        return cached
 
-    # 1. Get today's events
-    try:
-        r = await client.get(
-            f"{ODDS_API_BASE}/sports/basketball_nba/events",
-            params={"apiKey": ODDS_API_KEY},
-            timeout=10,
-        )
-        events = r.json()
-    except Exception as e:
-        logging.warning(f"Odds API events fetch failed: {e}")
-        return []
 
-    if not isinstance(events, list) or not events:
-        logging.warning("Odds API returned no NBA events")
-        return []
-
-    prop_markets = "player_points,player_rebounds,player_assists,player_threes"
-    stat_names = {
-        "player_points": "Points",
-        "player_rebounds": "Rebounds",
-        "player_assists": "Assists",
-        "player_threes": "3PM",
-    }
-    props_out: list[dict] = []
-
-    # 2. Get player prop odds for each event (limit to 8 events to conserve quota)
-    for ev in events[:8]:
-        event_id = ev.get("id", "")
-        home_full = ev.get("home_team", "")
-        away_full = ev.get("away_team", "")
-        matchup = f"{full_name_to_abbr(away_full)} @ {full_name_to_abbr(home_full)}"
-
-        try:
-            r = await client.get(
-                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": prop_markets,
-                    "oddsFormat": "american",
-                    "bookmakers": "draftkings,fanduel",
-                },
-                timeout=10,
-            )
-            data = r.json()
-        except Exception as e:
-            logging.warning(f"Odds API player props failed for event {event_id}: {e}")
-            continue
-
-        if isinstance(data, dict) and "error" in data:
-            logging.warning(f"Odds API player props error: {data}")
-            break   # likely plan doesn't support player props, stop trying
-
-        for bm in data.get("bookmakers", []) if isinstance(data, dict) else []:
-            bm_name = bm.get("title", bm.get("key", ""))
-            for market in bm.get("markets", []):
-                stat_key = market.get("key", "")
-                stat = stat_names.get(stat_key, stat_key)
-
-                # Group outcomes by player description (Over/Under pairs)
-                by_player: dict[str, dict] = {}
-                for o in market.get("outcomes", []):
-                    name = o.get("description", "")
-                    if not name:
-                        continue
-                    side = o.get("name", "").lower()  # "over" / "under"
-                    by_player.setdefault(name, {})[side] = {
-                        "price": o.get("price", 0),
-                        "point": o.get("point", 0),
-                    }
-
-                for player_name, sides in by_player.items():
-                    over  = sides.get("over", {})
-                    under = sides.get("under", {})
-                    line = over.get("point") or under.get("point")
-                    if not line:
-                        continue
-                    over_price  = over.get("price", -110)
-                    under_price = under.get("price", -110)
-                    rec = "OVER" if over_price >= under_price else "UNDER"
-
-                    over_fmt  = _fmt_american(over_price)
-                    under_fmt = _fmt_american(under_price)
-                    props_out.append({
-                        "player":     player_name,
-                        "team":       "",
-                        "pos":        "",
-                        "stat":       stat,
-                        "prop":       f"{stat} O/U {line}",
-                        "line":       float(line),
-                        "over_odds":  over_fmt,
-                        "under_odds": under_fmt,
-                        "odds":       over_fmt if rec == "OVER" else under_fmt,
-                        "rec":        rec,
-                        "l5": 0, "l10": 0, "l15": 0,
-                        "streak":     0,
-                        "avg":        float(line),
-                        "edge_score": min(5.0, max(1.0, round(abs(over_price - under_price) / 20 + 1.0, 1))),
-                        "matchup":    matchup,
-                        "reason":     f"Live {bm_name} line",
-                    })
-            break  # one bookmaker per event is enough
-
-    if props_out:
-        logging.info(f"Odds API player props: got {len(props_out)} props from {len(events)} events")
-        cache_set("player_props_odds", props_out)
-    else:
-        logging.warning("Odds API player props: no props returned (plan may not support player props)")
-    return props_out
+_gemini_props_cache: list[dict] = []
+_gemini_props_cache_ts: float = 0
+PROPS_CACHE_TTL = 1800  # re-fetch from Gemini at most once per 30 minutes
 
 
 async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[dict]) -> list[dict]:
     """Use Gemini with Google Search grounding to get real NBA player prop lines."""
+    global _gemini_props_cache, _gemini_props_cache_ts
+    if _gemini_props_cache and time.time() - _gemini_props_cache_ts < PROPS_CACHE_TTL:
+        return _gemini_props_cache
+
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     _PROPS_JSON_SCHEMA = (
@@ -1333,24 +1146,26 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 8000, "temperature": 0.2},
             },
-            timeout=45,
+            timeout=60,
         )
         data = resp.json()
         if "error" in data:
             logging.warning(f"Gemini props error: {data['error']['message']}")
-            return []
+            return _gemini_props_cache  # return stale cache on error rather than nothing
         # Grounded responses may split across multiple parts — join all text parts
         parts = data["candidates"][0]["content"]["parts"]
         text = " ".join(p.get("text", "") for p in parts if "text" in p)
         props = _parse_gemini_props_json(text)
         if props:
             logging.info(f"Gemini search-grounded props: got {len(props)} props")
+            _gemini_props_cache = props
+            _gemini_props_cache_ts = time.time()
         else:
             logging.warning(f"Gemini search grounding returned no parseable props: {text[:300]}")
-        return props
+        return props or _gemini_props_cache
     except Exception as e:
-        logging.warning(f"Gemini search-grounded props failed: {e}")
-        return []
+        logging.warning(f"Gemini search-grounded props failed: {e!r}")
+        return _gemini_props_cache  # return stale cache rather than empty
 
 
 @app.get("/api/props")
@@ -1365,55 +1180,14 @@ async def get_props():
         props: list[dict] = []
         source = "none"
 
-        # 1. Gemini first — rich stats (L5/L10/L15, streak, avg, edge_score)
+        # Gemini search grounding — rich stats + real lines
         if GEMINI_API_KEY:
             espn_games = await fetch_espn_games(client)
-            # Run Gemini + Odds API in parallel so we can cross-check odds
-            gemini_task = asyncio.create_task(
-                fetch_gemini_props(client, GEMINI_API_KEY, espn_games or [])
-            )
-            odds_task = asyncio.create_task(
-                fetch_odds_api_player_props(client)
-            ) if ODDS_API_KEY else None
+            props = await fetch_gemini_props(client, GEMINI_API_KEY, espn_games or [])
+            if props:
+                source = "gemini"
 
-            gemini_props = await gemini_task
-            live_props = await odds_task if odds_task else []
-
-            if gemini_props:
-                # Build a lookup: (player_lower, stat_lower) -> live prop
-                live_index: dict[tuple, dict] = {}
-                for lp in live_props:
-                    key = (lp["player"].lower(), lp["stat"].lower())
-                    live_index[key] = lp
-
-                # Cross-check: overwrite odds+line with live bookmaker data where available
-                verified = 0
-                for gp in gemini_props:
-                    key = (gp["player"].lower(), gp["stat"].lower())
-                    if key in live_index:
-                        lp = live_index[key]
-                        gp["over_odds"]  = lp["over_odds"]
-                        gp["under_odds"] = lp["under_odds"]
-                        gp["line"]       = lp["line"]
-                        gp["prop"]       = lp["prop"]
-                        # Update the recommended-side odds to match
-                        gp["odds"] = gp["over_odds"] if gp["rec"] == "OVER" else gp["under_odds"]
-                        verified += 1
-
-                props  = gemini_props
-                source = "gemini" if verified == 0 else f"gemini+odds({verified} verified)"
-
-            elif live_props:
-                # Gemini returned nothing — fall back to Odds API alone
-                props  = live_props
-                source = "odds_api"
-
-        elif ODDS_API_KEY:
-            # No Gemini key — use Odds API only
-            props  = await fetch_odds_api_player_props(client)
-            source = "odds_api" if props else "none"
-
-        # 3. Last resort: PrizePicks
+        # Last resort: PrizePicks public API
         if not props:
             try:
                 props = await fetch_prizepicks_props(client)
@@ -1581,11 +1355,7 @@ async def chat(req: ChatRequest):
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "has_server_key": bool(GEMINI_API_KEY),
-        "has_odds_key": bool(ODDS_API_KEY),
-    }
+    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
 
 
 USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"

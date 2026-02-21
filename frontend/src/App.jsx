@@ -699,8 +699,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         )}
         <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
           {liveGames.length > 0
-            ? `↻ auto-refreshing${lastUpdated ? ` · ${fmtTime(lastUpdated)}` : ""}`
-            : lastUpdated ? `updated ${fmtTime(lastUpdated)}` : ""}
+            ? `↻ auto-refreshing${lastUpdated ? ` · odds from ${fmtTime(lastUpdated)}` : ""}`
+            : lastUpdated ? `odds from ${fmtTime(lastUpdated)}` : ""}
         </span>
       </div>
 
@@ -768,8 +768,106 @@ function calcLivePace(game) {
 }
 
 // ── TOP PICKS (top 3 individual bets ranked by Dubl Score) ───────────────────
-function TopPickCard({ pick, rank, onPickOdds }) {
-  const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
+
+// Popup shown when tapping the team row on a compact TopPickCard
+function TopPickDetailPopup({ pick, onClose, onPickOdds }) {
+  const isBet = pick.type === "bet";
+  const isLiveGame = pick.game.status === "live";
+  const color = isBet ? T.green : T.gold;
+  const ec = edgeColor(pick.score);
+  const calcOdds = isBet
+    ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
+    : "-110";
+
+  const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
+  const isOver = !isBet && /over/i.test(pick.text);
+  const ouOnTrack = pace ? (isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
+
+  let betMargin = null;
+  if (isBet && isLiveGame && pick.betTeam) {
+    const isBettingHome = pick.betTeam === pick.game.home;
+    betMargin = (isBettingHome ? (pick.game.homeScore||0) : (pick.game.awayScore||0))
+              - (isBettingHome ? (pick.game.awayScore||0) : (pick.game.homeScore||0));
+  }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:300, WebkitTapHighlightColor:"transparent" }} />
+      <div style={{
+        position:"fixed", bottom:0, left:0, right:0, zIndex:301,
+        background:T.card, borderTop:`1px solid ${T.borderBr}`,
+        borderRadius:"20px 20px 0 0",
+        padding:"20px 20px calc(20px + env(safe-area-inset-bottom))",
+        animation:"slideUp 0.22s ease", maxWidth:480, margin:"0 auto",
+      }}>
+        <div style={{ width:36, height:4, borderRadius:2, background:"rgba(255,255,255,0.15)", margin:"0 auto 16px" }} />
+
+        {/* Header row: badge + close */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.06em", color, background:`${color}18`, border:`1px solid ${color}44`, borderRadius:4, padding:"3px 8px" }}>
+            {isBet ? "✦ BEST BET" : "◉ O/U PICK"}
+          </span>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:T.text3, fontSize:20, cursor:"pointer", padding:"0 0 0 12px", lineHeight:1 }}>×</button>
+        </div>
+
+        {/* Teams */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+          <TeamBadge abbr={pick.game.away} size={36} />
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:T.text1 }}>
+              {pick.game.awayName} <span style={{ color:T.text3 }}>@</span> {pick.game.homeName}
+            </div>
+            {isLiveGame && (
+              <div style={{ display:"flex", alignItems:"center", gap:5, marginTop:3 }}>
+                <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
+                <span style={{ fontSize:9, color:T.red, fontWeight:800 }}>
+                  LIVE · Q{pick.game.quarter} {pick.game.clock} · {pick.game.awayScore}–{pick.game.homeScore}
+                </span>
+              </div>
+            )}
+          </div>
+          <TeamBadge abbr={pick.game.home} size={36} />
+        </div>
+
+        {/* Full pick text */}
+        <div style={{ fontSize:13, color:T.text2, lineHeight:1.6, marginBottom:12 }}>{pick.text}</div>
+
+        {/* Live status detail */}
+        {isLiveGame && ouOnTrack !== null && (
+          <div style={{ fontSize:11, fontWeight:700, color: ouOnTrack ? T.green : T.red, marginBottom:8 }}>
+            {ouOnTrack ? "✓ ON TRACK" : "✗ FADING"} · Projected {pace.projected} (line: {pace.ouLine})
+          </div>
+        )}
+        {isLiveGame && betMargin !== null && (
+          <div style={{ fontSize:11, fontWeight:700, color: betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold, marginBottom:8 }}>
+            {betMargin > 0 ? `↑ LEADING +${betMargin}` : betMargin < 0 ? `↓ TRAILING ${betMargin}` : "= TIED"}
+          </div>
+        )}
+
+        {/* Dubl score + reasoning */}
+        {pick.reasoning && (
+          <div style={{ padding:"10px 12px", background:"rgba(255,255,255,0.04)", borderRadius:10, border:`1px solid ${T.border}`, marginBottom:12 }}>
+            <div style={{ fontSize:8, color:ec, letterSpacing:"0.1em", fontWeight:700, marginBottom:4 }}>DUBL SCORE · {pick.score}/5</div>
+            <div style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{pick.reasoning}</div>
+          </div>
+        )}
+
+        {/* Payout calc shortcut */}
+        {onPickOdds && (
+          <button onClick={() => { onPickOdds(calcOdds); onClose(); }} style={{
+            width:"100%", padding:"11px 0", borderRadius:10,
+            background:`${color}18`, border:`1px solid ${color}44`,
+            color, fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:"0.05em",
+          }}>
+            💰 Calculate Payout ({calcOdds})
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+function TopPickCard({ pick, rank, onExpand }) {
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
   const isLiveGame = pick.game.status === "live";
@@ -778,104 +876,76 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
   const pickLabel = isBet
     ? `${pick.betTeam || "?"}${betLine ? ` ${betLine}` : ""}`
-    : /under/i.test(pick.text) ? `UNDER${ouLineNum ? ` ${ouLineNum}` : ""}` : `OVER${ouLineNum ? ` ${ouLineNum}` : ""}`;
-  const calcOdds = isBet
-    ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
-    : "-110";
+    : /under/i.test(pick.text) ? `U ${ouLineNum}` : `O ${ouLineNum}`;
 
-  // Live O/U pace data
+  // Live pace / margin for status badge
   const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
   const isOver = !isBet && /over/i.test(pick.text);
   const ouOnTrack = pace ? (isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
-
-  // Live best-bet margin
   let betMargin = null;
   if (isBet && isLiveGame && pick.betTeam) {
     const isBettingHome = pick.betTeam === pick.game.home;
-    const ourScore = isBettingHome ? (pick.game.homeScore || 0) : (pick.game.awayScore || 0);
-    const oppScore = isBettingHome ? (pick.game.awayScore || 0) : (pick.game.homeScore || 0);
-    betMargin = ourScore - oppScore;
+    betMargin = (isBettingHome ? (pick.game.homeScore||0) : (pick.game.awayScore||0))
+              - (isBettingHome ? (pick.game.awayScore||0) : (pick.game.homeScore||0));
   }
+  const liveBadgeText = isLiveGame
+    ? isBet
+      ? betMargin > 0 ? "LEAD" : betMargin < 0 ? "TRAIL" : "TIED"
+      : ouOnTrack !== null ? (ouOnTrack ? "TRACK" : "FADE") : null
+    : null;
+  const liveBadgeColor = isBet
+    ? betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold
+    : ouOnTrack ? T.green : T.red;
 
   return (
-    <div
-      onClick={onPickOdds ? () => onPickOdds(calcOdds) : undefined}
-      style={{
-        background: T.card,
-        border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
-        borderRadius:14, overflow:"hidden",
-        animation:`fadeUp ${0.1+rank*0.07}s ease`,
-        cursor: onPickOdds ? "pointer" : "default",
-      }}
-    >
+    <div style={{
+      background: T.card,
+      border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+      borderRadius:12, overflow:"hidden",
+      animation:`fadeUp ${0.1+rank*0.07}s ease`,
+    }}>
+      {/* Colored top bar */}
       <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
 
-      {/* ── LIVE BANNER ── */}
-      {isLiveGame && (
-        <div style={{
-          display:"flex", alignItems:"center", gap:6,
-          padding:"5px 14px",
-          background:"rgba(248,70,70,0.1)",
-          borderBottom:"1px solid rgba(248,70,70,0.2)",
-        }}>
-          <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite", flexShrink:0 }} />
-          <span style={{ fontSize:9, color:T.red, fontWeight:800, letterSpacing:"0.1em" }}>
-            LIVE · Q{pick.game.quarter} {pick.game.clock}
-          </span>
-          <span style={{ marginLeft:"auto", fontSize:10, color:T.text1, fontWeight:700 }}>
-            {pick.game.awayScore} – {pick.game.homeScore}
-          </span>
+      <div style={{ padding:"8px 9px" }}>
+        {/* Row 1: live dot · rank · pick badge · live status · mini edge score */}
+        <div style={{ display:"flex", alignItems:"center", gap:3, marginBottom:7 }}>
+          {isLiveGame && <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />}
+          <span style={{ fontSize:8, color:T.text3, fontWeight:700, flexShrink:0 }}>({rank})</span>
+          <span style={{
+            fontSize:8, fontWeight:700, letterSpacing:"0.04em",
+            color, background:`${color}18`, border:`1px solid ${color}44`,
+            borderRadius:4, padding:"1px 5px",
+            flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+          }}>{isBet ? "✦" : "◉"} {pickLabel}</span>
+          {liveBadgeText && (
+            <span style={{
+              fontSize:7, fontWeight:800, letterSpacing:"0.04em",
+              color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
+              borderRadius:4, padding:"1px 4px", flexShrink:0,
+            }}>{liveBadgeText}</span>
+          )}
+          {/* Mini edge score circle */}
+          <span style={{
+            width:22, height:22, borderRadius:"50%", flexShrink:0,
+            border:`2px solid ${ec}`, background:`${ec}18`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:8, fontWeight:800, color:ec,
+          }}>{pick.score}</span>
         </div>
-      )}
 
-      <div style={{ padding:"12px 14px" }}>
-        {/* Top row: rank/type badge + score */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-            <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
-            <span style={{
-              fontSize:9, fontWeight:700, letterSpacing:"0.06em",
-              color, background:`${color}18`,
-              border:`1px solid ${color}44`, borderRadius:4, padding:"2px 7px",
-            }}>{isBet ? `✦ ${pickLabel}` : `◉ ${pickLabel}`}</span>
-          </div>
-          <EdgeCircle score={pick.score} reasoning={pick.reasoning} />
-        </div>
-        {/* Team logos row */}
-        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-          <TeamBadge abbr={pick.game.away} size={32} />
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:10, color:T.text2, fontWeight:600 }}>
-              {pick.game.awayName} <span style={{ color:T.text3 }}>@</span> {pick.game.homeName}
-            </div>
-          </div>
-          <TeamBadge abbr={pick.game.home} size={32} />
-        </div>
-        {/* Pick text + inline live badges */}
-        <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
-          {pick.text.length > 120 ? pick.text.slice(0,120)+"…" : pick.text}
-          {/* O/U ON TRACK / FADING inline */}
-          {pace && ouOnTrack !== null && (
-            <span style={{
-              display:"inline-block", marginLeft:8,
-              fontSize:8, fontWeight:800, letterSpacing:"0.08em",
-              color: ouOnTrack ? T.green : T.red,
-              background: ouOnTrack ? T.greenDim : T.redDim,
-              border: `1px solid ${ouOnTrack ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-              borderRadius:4, padding:"1px 5px", verticalAlign:"middle",
-            }}>{ouOnTrack ? "ON TRACK" : "FADING"}</span>
-          )}
-          {/* Best-bet LEADING / TRAILING inline */}
-          {isBet && isLiveGame && betMargin !== null && (
-            <span style={{
-              display:"inline-block", marginLeft:8,
-              fontSize:8, fontWeight:800, letterSpacing:"0.07em",
-              color: betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold,
-              background: betMargin > 0 ? T.greenDim : betMargin < 0 ? T.redDim : "rgba(245,166,35,0.12)",
-              border: `1px solid ${betMargin > 0 ? T.greenBdr : betMargin < 0 ? "rgba(248,70,70,0.3)" : "rgba(245,166,35,0.3)"}`,
-              borderRadius:4, padding:"1px 5px", verticalAlign:"middle",
-            }}>{betMargin > 0 ? `+${betMargin} LEADING` : betMargin < 0 ? `${betMargin} TRAILING` : "TIED"}</span>
-          )}
+        {/* Row 2: team logos + abbr — tap to open detail popup */}
+        <div
+          onClick={() => onExpand(pick)}
+          style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer", WebkitTapHighlightColor:"transparent" }}
+        >
+          <TeamBadge abbr={pick.game.away} size={20} />
+          <span style={{ flex:1, fontSize:8, color:T.text3, textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {isLiveGame
+              ? `${pick.game.awayScore}–${pick.game.homeScore} Q${pick.game.quarter}`
+              : `${pick.game.away} @ ${pick.game.home}`}
+          </span>
+          <TeamBadge abbr={pick.game.home} size={20} />
         </div>
       </div>
     </div>
@@ -883,6 +953,7 @@ function TopPickCard({ pick, rank, onPickOdds }) {
 }
 
 function TopPicksSection({ games, aiOverrides, onPickOdds }) {
+  const [expandedPick, setExpandedPick] = useState(null);
   const picks = [];
   for (const g of games) {
     if (g.status === "final") continue;
@@ -896,11 +967,16 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
   const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
   if (top.length === 0) return null;
   return (
-    <div style={{ padding:"0 20px", marginBottom:16 }}>
+    <div style={{ padding:"0 16px", marginBottom:14 }}>
       <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fill,minmax(min(260px,calc(50vw - 25px)),1fr))" }}>
-        {top.map((pick,i) => <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onPickOdds={onPickOdds} />)}
+      <div style={{ display:"grid", gap:8, gridTemplateColumns:"repeat(3,minmax(100px,155px))" }}>
+        {top.map((pick,i) => (
+          <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onExpand={setExpandedPick} />
+        ))}
       </div>
+      {expandedPick && (
+        <TopPickDetailPopup pick={expandedPick} onClose={() => setExpandedPick(null)} onPickOdds={onPickOdds} />
+      )}
     </div>
   );
 }
@@ -1549,7 +1625,7 @@ export default function App() {
         setGames(g.games);
         setProps(p.props);
         setDataLoaded(true);
-        setLastUpdated(new Date());
+        setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date());
       })
       .catch(console.error);
   }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1560,7 +1636,7 @@ export default function App() {
     if (!hasLive || apiKey === null) return;
     const interval = setInterval(() => {
       api.getGames(selectedDate)
-        .then(g => { setGames(g.games); setLastUpdated(new Date()); })
+        .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
     }, 30000);
     return () => clearInterval(interval);

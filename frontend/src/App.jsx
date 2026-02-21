@@ -699,9 +699,11 @@ function TopPickCard({ pick, rank, onPickOdds }) {
   const isBet = pick.type === "bet";
   const isLiveGame = pick.game.status === "live";
   const color = isBet ? T.green : T.gold;
+  const ouLineNum = pick.game?.ou || "";
+  const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
   const pickLabel = isBet
-    ? (pick.betTeam || "?")
-    : /under/i.test(pick.text) ? "UNDER" : "OVER";
+    ? `${pick.betTeam || "?"}${betLine ? ` ${betLine}` : ""}`
+    : /under/i.test(pick.text) ? `UNDER${ouLineNum ? ` ${ouLineNum}` : ""}` : `OVER${ouLineNum ? ` ${ouLineNum}` : ""}`;
   const calcOdds = isBet
     ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
     : "-110";

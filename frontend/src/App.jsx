@@ -244,7 +244,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
       }} />
 
       {/* ── Status row ── */}
-      <div style={{ padding:"12px 16px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ padding:"12px 16px 0", display:"flex", justifyContent:"space-between", alignItems:"center", boxSizing:"border-box", minHeight:40 }}>
         {isLive && (
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <span style={{ width:7, height:7, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />

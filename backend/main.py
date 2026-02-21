@@ -37,6 +37,8 @@ except ImportError:
 _firestore_db = None
 # Tracks which YYYYMMDD dates have already been synced from Firestore into memory
 _firestore_loaded_dates: set[str] = set()
+# ISO-string timestamp of when odds were last written to Firestore, keyed by date
+_odds_updated_at: dict[str, str] = {}
 
 
 def _init_firestore():
@@ -72,7 +74,15 @@ def _load_odds_from_firestore(date_str: str) -> dict:
     try:
         doc = db.collection("nba_odds").document(date_str).get()
         if doc.exists:
-            return doc.to_dict().get("odds", {})
+            data = doc.to_dict()
+            ts = data.get("updated_at")
+            if ts is not None:
+                # Firestore Timestamp → datetime; fallback to str coercion
+                try:
+                    _odds_updated_at[date_str] = ts.isoformat()
+                except AttributeError:
+                    _odds_updated_at[date_str] = str(ts)
+            return data.get("odds", {})
     except Exception as e:
         logging.warning(f"Firestore read failed: {e}")
     return {}
@@ -88,6 +98,9 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
             {"odds": odds, "updated_at": fb_firestore.SERVER_TIMESTAMP},
             merge=True,
         )
+        # Record the save time in memory (server timestamp lands a few ms later,
+        # this is close enough for display purposes)
+        _odds_updated_at[date_str] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
@@ -1054,7 +1067,11 @@ async def get_games(date: Optional[str] = None):
                     if not g.get(field) and h.get(field):
                         g[field] = h[field]
 
-    return {"games": merged, "source": "live"}
+    return {
+        "games": merged,
+        "source": "live",
+        "odds_updated_at": _odds_updated_at.get(date_str),
+    }
 
 
 @app.get("/api/debug")

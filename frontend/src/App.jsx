@@ -699,8 +699,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         )}
         <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
           {liveGames.length > 0
-            ? `↻ auto-refreshing${lastUpdated ? ` · ${fmtTime(lastUpdated)}` : ""}`
-            : lastUpdated ? `updated ${fmtTime(lastUpdated)}` : ""}
+            ? `↻ auto-refreshing${lastUpdated ? ` · odds from ${fmtTime(lastUpdated)}` : ""}`
+            : lastUpdated ? `odds from ${fmtTime(lastUpdated)}` : ""}
         </span>
       </div>
 
@@ -1549,7 +1549,7 @@ export default function App() {
         setGames(g.games);
         setProps(p.props);
         setDataLoaded(true);
-        setLastUpdated(new Date());
+        setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date());
       })
       .catch(console.error);
   }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1560,7 +1560,7 @@ export default function App() {
     if (!hasLive || apiKey === null) return;
     const interval = setInterval(() => {
       api.getGames(selectedDate)
-        .then(g => { setGames(g.games); setLastUpdated(new Date()); })
+        .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
     }, 30000);
     return () => clearInterval(interval);

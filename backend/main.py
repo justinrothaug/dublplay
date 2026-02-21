@@ -1125,8 +1125,20 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         f"{g.get('awayName','')} @ {g.get('homeName','')}" for g in games
     ) if games else "all NBA games today"
 
+    # Build explicit set of team abbreviations playing today for prompt + post-filter
+    playing_teams: set[str] = set()
+    for g in games:
+        if g.get("away"):
+            playing_teams.add(g["away"].upper())
+        if g.get("home"):
+            playing_teams.add(g["home"].upper())
+    teams_str = ", ".join(sorted(playing_teams)) if playing_teams else "all NBA teams"
+
     prompt = (
         f"Today is {today_str}. NBA games today: {game_matchups}.\n\n"
+        f"CRITICAL: Only return props for players on these teams (the only teams playing today): {teams_str}. "
+        "Do NOT include any player whose current team is not in that list. "
+        "Before including a player, verify their current team matches one of those abbreviations.\n\n"
         "Do TWO searches:\n"
         "1. Search for today's NBA player prop lines (DraftKings, FanDuel, or ESPN Bet)\n"
         "2. For each player you find, search '[player name] NBA game log 2025' to get their "
@@ -1170,6 +1182,12 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         parts = data["candidates"][0]["content"]["parts"]
         text = " ".join(p.get("text", "") for p in parts if "text" in p)
         props = _parse_gemini_props_json(text)
+        if playing_teams:
+            before = len(props)
+            props = [p for p in props if p.get("team", "").upper() in playing_teams]
+            dropped = before - len(props)
+            if dropped:
+                logging.warning(f"Dropped {dropped} props for teams not playing today")
         if props:
             logging.info(f"Gemini search-grounded props: got {len(props)} props")
             _gemini_props_cache = props

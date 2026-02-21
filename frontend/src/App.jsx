@@ -317,6 +317,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
             analysis={displayAnalysis}
             isLive={isLive}
             loading={loadingRefresh}
+            game={game}
           />
       }
     </div>
@@ -387,13 +388,44 @@ function ScorePip({ score, reasoning }) {
   );
 }
 
-function AnalysisPanel({ analysis, isLive, loading }) {
+function LiveTrackBadge({ onTrack }) {
+  return (
+    <span style={{
+      fontSize:8, fontWeight:800, letterSpacing:"0.08em",
+      color: onTrack ? T.green : T.red,
+      background: onTrack ? T.greenDim : T.redDim,
+      border: `1px solid ${onTrack ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+      borderRadius:4, padding:"1px 5px", marginLeft:6, flexShrink:0,
+    }}>{onTrack ? "ON TRACK" : "FADING"}</span>
+  );
+}
+
+function AnalysisPanel({ analysis, isLive, loading, game }) {
   if (!analysis) return null;
+
+  // Live tracking computed from scores (no AI needed)
+  const pace = (isLive && game) ? calcLivePace(game) : null;
+  const ouText = analysis.ou || "";
+  const leanIsOver = /over/i.test(ouText);
+  const ouOnTrack = pace ? (leanIsOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
+
+  // Best-bet live margin
+  let betMargin = null;
+  if (isLive && game && analysis.bet_team) {
+    const isBettingHome = analysis.bet_team === game.home;
+    const ourScore = isBettingHome ? (game.homeScore || 0) : (game.awayScore || 0);
+    const oppScore = isBettingHome ? (game.awayScore || 0) : (game.homeScore || 0);
+    betMargin = ourScore - oppScore;
+  }
+
   const items = [
-    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet },
-    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou },
+    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true },
+    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
     { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null },
   ].filter(i => i.text);
+
+  // If live game has no analysis yet, show computed O/U status from scores alone
+  const showFallbackOu = isLive && game && game.ou && items.length === 0 && !loading;
 
   return (
     <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
@@ -408,16 +440,48 @@ function AnalysisPanel({ analysis, isLive, loading }) {
             <Spinner /> Analyzing...
           </span>
         )}
-        {items.length === 0 && !loading && isLive && (
-          <span style={{ fontSize:11, color:T.red, lineHeight:1.6, opacity:0.85 }}>
-            ⟳ Tap REFRESH for live bet update
-          </span>
-        )}
+        {showFallbackOu && pace && (() => {
+          const pacingOver = pace.projected > pace.ouLine;
+          return (
+            <div style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+              <span style={{ color:T.gold, fontSize:10, marginTop:1, flexShrink:0 }}>◉</span>
+              <div style={{ flex:1, display:"flex", alignItems:"center", flexWrap:"wrap", gap:4 }}>
+                <span style={{ fontSize:9, fontWeight:700, color:T.gold, letterSpacing:"0.06em" }}>TOTAL (LIVE)</span>
+                <span style={{ fontSize:11, color:T.text2 }}>O/U {game.ou}</span>
+                <span style={{
+                  fontSize:8, fontWeight:800, letterSpacing:"0.08em",
+                  color: pacingOver ? T.red : T.green,
+                  background: pacingOver ? T.redDim : T.greenDim,
+                  border: `1px solid ${pacingOver ? "rgba(248,70,70,0.3)" : T.greenBdr}`,
+                  borderRadius:4, padding:"1px 5px",
+                }}>PACING {pacingOver ? "OVER" : "UNDER"}</span>
+              </div>
+            </div>
+          );
+        })()}
         {items.map((item, i) => (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
             <div style={{ flex:1 }}>
-              <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em", marginRight:6 }}>{item.label}</span>
+              <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:2 }}>
+                <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
+                {/* O/U on-track badge */}
+                {item.isOu && isLive && ouOnTrack !== null && (
+                  <LiveTrackBadge onTrack={ouOnTrack} />
+                )}
+                {/* Best-bet leading/trailing badge */}
+                {item.isBet && isLive && betMargin !== null && (
+                  <span style={{
+                    fontSize:8, fontWeight:800, letterSpacing:"0.07em",
+                    color: betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold,
+                    background: betMargin > 0 ? T.greenDim : betMargin < 0 ? T.redDim : "rgba(245,166,35,0.12)",
+                    border: `1px solid ${betMargin > 0 ? T.greenBdr : betMargin < 0 ? "rgba(248,70,70,0.3)" : "rgba(245,166,35,0.3)"}`,
+                    borderRadius:4, padding:"1px 5px",
+                  }}>
+                    {betMargin > 0 ? `+${betMargin} LEADING` : betMargin < 0 ? `${betMargin} TRAILING` : "TIED"}
+                  </span>
+                )}
+              </div>
               <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
             </div>
             <ScorePip score={item.score} reasoning={item.reasoning} />
@@ -710,58 +774,32 @@ function TopPickCard({ pick, rank, onPickOdds }) {
           </div>
           <TeamBadge abbr={pick.game.home} size={32} />
         </div>
-        {/* Pick text */}
+        {/* Pick text + inline live badges */}
         <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
           {pick.text.length > 120 ? pick.text.slice(0,120)+"…" : pick.text}
-        </div>
-
-        {/* ── LIVE O/U TRACKER ── */}
-        {pace && (
-          <div style={{
-            marginTop:8, padding:"7px 10px",
-            background:"rgba(0,0,0,0.35)", borderRadius:7,
-            display:"flex", flexDirection:"column", gap:3,
-          }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.06em" }}>
-                {pick.game.awayScore} + {pick.game.homeScore} = <strong style={{ color:T.text2 }}>{pace.combined} pts</strong>
-              </span>
-              <span style={{
-                fontSize:9, fontWeight:800, letterSpacing:"0.08em",
-                color: ouOnTrack ? T.green : T.red,
-                background: ouOnTrack ? T.greenDim : T.redDim,
-                border: `1px solid ${ouOnTrack ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-                borderRadius:4, padding:"1px 6px",
-              }}>{ouOnTrack ? "ON TRACK" : "FADING"}</span>
-            </div>
-            <div style={{ fontSize:9, color:T.text3 }}>
-              proj <span style={{ color: ouOnTrack ? T.green : T.red, fontWeight:700 }}>{pace.projected}</span>
-              {" "}· need <span style={{ color:T.text2 }}>{pace.needed > 0 ? `${pace.needed} more` : "already over line"}</span>
-              {" "}· line <span style={{ color:T.gold }}>{pace.ouLine}</span>
-            </div>
-          </div>
-        )}
-
-        {/* ── LIVE BEST BET SCORE TRACKER ── */}
-        {isBet && isLiveGame && betMargin !== null && (
-          <div style={{
-            marginTop:8, padding:"7px 10px",
-            background:"rgba(0,0,0,0.35)", borderRadius:7,
-            display:"flex", justifyContent:"space-between", alignItems:"center",
-          }}>
-            <span style={{ fontSize:9, color:T.text3 }}>
-              {pick.game.away} <strong style={{ color:T.text2 }}>{pick.game.awayScore}</strong>
-              {" – "}
-              {pick.game.home} <strong style={{ color:T.text2 }}>{pick.game.homeScore}</strong>
-            </span>
+          {/* O/U ON TRACK / FADING inline */}
+          {pace && ouOnTrack !== null && (
             <span style={{
-              fontSize:9, fontWeight:800, letterSpacing:"0.07em",
+              display:"inline-block", marginLeft:8,
+              fontSize:8, fontWeight:800, letterSpacing:"0.08em",
+              color: ouOnTrack ? T.green : T.red,
+              background: ouOnTrack ? T.greenDim : T.redDim,
+              border: `1px solid ${ouOnTrack ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+              borderRadius:4, padding:"1px 5px", verticalAlign:"middle",
+            }}>{ouOnTrack ? "ON TRACK" : "FADING"}</span>
+          )}
+          {/* Best-bet LEADING / TRAILING inline */}
+          {isBet && isLiveGame && betMargin !== null && (
+            <span style={{
+              display:"inline-block", marginLeft:8,
+              fontSize:8, fontWeight:800, letterSpacing:"0.07em",
               color: betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold,
-            }}>
-              {betMargin > 0 ? `${pick.betTeam} +${betMargin} LEADING` : betMargin < 0 ? `${pick.betTeam} ${betMargin} TRAILING` : "TIED"}
-            </span>
-          </div>
-        )}
+              background: betMargin > 0 ? T.greenDim : betMargin < 0 ? T.redDim : "rgba(245,166,35,0.12)",
+              border: `1px solid ${betMargin > 0 ? T.greenBdr : betMargin < 0 ? "rgba(248,70,70,0.3)" : "rgba(245,166,35,0.3)"}`,
+              borderRadius:4, padding:"1px 5px", verticalAlign:"middle",
+            }}>{betMargin > 0 ? `+${betMargin} LEADING` : betMargin < 0 ? `${betMargin} TRAILING` : "TIED"}</span>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1085,18 +1085,20 @@ def _parse_gemini_props_json(text: str) -> list[dict]:
                 "under_odds": under_o,
                 "odds":       over_o if rec == "OVER" else under_o,
                 "rec":        rec,
-                "l5":         int(p.get("l5", 0)),
-                "l10":        int(p.get("l10", 0)),
-                "l15":        int(p.get("l15", 0)),
-                "streak":     int(p.get("streak", 0)),
-                "avg":        float(p.get("avg", 0)) or None,
-                "edge_score": float(p.get("edge_score", 3.0)),
+                "avg":        float(p["avg"]) if p.get("avg") is not None else None,
+                "edge_score": float(p["edge_score"]) if p.get("edge_score") is not None else None,
                 "matchup":    str(p.get("matchup", "")),
                 "reason":     str(p.get("reason", "")),
             })
         except Exception:
             continue
-    return out
+    # Deduplicate on (player, stat) — keep highest edge_score
+    seen: dict[tuple, dict] = {}
+    for p in out:
+        key = (p["player"].lower(), p["stat"].lower())
+        if key not in seen or (p.get("edge_score") or 0) > (seen[key].get("edge_score") or 0):
+            seen[key] = p
+    return list(seen.values())
 
 
 
@@ -1116,9 +1118,8 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
 
     _PROPS_JSON_SCHEMA = (
         '{"player":"Full Name","team":"ABBR","pos":"G","stat":"Points","line":27.5,'
-        '"over_odds":"-115","under_odds":"+105","rec":"OVER","l5":80,"l10":70,'
-        '"l15":65,"streak":3,"avg":28.2,"edge_score":4.2,"matchup":"LAL @ GSW",'
-        '"reason":"Brief reason"}'
+        '"over_odds":"-115","under_odds":"+105","rec":"OVER","avg":28.2,'
+        '"edge_score":4.2,"matchup":"LAL @ GSW","reason":"Brief reason"}'
     )
 
     # Build set of team abbreviations playing today for post-parse filtering
@@ -1136,6 +1137,7 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         "Only standard props: points, rebounds, assists, 3-pointers made, blocks, steals. "
         "Do not guess or make up any data — only return props you find in your search.\n\n"
         f"Return ONLY a raw JSON array. Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
+        "- edge_score: float 1.0-5.0, your judgment of the prop's value (matchup, line value, player form). Not derived from hit rates — just your analysis.\n"
         "Start with [ and end with ]. No markdown, no explanation."
     )
 

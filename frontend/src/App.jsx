@@ -132,6 +132,37 @@ function parseGeminiText(text) {
   return { best_bet: text.trim(), ou: null, props: null };
 }
 
+// ── FAVORITE PICKS (localStorage) ────────────────────────────────────────────
+function useFavoritePicks() {
+  const [picks, setPicks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("dublplay_favorites") || "[]"); }
+    catch { return []; }
+  });
+  const save = updated => {
+    setPicks(updated);
+    try { localStorage.setItem("dublplay_favorites", JSON.stringify(updated)); } catch {}
+  };
+  return {
+    picks,
+    has: id => picks.some(p => p.id === id),
+    add: pick => save([...picks.filter(p => p.id !== pick.id), pick]),
+    remove: id => save(picks.filter(p => p.id !== id)),
+  };
+}
+
+function BookmarkBtn({ active, onClick }) {
+  return (
+    <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
+      background:"none", border:"none", cursor:"pointer",
+      padding:"2px 4px", flexShrink:0,
+      color: active ? T.gold : "rgba(255,255,255,0.18)",
+      fontSize:15, lineHeight:1,
+      WebkitTapHighlightColor:"transparent",
+      transition:"color 0.15s",
+    }} title={active ? "Remove from My Picks" : "Save to My Picks"}>★</button>
+  );
+}
+
 // ── API KEY GATE ──────────────────────────────────────────────────────────────
 function ApiKeyGate({ onSubmit, serverHasKey }) {
   const [key, setKey] = useState("");
@@ -172,7 +203,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -326,6 +357,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
             isLive={isLive}
             loading={loadingRefresh}
             game={game}
+            favorites={favorites}
+            onFavorite={onFavorite}
           />
       }
     </div>
@@ -408,7 +441,7 @@ function LiveTrackBadge({ onTrack }) {
   );
 }
 
-function AnalysisPanel({ analysis, isLive, loading, game }) {
+function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite }) {
   if (!analysis) return null;
 
   // Live tracking computed from scores (no AI needed)
@@ -427,9 +460,9 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
   }
 
   const items = [
-    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true },
-    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
-    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
+    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
+    { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
+    { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
   ].filter(i => i.text);
 
   // If live game has no analysis yet, show computed O/U status from scores alone
@@ -467,7 +500,10 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
             </div>
           );
         })()}
-        {items.map((item, i) => (
+        {items.map((item, i) => {
+          const pickId = game ? `${game.id}-${item.type}` : null;
+          const isFav = pickId ? (favorites?.has(pickId) ?? false) : false;
+          return (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
             <div style={{ flex:1 }}>
@@ -497,8 +533,29 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
               <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
             </div>
             <ScorePip score={item.score} reasoning={item.reasoning} />
+            {pickId && onFavorite && (
+              <BookmarkBtn active={isFav} onClick={() => isFav
+                ? onFavorite.remove(pickId)
+                : onFavorite.add({
+                    id: pickId, type: item.type,
+                    label: item.label.replace(/ \(LIVE\)$/, ""),
+                    icon: item.icon, color: item.color,
+                    text: item.text, score: item.score, reasoning: item.reasoning,
+                    betTeam: item.betTeam || null, betIsSpread: !!item.betIsSpread,
+                    matchup: `${game.away} @ ${game.home}`,
+                    gameId: game.id, savedAt: Date.now(),
+                    gameSnapshot: {
+                      away: game.away, home: game.home,
+                      awayName: game.awayName, homeName: game.homeName,
+                      ou: game.ou, awayOdds: game.awayOdds, homeOdds: game.homeOdds,
+                      homeSpreadOdds: game.homeSpreadOdds, awaySpreadOdds: game.awaySpreadOdds,
+                    },
+                  })
+              } />
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -671,7 +728,7 @@ function FinalResultsPanel({ game, aiOverride }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -705,6 +762,9 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             : lastUpdated ? `odds from ${fmtTime(lastUpdated)}` : ""}
         </span>
       </div>
+
+      {/* User-saved picks */}
+      {favorites && <MyPicksSection favs={favorites.picks} games={games} onRemove={onFavorite.remove} onPickOdds={onPickOdds} />}
 
       {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
       <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds} />
@@ -741,6 +801,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             loadingRefresh={loadingIds.has(g.id)}
             aiOverride={aiOverrides[g.id]}
             onPickOdds={onPickOdds}
+            favorites={favorites}
+            onFavorite={onFavorite}
           />
         ))}
       </div>
@@ -960,6 +1022,90 @@ function TopPickCard({ pick, rank, onExpand }) {
   );
 }
 
+// ── MY PICKS (user-saved, horizontal scroll) ──────────────────────────────────
+function MyPickCard({ pick, liveGame, onRemove, onExpand }) {
+  const isLive = liveGame?.status === "live";
+  const ec = pick.score != null ? edgeColor(pick.score) : T.text3;
+  return (
+    <div onClick={() => onExpand(pick, liveGame)} style={{
+      flexShrink:0, width:158,
+      background:T.card,
+      border:`1px solid ${isLive ? "rgba(248,70,70,0.35)" : T.border}`,
+      borderRadius:12, overflow:"hidden", cursor:"pointer",
+      position:"relative", WebkitTapHighlightColor:"transparent",
+    }}>
+      <div style={{ height:2, background: isLive ? "linear-gradient(90deg,#f84646,#ff8c00)" : `${pick.color}66` }} />
+      <div style={{ padding:"9px 10px 10px" }}>
+        {/* type badge + score */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+          <span style={{ fontSize:8, color:pick.color, fontWeight:800, letterSpacing:"0.07em",
+            background:`${pick.color}18`, border:`1px solid ${pick.color}44`,
+            borderRadius:4, padding:"2px 6px" }}>{pick.icon} {pick.label}</span>
+          {pick.score != null && (
+            <span style={{ fontSize:10, fontWeight:800, color:ec }}>{pick.score}</span>
+          )}
+        </div>
+        {/* matchup / live score */}
+        {isLive ? (
+          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:5 }}>
+            <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
+            <span style={{ fontSize:9, color:T.red, fontWeight:700 }}>
+              {liveGame.away} {liveGame.awayScore}–{liveGame.homeScore} {liveGame.home}
+            </span>
+          </div>
+        ) : (
+          <div style={{ fontSize:9, color:T.text3, marginBottom:5 }}>{pick.matchup}</div>
+        )}
+        {/* pick text */}
+        <div style={{ fontSize:10, color:T.text2, lineHeight:1.5,
+          overflow:"hidden", display:"-webkit-box",
+          WebkitLineClamp:3, WebkitBoxOrient:"vertical" }}>{pick.text}</div>
+      </div>
+      {/* remove button */}
+      <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+        position:"absolute", top:6, right:6,
+        background:"rgba(0,0,0,0.5)", border:"none", borderRadius:"50%",
+        width:17, height:17, color:T.text3, fontSize:10, cursor:"pointer",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
+      }}>×</button>
+    </div>
+  );
+}
+
+function MyPicksSection({ favs, games, onRemove, onPickOdds }) {
+  const [expandedPick, setExpandedPick] = useState(null);
+  const [expandedGame, setExpandedGame] = useState(null);
+  if (favs.length === 0) return null;
+
+  const handleExpand = (pick, liveGame) => {
+    const g = liveGame || { ...pick.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
+    setExpandedPick({ type:pick.type, score:pick.score, text:pick.text, reasoning:pick.reasoning, betTeam:pick.betTeam, betIsSpread:pick.betIsSpread, game:g });
+    setExpandedGame(g);
+  };
+
+  return (
+    <div style={{ padding:"0 16px", marginBottom:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+        <SectionLabel style={{ marginBottom:0 }}>MY PICKS</SectionLabel>
+        <span style={{ fontSize:9, color:T.text3 }}>{favs.length} saved</span>
+      </div>
+      <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6,
+        scrollbarWidth:"none", MsOverflowStyle:"none", WebkitOverflowScrolling:"touch" }}>
+        {favs.map(pick => {
+          const liveGame = games.find(g => g.id === pick.gameId) || null;
+          return (
+            <MyPickCard key={pick.id} pick={pick} liveGame={liveGame} onRemove={() => onRemove(pick.id)} onExpand={handleExpand} />
+          );
+        })}
+      </div>
+      {expandedPick && (
+        <TopPickDetailPopup pick={expandedPick} onClose={() => setExpandedPick(null)} onPickOdds={onPickOdds} />
+      )}
+    </div>
+  );
+}
+
 function TopPicksSection({ games, aiOverrides, onPickOdds }) {
   const [expandedPick, setExpandedPick] = useState(null);
   const picks = [];
@@ -990,13 +1136,18 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
 }
 
 // ── TOP PLAYER PROPS (top 3 cards) ───────────────────────────────────────────
-function BestBetsSection({ props }) {
-  const top = [...props].sort((a,b) => b.edge_score - a.edge_score).slice(0,3);
+function BestBetsSection({ props, games = [], onCalc }) {
+  const top = [...props].sort((a,b) => (b.edge_score||0) - (a.edge_score||0)).slice(0,3);
+  function findGame(prop) {
+    if (!games.length || !prop.matchup) return null;
+    const teams = prop.matchup.split(/\s*[@–\-]\s*/).flatMap(s => s.trim().split(/\s+/)).filter(Boolean);
+    return games.find(g => teams.includes(g.away) || teams.includes(g.home)) || null;
+  }
   return (
     <div style={{ marginBottom:28 }}>
-      <SectionLabel>TOP PLAYER PROPS — RANKED BY EDGE SCORE</SectionLabel>
+      <SectionLabel>TOP PLAYER PROPS</SectionLabel>
       <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
-        {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
+        {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} game={findGame(p)} onCalc={onCalc} />)}
       </div>
     </div>
   );
@@ -1075,59 +1226,78 @@ function CalcPopup({ onClose, initialOdds }) {
   );
 }
 
-function BestBetCard({ prop, rank }) {
-  const ec = edgeColor(prop.edge_score);
+function BestBetCard({ prop, rank, game, onCalc }) {
   const over = prop.rec === "OVER";
-  const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
+  const rankColors = ["#f5a623","#9aa0b0","#cd7f32"];
+  const rankLabels = ["TOP PICK","2ND PICK","3RD PICK"];
+  const rc = rankColors[rank-1] || T.text3;
+  const isLive = game?.status === "live";
+  const ec = edgeColor(prop.edge_score);
   return (
     <div style={{
-      background: T.card, border:`1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+      background: T.card, border:`1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : isLive ? "rgba(248,70,70,0.25)" : T.border}`,
       borderRadius:14, overflow:"hidden", animation:`fadeUp ${0.1+rank*0.07}s ease`,
+      display:"flex", flexDirection:"column",
     }}>
-      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
-      <div style={{ padding:"14px 16px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-          <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
-          <EdgeCircle score={prop.edge_score} />
+      {/* top accent */}
+      <div style={{ height:2, background: isLive ? "linear-gradient(90deg,#f84646,#ff8c00)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : T.border }} />
+
+      {/* live score banner */}
+      {isLive && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 14px", background:"rgba(248,70,70,0.08)", borderBottom:`1px solid rgba(248,70,70,0.15)` }}>
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
+            <span style={{ fontSize:9, color:T.red, fontWeight:800, letterSpacing:"0.08em" }}>LIVE · Q{game.quarter} {game.clock}</span>
+          </div>
+          <div style={{ fontSize:14, fontWeight:800, letterSpacing:"0.03em" }}>
+            <span style={{ color: game.awayScore >= game.homeScore ? T.text : T.text3 }}>{game.away} {game.awayScore}</span>
+            <span style={{ color:T.text3, margin:"0 6px" }}>–</span>
+            <span style={{ color: game.homeScore > game.awayScore ? T.text : T.text3 }}>{game.home} {game.homeScore}</span>
+          </div>
         </div>
-        <div style={{ marginBottom:8 }}>
-          <div style={{ color:T.text, fontWeight:800, fontSize:16 }}>{prop.player}</div>
-          <div style={{ color:T.text3, fontSize:11, marginTop:2 }}>{prop.team} · {prop.game}</div>
+      )}
+
+      <div style={{ padding:"12px 14px", flex:1, display:"flex", flexDirection:"column", gap:0 }}>
+        {/* rank + matchup */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:9 }}>
+          <span style={{ fontSize:9, color:rc, fontWeight:800, letterSpacing:"0.1em" }}>{rankLabels[rank-1] || `#${rank}`}</span>
+          {!isLive && <span style={{ fontSize:9, color:T.text3, fontWeight:500 }}>{prop.matchup}</span>}
         </div>
-        <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:10 }}>
-          <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 11px", fontSize:13, fontWeight:700, color:T.text }}>
+
+        {/* player name + DUBL score */}
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:4 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:17, fontWeight:800, color:T.text, lineHeight:1.2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{prop.player}</div>
+            <div style={{ fontSize:10, color:T.text3, marginTop:3 }}>{prop.team}{prop.pos ? ` · ${prop.pos}` : ""}</div>
+          </div>
+          <div style={{ flexShrink:0, marginTop:1 }}>
+            <EdgeCircle score={prop.edge_score} reasoning={prop.reason} />
+          </div>
+        </div>
+
+        {/* prop pill + REC badge + odds */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10, marginBottom: prop.avg != null ? 8 : 10 }}>
+          <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 10px", fontSize:12, fontWeight:700, color:T.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
             {prop.prop}
           </div>
-          <div style={{
-            background: over ? T.greenDim : T.redDim,
-            border:`1px solid ${over ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-            borderRadius:7, padding:"5px 10px", fontSize:11, fontWeight:700,
-            color: over ? T.green : T.red,
-          }}>
+          <div style={{ background: over ? T.greenDim : T.redDim, border:`1px solid ${over ? T.greenBdr : "rgba(248,70,70,0.3)"}`, borderRadius:7, padding:"5px 9px", fontSize:10, fontWeight:800, color: over ? T.green : T.red, flexShrink:0 }}>
             {prop.rec}
           </div>
-          <span style={{ color:T.text2, fontSize:12, marginLeft:"auto", fontWeight:700 }}>{prop.odds}</span>
+          <span
+            onClick={() => onCalc && onCalc(prop.odds)}
+            style={{ fontSize:13, fontWeight:800, color:T.text2, flexShrink:0, cursor:onCalc?"pointer":"default", textDecoration:onCalc?"underline dotted":"none" }}
+          >{prop.odds}</span>
         </div>
-        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
-          {[["L5",prop.l5],["L10",prop.l10],["L15",prop.l15],["AVG",prop.avg]].map(([lbl,val]) => {
-            const missing = val === 0 || val === null || val === undefined;
-            const display = lbl !== "AVG"
-              ? (missing ? "—" : `${val}%`)
-              : (missing ? "—" : val);
-            return (
-            <div key={lbl} style={{ flex:1, background:T.cardAlt, borderRadius:7, padding:"6px 0", textAlign:"center" }}>
-              <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.06em", marginBottom:2 }}>{lbl}</div>
-              <div style={{ fontSize:12, fontWeight:700, color: (lbl!=="AVG" && !missing) ? hitColor(Number(val)) : T.text3 }}>
-                {display}
-              </div>
-            </div>
-            );
-          })}
-        </div>
-        {prop.streak >= 3 && (
-          <div style={{ fontSize:11, color:T.gold, marginBottom:6 }}>🔥 {prop.streak}-game hit streak</div>
+
+        {/* avg */}
+        {prop.avg != null && (
+          <div style={{ fontSize:10, color:T.text3, marginBottom:8 }}>Season avg: <strong style={{color:T.text2}}>{prop.avg}</strong></div>
         )}
-        <p style={{ color:T.text2, fontSize:11, margin:0, lineHeight:1.65 }}>{prop.reason}</p>
+
+        {/* reason */}
+        {prop.reason && (
+          <p style={{ color:T.text2, fontSize:10, margin:0, lineHeight:1.65, marginTop:"auto", paddingTop:4 }}>{prop.reason}</p>
+        )}
       </div>
     </div>
   );
@@ -1201,7 +1371,7 @@ function BetCalcCard() {
 }
 
 // ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
-function PropsTab({ props, parlay, toggleParlay }) {
+function PropsTab({ props, parlay, toggleParlay, onCalc, games }) {
   const [filter, setFilter] = useState("all");
   const [sortCol, setSortCol] = useState("edge_score");
   const [sortDir, setSortDir] = useState("desc");
@@ -1222,13 +1392,11 @@ function PropsTab({ props, parlay, toggleParlay }) {
     {id:"all",label:"ALL"},
     {id:"over",label:"OVER"},
     {id:"under",label:"UNDER"},
-    {id:"hot",label:"🔥 HOT"},
   ];
   const sorted = props
     .filter(p => {
       if (filter==="over" && p.rec!=="OVER") return false;
       if (filter==="under" && p.rec!=="UNDER") return false;
-      if (filter==="hot" && p.streak<3) return false;
       if (statCat!=="all" && p.stat!==statCat) return false;
       if (search && !p.player.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
@@ -1248,7 +1416,7 @@ function PropsTab({ props, parlay, toggleParlay }) {
   return (
     <TabPane>
       {/* Best Bets at top */}
-      <BestBetsSection props={props} />
+      <BestBetsSection props={props} games={games} onCalc={onCalc} />
 
       {/* Divider */}
       <div style={{ borderTop:`1px solid ${T.border}`, marginBottom:22 }} />
@@ -1309,10 +1477,6 @@ function PropsTab({ props, parlay, toggleParlay }) {
                 <Th>PLAYER</Th>
                 <Th>PROP</Th>
                 <Th>REC</Th>
-                <Th col="l5">L5</Th>
-                <Th col="l10">L10</Th>
-                <Th col="l15">L15</Th>
-                <Th col="streak">STRK</Th>
                 <Th col="avg">AVG</Th>
                 <Th col="edge_score">DUBL</Th>
                 <Th>ODDS</Th>
@@ -1346,25 +1510,17 @@ function PropsTab({ props, parlay, toggleParlay }) {
                         color:over?T.green:T.red,
                       }}>{p.rec}</span>
                     </td>
-                    {[p.l5,p.l10,p.l15].map((v,j)=>(
-                      <td key={j} style={{ padding:"12px" }}>
-                        {v ? <span style={{ fontSize:12, fontWeight:700, color:hitColor(v) }}>{v}%</span>
-                           : <span style={{ fontSize:12, color:T.text3 }}>—</span>}
-                      </td>
-                    ))}
-                    <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
-                      <span style={{ fontSize:11, color:p.streak>=3?T.gold:T.text3 }}>
-                        {p.streak>=3?"🔥 ":""}{p.streak>0?`${p.streak}G`:"—"}
-                      </span>
-                    </td>
                     <td style={{ padding:"12px" }}>
                       <span style={{ fontSize:12, fontWeight:700, color:p.avg?T.text:T.text3 }}>{p.avg||"—"}</span>
                     </td>
                     <td style={{ padding:"12px" }}>
-                      <EdgeCircle score={p.edge_score} />
+                      <EdgeCircle score={p.edge_score} reasoning={p.reason} />
                     </td>
                     <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
-                      <span style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2 }}>{p.odds}</span>
+                      <span
+                        onClick={() => onCalc && onCalc(p.odds)}
+                        style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2, cursor:onCalc?"pointer":"default", textDecoration:onCalc?"underline dotted":"none" }}
+                      >{p.odds}</span>
                     </td>
                   </tr>
                 );
@@ -1584,8 +1740,7 @@ function parseGameProp(text, game) {
     player: player.trim(), team:"", pos:"", stat,
     prop: `${stat} O/U ${line}`, line,
     over_odds, under_odds, odds,
-    rec: recUp, l5:0, l10:0, l15:0, streak:0,
-    avg: line, edge_score: 3.5,
+    rec: recUp, avg: null,
     matchup, reason, _source:"game_analysis",
   };
 }
@@ -1604,6 +1759,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
+  const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
 
   const tomorrowStr = (() => {
@@ -1783,6 +1939,8 @@ export default function App() {
           aiOverrides={aiOverrides}
           upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
           onPickOdds={odds => setCalcSeed(odds)}
+          favorites={favorites}
+          onFavorite={favorites}
         />
       )}
 
@@ -1801,7 +1959,7 @@ export default function App() {
               return existing.has(key) ? [] : [parsed];
             });
             const mergedProps = [...props, ...gamePropsList];
-            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} />;
+            return <PropsTab props={mergedProps} parlay={parlay} toggleParlay={toggleParlay} onCalc={setCalcSeed} games={games} />;
           })()}
           {tab === "chat"  && <ChatTab apiKey={apiKey} />}
         </div>

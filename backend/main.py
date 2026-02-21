@@ -1121,40 +1121,21 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         '"reason":"Brief reason"}'
     )
 
-    game_matchups = ", ".join(
-        f"{g.get('awayName','')} @ {g.get('homeName','')}" for g in games
-    ) if games else "all NBA games today"
-
-    # Build explicit set of team abbreviations playing today for prompt + post-filter
+    # Build set of team abbreviations playing today for post-parse filtering
     playing_teams: set[str] = set()
     for g in games:
         if g.get("away"):
             playing_teams.add(g["away"].upper())
         if g.get("home"):
             playing_teams.add(g["home"].upper())
-    teams_str = ", ".join(sorted(playing_teams)) if playing_teams else "all NBA teams"
 
     prompt = (
-        f"Today is {today_str}. NBA games today: {game_matchups}.\n\n"
-        f"CRITICAL: Only return props for players on these teams (the only teams playing today): {teams_str}. "
-        "Do NOT include any player whose current team is not in that list. "
-        "Before including a player, verify their current team matches one of those abbreviations.\n\n"
-        "Do TWO searches:\n"
-        "1. Search for today's NBA player prop lines (DraftKings, FanDuel, or ESPN Bet)\n"
-        "2. For each player you find, search '[player name] NBA game log 2025' to get their "
-        "recent stat totals so you can calculate how often they hit OVER the line in their last 5, 10, 15 games.\n\n"
-        "Return the top 25 most interesting props (at least one per game today).\n"
-        "Only standard over/under props: points, rebounds, assists, 3-pointers made, blocks, steals.\n"
-        "No parlays, no first basket, no combined stats.\n\n"
-        f"Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
-        "- over_odds/under_odds: American odds strings like \"-115\" or \"+105\"\n"
-        "- l5/l10/l15: integer 0-100. Count how many of the last 5/10/15 games the player "
-        "exceeded the OVER line, then convert to %. Use actual game log data from your search.\n"
-        "- streak: consecutive games OVER the line right now (0 if not on a streak)\n"
-        "- avg: player's season average for this exact stat (NOT the prop line)\n"
-        "- edge_score: float 1.0-5.0 — higher if l5/l10/l15 are all above 60% and avg > line\n"
-        "IMPORTANT: Output ONLY the JSON array. Start with [ and end with ]. "
-        "No explanations, no preamble, no markdown fences."
+        f"Search for the top 25 NBA player props available right now on DraftKings or FanDuel for {today_str}. "
+        f"Only include players actually playing today. "
+        "Only standard props: points, rebounds, assists, 3-pointers made, blocks, steals. "
+        "Do not guess or make up any data — only return props you find in your search.\n\n"
+        f"Return ONLY a raw JSON array. Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
+        "Start with [ and end with ]. No markdown, no explanation."
     )
 
     try:

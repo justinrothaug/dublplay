@@ -427,7 +427,7 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
   const items = [
     { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true },
     { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
-    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null },
+    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
   ].filter(i => i.text);
 
   // If live game has no analysis yet, show computed O/U status from scores alone
@@ -474,6 +474,10 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
                 {/* O/U on-track badge */}
                 {item.isOu && isLive && ouOnTrack !== null && (
                   <LiveTrackBadge onTrack={ouOnTrack} />
+                )}
+                {/* Prop on-track badge */}
+                {item.isProp && isLive && analysis.prop_on_track !== null && analysis.prop_on_track !== undefined && (
+                  <LiveTrackBadge onTrack={analysis.prop_on_track} />
                 )}
                 {/* Best-bet leading/trailing badge */}
                 {item.isBet && isLive && betMargin !== null && (
@@ -956,14 +960,20 @@ function BestBetCard({ prop, rank }) {
           <span style={{ color:T.text2, fontSize:12, marginLeft:"auto", fontWeight:700 }}>{prop.odds}</span>
         </div>
         <div style={{ display:"flex", gap:6, marginBottom:10 }}>
-          {[["L5",prop.l5],["L10",prop.l10],["L15",prop.l15],["AVG",prop.avg]].map(([lbl,val]) => (
+          {[["L5",prop.l5],["L10",prop.l10],["L15",prop.l15],["AVG",prop.avg]].map(([lbl,val]) => {
+            const missing = val === 0 || val === null || val === undefined;
+            const display = lbl !== "AVG"
+              ? (missing ? "—" : `${val}%`)
+              : (missing ? "—" : val);
+            return (
             <div key={lbl} style={{ flex:1, background:T.cardAlt, borderRadius:7, padding:"6px 0", textAlign:"center" }}>
               <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.06em", marginBottom:2 }}>{lbl}</div>
-              <div style={{ fontSize:12, fontWeight:700, color: lbl!=="AVG" ? hitColor(Number(val)) : T.text }}>
-                {lbl !== "AVG" ? `${val}%` : val}
+              <div style={{ fontSize:12, fontWeight:700, color: (lbl!=="AVG" && !missing) ? hitColor(Number(val)) : T.text3 }}>
+                {display}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
         {prop.streak >= 3 && (
           <div style={{ fontSize:11, color:T.gold, marginBottom:6 }}>🔥 {prop.streak}-game hit streak</div>
@@ -1189,16 +1199,17 @@ function PropsTab({ props, parlay, toggleParlay }) {
                     </td>
                     {[p.l5,p.l10,p.l15].map((v,j)=>(
                       <td key={j} style={{ padding:"12px" }}>
-                        <span style={{ fontSize:12, fontWeight:700, color:hitColor(v) }}>{v}%</span>
+                        {v ? <span style={{ fontSize:12, fontWeight:700, color:hitColor(v) }}>{v}%</span>
+                           : <span style={{ fontSize:12, color:T.text3 }}>—</span>}
                       </td>
                     ))}
                     <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
                       <span style={{ fontSize:11, color:p.streak>=3?T.gold:T.text3 }}>
-                        {p.streak>=3?"🔥 ":""}{p.streak}G
+                        {p.streak>=3?"🔥 ":""}{p.streak>0?`${p.streak}G`:"—"}
                       </span>
                     </td>
                     <td style={{ padding:"12px" }}>
-                      <span style={{ fontSize:12, fontWeight:700, color:T.text }}>{p.avg}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:p.avg?T.text:T.text3 }}>{p.avg||"—"}</span>
                     </td>
                     <td style={{ padding:"12px" }}>
                       <EdgeCircle score={p.edge_score} />

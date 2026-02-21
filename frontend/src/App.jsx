@@ -966,6 +966,9 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
     ? betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold
     : ouOnTrack ? T.green : T.red;
 
+  const awayLeads = isLiveGame && (pick.game.awayScore ?? 0) > (pick.game.homeScore ?? 0);
+  const homeLeads = isLiveGame && (pick.game.homeScore ?? 0) > (pick.game.awayScore ?? 0);
+
   return (
     <div style={{
       background: T.card,
@@ -976,27 +979,59 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
       {/* Colored top bar */}
       <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : isMyPick ? "linear-gradient(90deg,#a78bfa,#7c3aed)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
 
-      <div style={{ padding:"8px 9px" }}>
-        {/* Row 1: team logos + abbr/live score — tap to open detail */}
-        <div
-          onClick={() => onExpand(pick)}
-          style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer", WebkitTapHighlightColor:"transparent", marginBottom:7 }}
-        >
-          <TeamBadge abbr={pick.game.away} size={20} />
-          <span style={{ flex:1, fontSize:8, color:T.text3, textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-            {isLiveGame
-              ? `${pick.game.awayScore}–${pick.game.homeScore} Q${pick.game.quarter}`
-              : `${pick.game.away} @ ${pick.game.home}`}
-          </span>
-          <TeamBadge abbr={pick.game.home} size={20} />
-        </div>
-
-        {/* Row 2: live dot · rank/★ · pick badge · live status · mini edge score */}
-        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-          {isLiveGame && <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />}
-          <span style={{ fontSize:8, color: isMyPick ? "#a78bfa" : T.text3, fontWeight:700, flexShrink:0 }}>
+      <div style={{ padding:"7px 9px 9px" }}>
+        {/* Header row: ★/(rank) left · × right */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+          <span style={{ fontSize:9, color: isMyPick ? "#a78bfa" : T.text3, fontWeight:700, lineHeight:1 }}>
             {isMyPick ? "★" : `(${rank})`}
           </span>
+          {onRemove && (
+            <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+              background:"rgba(0,0,0,0.55)", border:"none", borderRadius:"50%",
+              width:16, height:16, color:T.text3, fontSize:10, cursor:"pointer",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
+            }}>×</button>
+          )}
+        </div>
+
+        {/* Team row — tap to open detail */}
+        <div onClick={() => onExpand(pick)} style={{ cursor:"pointer", WebkitTapHighlightColor:"transparent", marginBottom:7 }}>
+          {isLiveGame ? (
+            <>
+              {/* Quarter + clock above score */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:4, marginBottom:4 }}>
+                <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
+                <span style={{ fontSize:8, color:T.red, fontWeight:700, letterSpacing:"0.05em" }}>
+                  Q{pick.game.quarter}{pick.game.clock ? ` ${pick.game.clock}` : ""}
+                </span>
+              </div>
+              {/* Logos + bolded leading score */}
+              <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                <TeamBadge abbr={pick.game.away} size={20} />
+                <span style={{ flex:1, textAlign:"center", fontSize:12,
+                  fontWeight: awayLeads ? 800 : 400,
+                  color: awayLeads ? T.text1 : T.text3 }}>{pick.game.awayScore}</span>
+                <span style={{ fontSize:9, color:T.text3 }}>–</span>
+                <span style={{ flex:1, textAlign:"center", fontSize:12,
+                  fontWeight: homeLeads ? 800 : 400,
+                  color: homeLeads ? T.text1 : T.text3 }}>{pick.game.homeScore}</span>
+                <TeamBadge abbr={pick.game.home} size={20} />
+              </div>
+            </>
+          ) : (
+            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <TeamBadge abbr={pick.game.away} size={20} />
+              <span style={{ flex:1, fontSize:8, color:T.text3, textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {pick.game.away} @ {pick.game.home}
+              </span>
+              <TeamBadge abbr={pick.game.home} size={20} />
+            </div>
+          )}
+        </div>
+
+        {/* Bottom row: pick badge · live status · dubl score */}
+        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
           <span style={{
             fontSize:8, fontWeight:700, letterSpacing:"0.04em",
             color, background:`${color}18`, border:`1px solid ${color}44`,
@@ -1020,17 +1055,6 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
           )}
         </div>
       </div>
-
-      {/* Remove button for My Picks */}
-      {onRemove && (
-        <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
-          position:"absolute", top:5, right:5,
-          background:"rgba(0,0,0,0.55)", border:"none", borderRadius:"50%",
-          width:16, height:16, color:T.text3, fontSize:10, cursor:"pointer",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
-        }}>×</button>
-      )}
     </div>
   );
 }

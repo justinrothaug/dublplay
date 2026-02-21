@@ -148,6 +148,26 @@ def any_name_to_abbr(name: str) -> str:
 
 # Sticky odds: pre-game lines that persist even after game goes live/final
 _sticky_odds: dict[str, dict] = {}
+_STICKY_FILE = pathlib.Path("/tmp/dublplay_sticky_odds.json")
+
+
+def _load_sticky_odds() -> None:
+    global _sticky_odds
+    try:
+        if _STICKY_FILE.exists():
+            _sticky_odds = json.loads(_STICKY_FILE.read_text())
+    except Exception:
+        pass
+
+
+def _save_sticky_odds() -> None:
+    try:
+        _STICKY_FILE.write_text(json.dumps(_sticky_odds))
+    except Exception:
+        pass
+
+
+_load_sticky_odds()
 
 
 async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
@@ -360,6 +380,8 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
             # Persist so live/final games still show the line
             _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
 
+    if result:
+        _save_sticky_odds()
     cache_set("dk_game_lines", result)
     return result
 
@@ -423,6 +445,7 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
                     result[key] = odds_data
                     _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
             if result:
+                _save_sticky_odds()
                 cache_set("odds", result)
                 return result
 
@@ -480,7 +503,70 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
                 result[key] = entry
                 _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
         if result:
+            _save_sticky_odds()
             cache_set("odds", result)
+        return result
+    except Exception:
+        return {}
+
+
+async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[dict]) -> dict:
+    """
+    For final games missing pre-game lines, ask Gemini + Google Search to find them.
+    Returns odds_map keyed by game id (same format as other odds sources).
+    """
+    if not GEMINI_API_KEY:
+        return {}
+    missing = [
+        g for g in games
+        if g.get("status") == "final" and not g.get("spread") and not g.get("ou")
+    ]
+    if not missing:
+        return {}
+
+    lines = "\n".join(
+        f"{g['awayName']} @ {g['homeName']} (final score {g.get('awayScore',0)}-{g.get('homeScore',0)})"
+        for g in missing
+    )
+    prompt = (
+        f"Search for the pre-game NBA betting lines for these games that just finished:\n{lines}\n\n"
+        "Find the closing spread, over/under total, and moneyline odds that were available "
+        "BEFORE each game tipped off today. "
+        "Return ONLY a raw JSON array — no markdown, no explanation. "
+        'Each element: {"away":"ABBR","home":"ABBR",'
+        '"awayOdds":"+110","homeOdds":"-130",'
+        '"spread":"HOME -2.5","ou":"225.5"} '
+        "Use American odds format (e.g. -110, +240). "
+        "Only include games where you found real pre-game lines."
+    )
+    try:
+        resp = await client.post(
+            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            json={
+                "systemInstruction": {"parts": [{"text":
+                    "You retrieve sports betting odds. Output only a raw JSON array. No markdown fences."}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 2000, "temperature": 0},
+            },
+            timeout=25,
+        )
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+        data = json.loads(text)
+        result: dict = {}
+        for item in data:
+            away = (item.get("away") or "").upper()
+            home = (item.get("home") or "").upper()
+            if not away or not home:
+                continue
+            key = f"{away.lower()}-{home.lower()}"
+            entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
+            if entry:
+                result[key] = entry
+                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
+        if result:
+            _save_sticky_odds()
         return result
     except Exception:
         return {}
@@ -800,6 +886,7 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
             _sticky_odds[base_id] = {k: v for k, v in {
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds
             }.items() if v}
+            _save_sticky_odds()
 
         home_prob = away_prob = 50.0
         if homeOdds and awayOdds:
@@ -845,7 +932,21 @@ async def get_games(date: Optional[str] = None):
         async with httpx.AsyncClient() as client:
             odds_map = await fetch_gemini_odds(client, games)
 
-    return {"games": _merge_odds(games, odds_map), "source": "live"}
+    merged = _merge_odds(games, odds_map)
+
+    # For any final games still missing lines, ask Gemini to look up historical pre-game odds
+    async with httpx.AsyncClient() as client:
+        hist = await fetch_gemini_historical_odds(client, merged)
+    if hist:
+        for g in merged:
+            base_id = re.sub(r'-\d{8}$', '', g["id"])
+            h = hist.get(base_id) or hist.get(g["id"]) or {}
+            if h:
+                for field in ("spread", "ou", "homeOdds", "awayOdds"):
+                    if not g.get(field) and h.get(field):
+                        g[field] = h[field]
+
+    return {"games": merged, "source": "live"}
 
 
 @app.get("/api/debug")

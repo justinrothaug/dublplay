@@ -214,7 +214,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const displayAnalysis = aiOverride || staticAnalysis;
   const L = aiOverride?.lines || {};
   const dispSpread         = L.spread   || game.spread;
-  const dispOu             = L.ou       || game.ou;
+  const rawOu              = L.ou       || game.ou;
+  const dispOu             = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
   const dispAwayOdds       = L.awayOdds || game.awayOdds;
   const dispHomeOdds       = L.homeOdds || game.homeOdds;
   const dispHomeSpreadOdds = game.homeSpreadOdds;
@@ -265,7 +266,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
                 ⚠ {game.injuryAlert}
               </div>
             ) : <div style={{ flex:1 }} />}
-            {(game.awayWinProb != null && game.homeWinProb != null) && (
+            {isLive && (game.awayWinProb != null && game.homeWinProb != null) && (
               <div style={{ display:"flex", gap:5, flexShrink:0 }}>
                 <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
                 <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
@@ -276,10 +277,16 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           {/* Teams + Score */}
           <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:8 }}>
             {/* Away */}
-            <div style={{ flexShrink:0 }}>
+            <div
+              style={{ flexShrink:0, cursor: dispAwayOdds && onPickOdds ? "pointer" : "default" }}
+              onClick={dispAwayOdds && onPickOdds ? () => onPickOdds(dispAwayOdds) : undefined}
+              title={dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
+            >
               <TeamBadge abbr={game.away} size={44} />
-              <div style={{ color:"#fff", fontSize:20, fontWeight:900, lineHeight:1.2, marginTop:5, letterSpacing:"-0.02em" }}>{game.away}</div>
-              <div style={{ color:"rgba(255,255,255,0.65)", fontSize:10, fontWeight:500 }}>{game.awayName}</div>
+              <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
+              {isUp && dispAwayOdds && (
+                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispAwayOdds}</div>
+              )}
             </div>
 
             {/* Center */}
@@ -309,6 +316,9 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
                     <span style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>vs</span>
                     <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{game.homeWinProb}%</span>
                   </div>
+                  <div style={{ width:110, height:5, borderRadius:3, background:"rgba(255,255,255,0.12)", overflow:"hidden", margin:"6px auto 0" }}>
+                    <div style={{ height:"100%", width:`${game.awayWinProb}%`, background:T.green, borderRadius:3, transition:"width 0.6s" }} />
+                  </div>
                   <div style={{ marginTop:3, color:"rgba(255,255,255,0.4)", fontSize:8, letterSpacing:"0.1em", fontWeight:700 }}>WIN PROBABILITY</div>
                   {game.time && (
                     <div style={{ marginTop:8, display:"inline-flex", alignItems:"center", background:"rgba(0,0,0,0.55)", borderRadius:20, padding:"4px 11px" }}>
@@ -322,12 +332,18 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             </div>
 
             {/* Home */}
-            <div style={{ flexShrink:0, textAlign:"right" }}>
+            <div
+              style={{ flexShrink:0, textAlign:"right", cursor: dispHomeOdds && onPickOdds ? "pointer" : "default" }}
+              onClick={dispHomeOdds && onPickOdds ? () => onPickOdds(dispHomeOdds) : undefined}
+              title={dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
+            >
               <div style={{ display:"flex", justifyContent:"flex-end" }}>
                 <TeamBadge abbr={game.home} size={44} />
               </div>
-              <div style={{ color:"#fff", fontSize:20, fontWeight:900, lineHeight:1.2, marginTop:5, letterSpacing:"-0.02em" }}>{game.home}</div>
-              <div style={{ color:"rgba(255,255,255,0.65)", fontSize:10, fontWeight:500 }}>{game.homeName}</div>
+              <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.homeName}</div>
+              {isUp && dispHomeOdds && (
+                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispHomeOdds}</div>
+              )}
             </div>
           </div>
         </div>

@@ -418,7 +418,7 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
 
                         has_line = any(o.get("line") not in (None, 0, 0.0) for o in outcomes)
                         if has_line:
-                            # Spread: find the home team's line
+                            # Spread: find the home/away lines and their odds
                             if "spread" not in odds_data:
                                 for o in outcomes:
                                     participant = o.get("participant") or o.get("label", "")
@@ -427,6 +427,13 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
                                         ln = o.get("line", 0)
                                         if ln:
                                             odds_data["spread"] = f"{home_abbr} {_sign(ln)}"
+                                        sp_odds = _fmt_american(o.get("oddsAmerican"))
+                                        if sp_odds != "—":
+                                            odds_data["homeSpreadOdds"] = sp_odds
+                                    elif abbr == away_abbr:
+                                        sp_odds = _fmt_american(o.get("oddsAmerican"))
+                                        if sp_odds != "—":
+                                            odds_data["awaySpreadOdds"] = sp_odds
                         else:
                             # Moneyline: map participants to home/away
                             for o in outcomes:
@@ -745,7 +752,7 @@ def build_system_prompt(games: list, injuries: set) -> str:
 
 def parse_gemini_analysis(text: str) -> dict:
     """Parse structured Gemini response into best_bet / ou / props / dubl scores."""
-    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
+    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
         m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', text, re.DOTALL | re.IGNORECASE)
@@ -774,9 +781,11 @@ def parse_gemini_analysis(text: str) -> dict:
         None
     )
 
+    bet_type_raw = (extract("BET_TYPE") or "").upper()
     return {
         "best_bet":           extract("BEST_BET"),
         "bet_team":           (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
+        "bet_is_spread":      "SPREAD" in bet_type_raw,
         "ou":                 extract("OU_LEAN"),
         "props":              extract("PLAYER_PROP"),
         "prop_status":        raw_prop_status or None,
@@ -876,15 +885,18 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
         sticky = _sticky_odds.get(base_id) or _sticky_odds.get(gid) or {}
 
-        spread   = g.get("espn_spread")   or o.get("spread")   or sticky.get("spread")
-        ou       = g.get("espn_ou")        or o.get("ou")       or sticky.get("ou")
-        homeOdds = g.get("espn_homeOdds")  or o.get("homeOdds") or sticky.get("homeOdds")
-        awayOdds = g.get("espn_awayOdds")  or o.get("awayOdds") or sticky.get("awayOdds")
+        spread          = g.get("espn_spread")   or o.get("spread")          or sticky.get("spread")
+        ou              = g.get("espn_ou")        or o.get("ou")              or sticky.get("ou")
+        homeOdds        = g.get("espn_homeOdds")  or o.get("homeOdds")        or sticky.get("homeOdds")
+        awayOdds        = g.get("espn_awayOdds")  or o.get("awayOdds")        or sticky.get("awayOdds")
+        homeSpreadOdds  = o.get("homeSpreadOdds") or sticky.get("homeSpreadOdds")
+        awaySpreadOdds  = o.get("awaySpreadOdds") or sticky.get("awaySpreadOdds")
 
         # Persist under base_id so both today and tomorrow lookups can find it
         if any([spread, ou, homeOdds]):
             _sticky_odds[base_id] = {k: v for k, v in {
-                "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds
+                "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds,
+                "homeSpreadOdds": homeSpreadOdds, "awaySpreadOdds": awaySpreadOdds,
             }.items() if v}
             _save_sticky_odds()
 
@@ -907,6 +919,8 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
             "awayWinProb": away_prob,
             "homeOdds": homeOdds,
             "awayOdds": awayOdds,
+            "homeSpreadOdds": homeSpreadOdds,
+            "awaySpreadOdds": awaySpreadOdds,
             "spread": spread,
             "ou": ou,
             "ouDir": None,
@@ -1271,6 +1285,7 @@ async def analyze_game(req: AnalyzeRequest):
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
             "Format: 'TEAM LINE — 1-2 sentence live edge reason (score situation, foul trouble, pace).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
+            "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, fouls, or scoring rate']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "PROP_STATUS: [Search for the player's current stat line in this game. "
@@ -1293,6 +1308,7 @@ async def analyze_game(req: AnalyzeRequest):
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
             "Format: 'TEAM LINE — 2-sentence reason (matchup, recent form, pace, injury, schedule spot).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
+            "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs price. Heavy favorite (-500+) scores lower.]\n"

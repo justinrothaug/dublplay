@@ -183,10 +183,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
   const displayAnalysis = aiOverride || staticAnalysis;
   // Use lines from Gemini analysis when available — single source of truth
   const L = aiOverride?.lines || {};
-  const dispSpread   = L.spread   || game.spread;
-  const dispOu       = L.ou       || game.ou;
-  const dispAwayOdds = L.awayOdds || game.awayOdds;
-  const dispHomeOdds = L.homeOdds || game.homeOdds;
+  const dispSpread         = L.spread   || game.spread;
+  const dispOu             = L.ou       || game.ou;
+  const dispAwayOdds       = L.awayOdds || game.awayOdds;
+  const dispHomeOdds       = L.homeOdds || game.homeOdds;
+  const dispHomeSpreadOdds = game.homeSpreadOdds;
+  const dispAwaySpreadOdds = game.awaySpreadOdds;
 
   return (
     <div style={{
@@ -304,7 +306,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
         <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
-              onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
+              onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />
           )}
           {dispOu && (
             <OddsCol label="TOTAL" value={`${dispOu}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
@@ -776,7 +778,9 @@ function TopPickDetailPopup({ pick, onClose, onPickOdds }) {
   const color = isBet ? T.green : T.gold;
   const ec = edgeColor(pick.score);
   const calcOdds = isBet
-    ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
+    ? pick.betIsSpread
+      ? (pick.betTeam === pick.game.home ? pick.game.homeSpreadOdds : pick.game.awaySpreadOdds) || "-110"
+      : (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
     : "-110";
 
   const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
@@ -964,7 +968,7 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
     const a = aiOverrides[g.id];
     if (!a) continue;
     if (a.best_bet && a.dubl_score_bet != null)
-      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, game:g, reasoning:a.dubl_reasoning_bet });
+      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, betIsSpread:a.bet_is_spread, game:g, reasoning:a.dubl_reasoning_bet });
     if (a.ou && a.dubl_score_ou != null)
       picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g, reasoning:a.dubl_reasoning_ou });
   }

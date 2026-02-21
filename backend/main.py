@@ -1293,7 +1293,7 @@ async def analyze_game(req: AnalyzeRequest):
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs live price. Heavy favorite (-400+) scores lower even if likely.]\n"
-            "DUBL_REASONING_BET: [1 sentence: current price and whether juice is worth it]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — value score: pace/foul/scoring edge vs -110 juice]\n"
             "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean]"
         )
@@ -1314,7 +1314,7 @@ async def analyze_game(req: AnalyzeRequest):
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs price. Heavy favorite (-500+) scores lower.]\n"
-            "DUBL_REASONING_BET: [1 sentence: price and why it is or isn't worth it]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — value score: statistical/situational edge vs -110 juice]\n"
             "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean]"
         )

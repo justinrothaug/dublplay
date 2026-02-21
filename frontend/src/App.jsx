@@ -991,7 +991,7 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
 
 // ── TOP PLAYER PROPS (top 3 cards) ───────────────────────────────────────────
 function BestBetsSection({ props }) {
-  const top = props.slice(0,3);
+  const top = [...props].sort((a,b) => (b.edge_score||0) - (a.edge_score||0)).slice(0,3);
   return (
     <div style={{ marginBottom:28 }}>
       <SectionLabel>TOP PLAYER PROPS</SectionLabel>
@@ -1185,7 +1185,7 @@ function BetCalcCard() {
 // ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
 function PropsTab({ props, parlay, toggleParlay }) {
   const [filter, setFilter] = useState("all");
-  const [sortCol, setSortCol] = useState("line");
+  const [sortCol, setSortCol] = useState("edge_score");
   const [sortDir, setSortDir] = useState("desc");
   const [search, setSearch] = useState("");
   const [statCat, setStatCat] = useState("all");
@@ -1290,6 +1290,7 @@ function PropsTab({ props, parlay, toggleParlay }) {
                 <Th>PROP</Th>
                 <Th>REC</Th>
                 <Th col="avg">AVG</Th>
+                <Th col="edge_score">DUBL</Th>
                 <Th>ODDS</Th>
               </tr>
             </thead>
@@ -1323,6 +1324,9 @@ function PropsTab({ props, parlay, toggleParlay }) {
                     </td>
                     <td style={{ padding:"12px" }}>
                       <span style={{ fontSize:12, fontWeight:700, color:p.avg?T.text:T.text3 }}>{p.avg||"—"}</span>
+                    </td>
+                    <td style={{ padding:"12px" }}>
+                      <EdgeCircle score={p.edge_score} />
                     </td>
                     <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
                       <span style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2 }}>{p.odds}</span>

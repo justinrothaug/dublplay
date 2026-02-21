@@ -991,10 +991,10 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
 
 // ── TOP PLAYER PROPS (top 3 cards) ───────────────────────────────────────────
 function BestBetsSection({ props }) {
-  const top = [...props].sort((a,b) => b.edge_score - a.edge_score).slice(0,3);
+  const top = props.slice(0,3);
   return (
     <div style={{ marginBottom:28 }}>
-      <SectionLabel>TOP PLAYER PROPS — RANKED BY EDGE SCORE</SectionLabel>
+      <SectionLabel>TOP PLAYER PROPS</SectionLabel>
       <div style={{ display:"grid", gap:12, gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))" }}>
         {top.map((p,i) => <BestBetCard key={i} prop={p} rank={i+1} />)}
       </div>
@@ -1076,7 +1076,6 @@ function CalcPopup({ onClose, initialOdds }) {
 }
 
 function BestBetCard({ prop, rank }) {
-  const ec = edgeColor(prop.edge_score);
   const over = prop.rec === "OVER";
   const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
   return (
@@ -1084,15 +1083,14 @@ function BestBetCard({ prop, rank }) {
       background: T.card, border:`1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
       borderRadius:14, overflow:"hidden", animation:`fadeUp ${0.1+rank*0.07}s ease`,
     }}>
-      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
+      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : T.border }} />
       <div style={{ padding:"14px 16px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+        <div style={{ marginBottom:4 }}>
           <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>{rankLabel}</span>
-          <EdgeCircle score={prop.edge_score} />
         </div>
         <div style={{ marginBottom:8 }}>
           <div style={{ color:T.text, fontWeight:800, fontSize:16 }}>{prop.player}</div>
-          <div style={{ color:T.text3, fontSize:11, marginTop:2 }}>{prop.team} · {prop.game}</div>
+          <div style={{ color:T.text3, fontSize:11, marginTop:2 }}>{prop.team} · {prop.matchup}</div>
         </div>
         <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:10 }}>
           <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:7, padding:"5px 11px", fontSize:13, fontWeight:700, color:T.text }}>
@@ -1108,24 +1106,8 @@ function BestBetCard({ prop, rank }) {
           </div>
           <span style={{ color:T.text2, fontSize:12, marginLeft:"auto", fontWeight:700 }}>{prop.odds}</span>
         </div>
-        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
-          {[["L5",prop.l5],["L10",prop.l10],["L15",prop.l15],["AVG",prop.avg]].map(([lbl,val]) => {
-            const missing = val === 0 || val === null || val === undefined;
-            const display = lbl !== "AVG"
-              ? (missing ? "—" : `${val}%`)
-              : (missing ? "—" : val);
-            return (
-            <div key={lbl} style={{ flex:1, background:T.cardAlt, borderRadius:7, padding:"6px 0", textAlign:"center" }}>
-              <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.06em", marginBottom:2 }}>{lbl}</div>
-              <div style={{ fontSize:12, fontWeight:700, color: (lbl!=="AVG" && !missing) ? hitColor(Number(val)) : T.text3 }}>
-                {display}
-              </div>
-            </div>
-            );
-          })}
-        </div>
-        {prop.streak >= 3 && (
-          <div style={{ fontSize:11, color:T.gold, marginBottom:6 }}>🔥 {prop.streak}-game hit streak</div>
+        {prop.avg != null && (
+          <div style={{ fontSize:11, color:T.text3, marginBottom:8 }}>Season avg: <strong style={{color:T.text2}}>{prop.avg}</strong></div>
         )}
         <p style={{ color:T.text2, fontSize:11, margin:0, lineHeight:1.65 }}>{prop.reason}</p>
       </div>
@@ -1203,7 +1185,7 @@ function BetCalcCard() {
 // ── PROPS TABLE (with Best Bets section at top) ───────────────────────────────
 function PropsTab({ props, parlay, toggleParlay }) {
   const [filter, setFilter] = useState("all");
-  const [sortCol, setSortCol] = useState("edge_score");
+  const [sortCol, setSortCol] = useState("line");
   const [sortDir, setSortDir] = useState("desc");
   const [search, setSearch] = useState("");
   const [statCat, setStatCat] = useState("all");
@@ -1222,13 +1204,11 @@ function PropsTab({ props, parlay, toggleParlay }) {
     {id:"all",label:"ALL"},
     {id:"over",label:"OVER"},
     {id:"under",label:"UNDER"},
-    {id:"hot",label:"🔥 HOT"},
   ];
   const sorted = props
     .filter(p => {
       if (filter==="over" && p.rec!=="OVER") return false;
       if (filter==="under" && p.rec!=="UNDER") return false;
-      if (filter==="hot" && p.streak<3) return false;
       if (statCat!=="all" && p.stat!==statCat) return false;
       if (search && !p.player.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
@@ -1309,12 +1289,7 @@ function PropsTab({ props, parlay, toggleParlay }) {
                 <Th>PLAYER</Th>
                 <Th>PROP</Th>
                 <Th>REC</Th>
-                <Th col="l5">L5</Th>
-                <Th col="l10">L10</Th>
-                <Th col="l15">L15</Th>
-                <Th col="streak">STRK</Th>
                 <Th col="avg">AVG</Th>
-                <Th col="edge_score">DUBL</Th>
                 <Th>ODDS</Th>
               </tr>
             </thead>
@@ -1346,22 +1321,8 @@ function PropsTab({ props, parlay, toggleParlay }) {
                         color:over?T.green:T.red,
                       }}>{p.rec}</span>
                     </td>
-                    {[p.l5,p.l10,p.l15].map((v,j)=>(
-                      <td key={j} style={{ padding:"12px" }}>
-                        {v ? <span style={{ fontSize:12, fontWeight:700, color:hitColor(v) }}>{v}%</span>
-                           : <span style={{ fontSize:12, color:T.text3 }}>—</span>}
-                      </td>
-                    ))}
-                    <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
-                      <span style={{ fontSize:11, color:p.streak>=3?T.gold:T.text3 }}>
-                        {p.streak>=3?"🔥 ":""}{p.streak>0?`${p.streak}G`:"—"}
-                      </span>
-                    </td>
                     <td style={{ padding:"12px" }}>
                       <span style={{ fontSize:12, fontWeight:700, color:p.avg?T.text:T.text3 }}>{p.avg||"—"}</span>
-                    </td>
-                    <td style={{ padding:"12px" }}>
-                      <EdgeCircle score={p.edge_score} />
                     </td>
                     <td style={{ padding:"12px", whiteSpace:"nowrap" }}>
                       <span style={{ fontSize:12, fontWeight:700, color:p.odds.startsWith("+")?T.green:T.text2 }}>{p.odds}</span>
@@ -1584,8 +1545,7 @@ function parseGameProp(text, game) {
     player: player.trim(), team:"", pos:"", stat,
     prop: `${stat} O/U ${line}`, line,
     over_odds, under_odds, odds,
-    rec: recUp, l5:0, l10:0, l15:0, streak:0,
-    avg: line, edge_score: 3.5,
+    rec: recUp, avg: null,
     matchup, reason, _source:"game_analysis",
   };
 }

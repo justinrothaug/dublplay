@@ -132,6 +132,37 @@ function parseGeminiText(text) {
   return { best_bet: text.trim(), ou: null, props: null };
 }
 
+// ── FAVORITE PICKS (localStorage) ────────────────────────────────────────────
+function useFavoritePicks() {
+  const [picks, setPicks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("dublplay_favorites") || "[]"); }
+    catch { return []; }
+  });
+  const save = updated => {
+    setPicks(updated);
+    try { localStorage.setItem("dublplay_favorites", JSON.stringify(updated)); } catch {}
+  };
+  return {
+    picks,
+    has: id => picks.some(p => p.id === id),
+    add: pick => save([...picks.filter(p => p.id !== pick.id), pick]),
+    remove: id => save(picks.filter(p => p.id !== id)),
+  };
+}
+
+function BookmarkBtn({ active, onClick }) {
+  return (
+    <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
+      background:"none", border:"none", cursor:"pointer",
+      padding:"2px 4px", flexShrink:0,
+      color: active ? T.gold : "rgba(255,255,255,0.18)",
+      fontSize:15, lineHeight:1,
+      WebkitTapHighlightColor:"transparent",
+      transition:"color 0.15s",
+    }} title={active ? "Remove from My Picks" : "Save to My Picks"}>★</button>
+  );
+}
+
 // ── API KEY GATE ──────────────────────────────────────────────────────────────
 function ApiKeyGate({ onSubmit, serverHasKey }) {
   const [key, setKey] = useState("");
@@ -172,7 +203,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -326,6 +357,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
             isLive={isLive}
             loading={loadingRefresh}
             game={game}
+            favorites={favorites}
+            onFavorite={onFavorite}
           />
       }
     </div>
@@ -408,7 +441,7 @@ function LiveTrackBadge({ onTrack }) {
   );
 }
 
-function AnalysisPanel({ analysis, isLive, loading, game }) {
+function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite }) {
   if (!analysis) return null;
 
   // Live tracking computed from scores (no AI needed)
@@ -427,9 +460,9 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
   }
 
   const items = [
-    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true },
-    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
-    { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
+    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
+    { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
+    { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
   ].filter(i => i.text);
 
   // If live game has no analysis yet, show computed O/U status from scores alone
@@ -467,7 +500,10 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
             </div>
           );
         })()}
-        {items.map((item, i) => (
+        {items.map((item, i) => {
+          const pickId = game ? `${game.id}-${item.type}` : null;
+          const isFav = pickId ? (favorites?.has(pickId) ?? false) : false;
+          return (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
             <div style={{ flex:1 }}>
@@ -497,8 +533,29 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
               <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
             </div>
             <ScorePip score={item.score} reasoning={item.reasoning} />
+            {pickId && onFavorite && (
+              <BookmarkBtn active={isFav} onClick={() => isFav
+                ? onFavorite.remove(pickId)
+                : onFavorite.add({
+                    id: pickId, type: item.type,
+                    label: item.label.replace(/ \(LIVE\)$/, ""),
+                    icon: item.icon, color: item.color,
+                    text: item.text, score: item.score, reasoning: item.reasoning,
+                    betTeam: item.betTeam || null, betIsSpread: !!item.betIsSpread,
+                    matchup: `${game.away} @ ${game.home}`,
+                    gameId: game.id, savedAt: Date.now(),
+                    gameSnapshot: {
+                      away: game.away, home: game.home,
+                      awayName: game.awayName, homeName: game.homeName,
+                      ou: game.ou, awayOdds: game.awayOdds, homeOdds: game.homeOdds,
+                      homeSpreadOdds: game.homeSpreadOdds, awaySpreadOdds: game.awaySpreadOdds,
+                    },
+                  })
+              } />
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -671,7 +728,7 @@ function FinalResultsPanel({ game, aiOverride }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -705,6 +762,9 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             : lastUpdated ? `odds from ${fmtTime(lastUpdated)}` : ""}
         </span>
       </div>
+
+      {/* User-saved picks */}
+      {favorites && <MyPicksSection favs={favorites.picks} games={games} onRemove={onFavorite.remove} onPickOdds={onPickOdds} />}
 
       {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
       <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds} />
@@ -741,6 +801,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
             loadingRefresh={loadingIds.has(g.id)}
             aiOverride={aiOverrides[g.id]}
             onPickOdds={onPickOdds}
+            favorites={favorites}
+            onFavorite={onFavorite}
           />
         ))}
       </div>
@@ -956,6 +1018,90 @@ function TopPickCard({ pick, rank, onExpand }) {
           <TeamBadge abbr={pick.game.home} size={20} />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── MY PICKS (user-saved, horizontal scroll) ──────────────────────────────────
+function MyPickCard({ pick, liveGame, onRemove, onExpand }) {
+  const isLive = liveGame?.status === "live";
+  const ec = pick.score != null ? edgeColor(pick.score) : T.text3;
+  return (
+    <div onClick={() => onExpand(pick, liveGame)} style={{
+      flexShrink:0, width:158,
+      background:T.card,
+      border:`1px solid ${isLive ? "rgba(248,70,70,0.35)" : T.border}`,
+      borderRadius:12, overflow:"hidden", cursor:"pointer",
+      position:"relative", WebkitTapHighlightColor:"transparent",
+    }}>
+      <div style={{ height:2, background: isLive ? "linear-gradient(90deg,#f84646,#ff8c00)" : `${pick.color}66` }} />
+      <div style={{ padding:"9px 10px 10px" }}>
+        {/* type badge + score */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+          <span style={{ fontSize:8, color:pick.color, fontWeight:800, letterSpacing:"0.07em",
+            background:`${pick.color}18`, border:`1px solid ${pick.color}44`,
+            borderRadius:4, padding:"2px 6px" }}>{pick.icon} {pick.label}</span>
+          {pick.score != null && (
+            <span style={{ fontSize:10, fontWeight:800, color:ec }}>{pick.score}</span>
+          )}
+        </div>
+        {/* matchup / live score */}
+        {isLive ? (
+          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:5 }}>
+            <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
+            <span style={{ fontSize:9, color:T.red, fontWeight:700 }}>
+              {liveGame.away} {liveGame.awayScore}–{liveGame.homeScore} {liveGame.home}
+            </span>
+          </div>
+        ) : (
+          <div style={{ fontSize:9, color:T.text3, marginBottom:5 }}>{pick.matchup}</div>
+        )}
+        {/* pick text */}
+        <div style={{ fontSize:10, color:T.text2, lineHeight:1.5,
+          overflow:"hidden", display:"-webkit-box",
+          WebkitLineClamp:3, WebkitBoxOrient:"vertical" }}>{pick.text}</div>
+      </div>
+      {/* remove button */}
+      <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+        position:"absolute", top:6, right:6,
+        background:"rgba(0,0,0,0.5)", border:"none", borderRadius:"50%",
+        width:17, height:17, color:T.text3, fontSize:10, cursor:"pointer",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
+      }}>×</button>
+    </div>
+  );
+}
+
+function MyPicksSection({ favs, games, onRemove, onPickOdds }) {
+  const [expandedPick, setExpandedPick] = useState(null);
+  const [expandedGame, setExpandedGame] = useState(null);
+  if (favs.length === 0) return null;
+
+  const handleExpand = (pick, liveGame) => {
+    const g = liveGame || { ...pick.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
+    setExpandedPick({ type:pick.type, score:pick.score, text:pick.text, reasoning:pick.reasoning, betTeam:pick.betTeam, betIsSpread:pick.betIsSpread, game:g });
+    setExpandedGame(g);
+  };
+
+  return (
+    <div style={{ padding:"0 16px", marginBottom:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+        <SectionLabel style={{ marginBottom:0 }}>MY PICKS</SectionLabel>
+        <span style={{ fontSize:9, color:T.text3 }}>{favs.length} saved</span>
+      </div>
+      <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6,
+        scrollbarWidth:"none", MsOverflowStyle:"none", WebkitOverflowScrolling:"touch" }}>
+        {favs.map(pick => {
+          const liveGame = games.find(g => g.id === pick.gameId) || null;
+          return (
+            <MyPickCard key={pick.id} pick={pick} liveGame={liveGame} onRemove={() => onRemove(pick.id)} onExpand={handleExpand} />
+          );
+        })}
+      </div>
+      {expandedPick && (
+        <TopPickDetailPopup pick={expandedPick} onClose={() => setExpandedPick(null)} onPickOdds={onPickOdds} />
+      )}
     </div>
   );
 }
@@ -1613,6 +1759,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
+  const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
 
   const tomorrowStr = (() => {
@@ -1792,6 +1939,8 @@ export default function App() {
           aiOverrides={aiOverrides}
           upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
           onPickOdds={odds => setCalcSeed(odds)}
+          favorites={favorites}
+          onFavorite={favorites}
         />
       )}
 

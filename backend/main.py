@@ -26,6 +26,71 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 ODDS_API_KEY   = os.getenv("ODDS_API_KEY", "").strip()   # strip() prevents HF Secrets trailing-newline bug
 
+# ── FIREBASE / FIRESTORE ───────────────────────────────────────────────────────
+try:
+    import firebase_admin
+    from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
+    _FIREBASE_AVAILABLE = True
+except ImportError:
+    _FIREBASE_AVAILABLE = False
+
+_firestore_db = None
+# Tracks which YYYYMMDD dates have already been synced from Firestore into memory
+_firestore_loaded_dates: set[str] = set()
+
+
+def _init_firestore():
+    """Initialize and return the Firestore client (singleton)."""
+    global _firestore_db
+    if not _FIREBASE_AVAILABLE or _firestore_db is not None:
+        return _firestore_db
+    try:
+        try:
+            app = firebase_admin.get_app()
+        except ValueError:
+            sa_env = os.getenv("FIREBASE_CREDENTIALS", "").strip()
+            if sa_env:
+                cred = fb_credentials.Certificate(json.loads(sa_env))
+            elif pathlib.Path("firebase-service-account.json").exists():
+                cred = fb_credentials.Certificate("firebase-service-account.json")
+            else:
+                cred = fb_credentials.ApplicationDefault()
+            app = firebase_admin.initialize_app(cred)
+        _firestore_db = fb_firestore.client(app)
+        logging.info("Firestore connected for NBA odds persistence.")
+    except Exception as e:
+        logging.warning(f"Firestore init failed (falling back to in-memory only): {e}")
+        _firestore_db = None
+    return _firestore_db
+
+
+def _load_odds_from_firestore(date_str: str) -> dict:
+    """Read saved odds for a given date (YYYYMMDD) from the nba_odds collection."""
+    db = _init_firestore()
+    if not db:
+        return {}
+    try:
+        doc = db.collection("nba_odds").document(date_str).get()
+        if doc.exists:
+            return doc.to_dict().get("odds", {})
+    except Exception as e:
+        logging.warning(f"Firestore read failed: {e}")
+    return {}
+
+
+def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
+    """Persist odds dict for a given date to Firestore. Only writes if odds is non-empty."""
+    db = _init_firestore()
+    if not db or not odds:
+        return
+    try:
+        db.collection("nba_odds").document(date_str).set(
+            {"odds": odds, "updated_at": fb_firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as e:
+        logging.warning(f"Firestore write failed: {e}")
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
@@ -146,28 +211,15 @@ def any_name_to_abbr(name: str) -> str:
     return norm_abbr(name[:3].upper())
 
 
-# Sticky odds: pre-game lines that persist even after game goes live/final
+# Sticky odds: pre-game lines that persist in memory and in Firestore.
+# _sticky_odds is the hot in-memory cache; Firestore is the durable backing store.
 _sticky_odds: dict[str, dict] = {}
-_STICKY_FILE = pathlib.Path("/tmp/dublplay_sticky_odds.json")
-
-
-def _load_sticky_odds() -> None:
-    global _sticky_odds
-    try:
-        if _STICKY_FILE.exists():
-            _sticky_odds = json.loads(_STICKY_FILE.read_text())
-    except Exception:
-        pass
 
 
 def _save_sticky_odds() -> None:
-    try:
-        _STICKY_FILE.write_text(json.dumps(_sticky_odds))
-    except Exception:
-        pass
-
-
-_load_sticky_odds()
+    """Write current in-memory odds to Firestore under today's date."""
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    _save_odds_to_firestore(date_str, _sticky_odds)
 
 
 async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
@@ -915,26 +967,82 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
     return result
 
 
+async def _background_refresh_odds(date_str: str) -> None:
+    """
+    Fetch fresh odds from APIs and update Firestore only if something changed.
+    Runs after the response has already been sent so it never blocks the user.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            fresh = await fetch_odds(client)
+        if not fresh:
+            return
+        changed = False
+        for k, v in fresh.items():
+            merged = {**_sticky_odds.get(k, {}), **v}
+            if merged != _sticky_odds.get(k):
+                _sticky_odds[k] = merged
+                changed = True
+        if changed:
+            _save_odds_to_firestore(date_str, _sticky_odds)
+    except Exception as e:
+        logging.warning(f"Background odds refresh failed: {e}")
+
+
 @app.get("/api/games")
 async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
+    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    # ── 1. Sync Firestore → memory once per date per process instance ──────────
+    if date_str not in _firestore_loaded_dates:
+        stored = _load_odds_from_firestore(date_str)
+        if stored:
+            _sticky_odds.update(stored)
+        _firestore_loaded_dates.add(date_str)
+
+    # ── 2. Fetch live ESPN game data (always needed for scores / status) ───────
+    #       If we already have odds in memory, skip the blocking odds API call
+    #       and let the background task handle the refresh instead.
     async with httpx.AsyncClient() as client:
-        games, odds_map = await asyncio.gather(
-            fetch_espn_games(client, date),
-            fetch_odds(client),
-        )
+        if _sticky_odds:
+            games = await fetch_espn_games(client, date)
+            odds_map: dict = {}
+        else:
+            # First time ever — nothing in memory or Firestore — fetch in parallel
+            games, odds_map = await asyncio.gather(
+                fetch_espn_games(client, date),
+                fetch_odds(client),
+            )
 
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    # If neither Odds API nor DraftKings returned anything, fall back to Gemini search
-    if not odds_map:
+    # ── 3. If we got fresh odds, merge into sticky and persist if changed ──────
+    if odds_map:
+        changed = False
+        for k, v in odds_map.items():
+            merged_entry = {**_sticky_odds.get(k, {}), **v}
+            if merged_entry != _sticky_odds.get(k):
+                _sticky_odds[k] = merged_entry
+                changed = True
+        if changed:
+            _save_odds_to_firestore(date_str, _sticky_odds)
+    elif not _sticky_odds:
+        # Absolute last resort: Gemini grounded search
         async with httpx.AsyncClient() as client:
             odds_map = await fetch_gemini_odds(client, games)
+        if odds_map:
+            _sticky_odds.update(odds_map)
+            _save_odds_to_firestore(date_str, _sticky_odds)
 
+    # ── 4. Always kick off a background refresh (compares, writes only if changed)
+    asyncio.create_task(_background_refresh_odds(date_str))
+
+    # ── 5. Merge and return ────────────────────────────────────────────────────
     merged = _merge_odds(games, odds_map)
 
-    # For any final games still missing lines, ask Gemini to look up historical pre-game odds
+    # For any final games still missing lines, ask Gemini for historical pre-game odds
     async with httpx.AsyncClient() as client:
         hist = await fetch_gemini_historical_odds(client, merged)
     if hist:

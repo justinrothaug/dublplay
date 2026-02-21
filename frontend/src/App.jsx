@@ -408,6 +408,11 @@ function AnalysisPanel({ analysis, isLive, loading }) {
             <Spinner /> Analyzing...
           </span>
         )}
+        {items.length === 0 && !loading && isLive && (
+          <span style={{ fontSize:11, color:T.red, lineHeight:1.6, opacity:0.85 }}>
+            ⟳ Tap REFRESH for live bet update
+          </span>
+        )}
         {items.map((item, i) => (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
@@ -602,31 +607,86 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
   );
 }
 
+// ── LIVE PACE CALCULATOR ──────────────────────────────────────────────────────
+function calcLivePace(game) {
+  const combined = (game.awayScore || 0) + (game.homeScore || 0);
+  const ouLine = parseFloat(game.ou);
+  if (!ouLine || isNaN(ouLine)) return null;
+  const quarter = game.quarter || 1;
+  const clock = game.clock || "12:00";
+  let elapsed;
+  if (clock === "Halftime") {
+    elapsed = 24;
+  } else {
+    const parts = clock.split(":");
+    const minLeft = parseFloat(parts[0] || 0) + (parseFloat(parts[1] || 0) / 60);
+    elapsed = (quarter - 1) * 12 + (12 - minLeft);
+  }
+  if (elapsed < 1) return null;
+  const projected = Math.round(((combined / elapsed) * 48) * 10) / 10;
+  const needed = Math.round((ouLine - combined) * 10) / 10;
+  return { combined, ouLine, projected, needed };
+}
+
 // ── TOP PICKS (top 3 individual bets ranked by Dubl Score) ───────────────────
 function TopPickCard({ pick, rank, onPickOdds }) {
   const rankLabel = ["🥇 TOP PICK","🥈 2ND PICK","🥉 3RD PICK"][rank-1] || `#${rank}`;
   const ec = edgeColor(pick.score);
   const isBet = pick.type === "bet";
+  const isLiveGame = pick.game.status === "live";
   const color = isBet ? T.green : T.gold;
   const pickLabel = isBet
     ? (pick.betTeam || "?")
     : /under/i.test(pick.text) ? "UNDER" : "OVER";
-  // Use the odds for the predicted team, not blindly the away team
   const calcOdds = isBet
     ? (pick.betTeam === pick.game.home ? pick.game.homeOdds : pick.game.awayOdds) || "-110"
     : "-110";
+
+  // Live O/U pace data
+  const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
+  const isOver = !isBet && /over/i.test(pick.text);
+  const ouOnTrack = pace ? (isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
+
+  // Live best-bet margin
+  let betMargin = null;
+  if (isBet && isLiveGame && pick.betTeam) {
+    const isBettingHome = pick.betTeam === pick.game.home;
+    const ourScore = isBettingHome ? (pick.game.homeScore || 0) : (pick.game.awayScore || 0);
+    const oppScore = isBettingHome ? (pick.game.awayScore || 0) : (pick.game.homeScore || 0);
+    betMargin = ourScore - oppScore;
+  }
+
   return (
     <div
       onClick={onPickOdds ? () => onPickOdds(calcOdds) : undefined}
       style={{
         background: T.card,
-        border: `1px solid ${rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+        border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
         borderRadius:14, overflow:"hidden",
         animation:`fadeUp ${0.1+rank*0.07}s ease`,
         cursor: onPickOdds ? "pointer" : "default",
       }}
     >
-      <div style={{ height:2, background: rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
+      <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
+
+      {/* ── LIVE BANNER ── */}
+      {isLiveGame && (
+        <div style={{
+          display:"flex", alignItems:"center", gap:6,
+          padding:"5px 14px",
+          background:"rgba(248,70,70,0.1)",
+          borderBottom:"1px solid rgba(248,70,70,0.2)",
+        }}>
+          <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite", flexShrink:0 }} />
+          <span style={{ fontSize:9, color:T.red, fontWeight:800, letterSpacing:"0.1em" }}>
+            LIVE · Q{pick.game.quarter} {pick.game.clock}
+          </span>
+          <span style={{ marginLeft:"auto", fontSize:10, color:T.text1, fontWeight:700 }}>
+            {pick.game.awayScore} – {pick.game.homeScore}
+          </span>
+        </div>
+      )}
+
       <div style={{ padding:"12px 14px" }}>
         {/* Top row: rank/type badge + score */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -646,15 +706,62 @@ function TopPickCard({ pick, rank, onPickOdds }) {
           <div style={{ flex:1 }}>
             <div style={{ fontSize:10, color:T.text2, fontWeight:600 }}>
               {pick.game.awayName} <span style={{ color:T.text3 }}>@</span> {pick.game.homeName}
-              {pick.game.status === "live" && <span style={{ color:T.red, marginLeft:6, fontWeight:700 }}>LIVE</span>}
             </div>
           </div>
           <TeamBadge abbr={pick.game.home} size={32} />
         </div>
         {/* Pick text */}
         <div style={{ fontSize:12, color:T.text2, lineHeight:1.5 }}>
-          {pick.text.length > 100 ? pick.text.slice(0,100)+"…" : pick.text}
+          {pick.text.length > 120 ? pick.text.slice(0,120)+"…" : pick.text}
         </div>
+
+        {/* ── LIVE O/U TRACKER ── */}
+        {pace && (
+          <div style={{
+            marginTop:8, padding:"7px 10px",
+            background:"rgba(0,0,0,0.35)", borderRadius:7,
+            display:"flex", flexDirection:"column", gap:3,
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.06em" }}>
+                {pick.game.awayScore} + {pick.game.homeScore} = <strong style={{ color:T.text2 }}>{pace.combined} pts</strong>
+              </span>
+              <span style={{
+                fontSize:9, fontWeight:800, letterSpacing:"0.08em",
+                color: ouOnTrack ? T.green : T.red,
+                background: ouOnTrack ? T.greenDim : T.redDim,
+                border: `1px solid ${ouOnTrack ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+                borderRadius:4, padding:"1px 6px",
+              }}>{ouOnTrack ? "ON TRACK" : "FADING"}</span>
+            </div>
+            <div style={{ fontSize:9, color:T.text3 }}>
+              proj <span style={{ color: ouOnTrack ? T.green : T.red, fontWeight:700 }}>{pace.projected}</span>
+              {" "}· need <span style={{ color:T.text2 }}>{pace.needed > 0 ? `${pace.needed} more` : "already over line"}</span>
+              {" "}· line <span style={{ color:T.gold }}>{pace.ouLine}</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── LIVE BEST BET SCORE TRACKER ── */}
+        {isBet && isLiveGame && betMargin !== null && (
+          <div style={{
+            marginTop:8, padding:"7px 10px",
+            background:"rgba(0,0,0,0.35)", borderRadius:7,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <span style={{ fontSize:9, color:T.text3 }}>
+              {pick.game.away} <strong style={{ color:T.text2 }}>{pick.game.awayScore}</strong>
+              {" – "}
+              {pick.game.home} <strong style={{ color:T.text2 }}>{pick.game.homeScore}</strong>
+            </span>
+            <span style={{
+              fontSize:9, fontWeight:800, letterSpacing:"0.07em",
+              color: betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold,
+            }}>
+              {betMargin > 0 ? `${pick.betTeam} +${betMargin} LEADING` : betMargin < 0 ? `${pick.betTeam} ${betMargin} TRAILING` : "TIED"}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

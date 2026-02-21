@@ -355,24 +355,43 @@ function TeamBadge({ abbr, size = 40 }) {
   );
 }
 
-function ScorePip({ score }) {
+function ScorePip({ score, reasoning }) {
+  const [open, setOpen] = useState(false);
   if (score == null) return null;
   const c = edgeColor(score);
   return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", justifyContent:"center",
-      width:28, height:28, borderRadius:"50%",
-      border:`2px solid ${c}`, background:`${c}18`,
-      fontSize:10, fontWeight:800, color:c, flexShrink:0, marginLeft:6,
-    }}>{score}</span>
+    <div style={{ position:"relative", flexShrink:0, marginLeft:6 }}>
+      <span
+        onClick={e => { e.stopPropagation(); if (reasoning) setOpen(o => !o); }}
+        style={{
+          display:"inline-flex", alignItems:"center", justifyContent:"center",
+          width:28, height:28, borderRadius:"50%",
+          border:`2px solid ${c}`, background:`${c}18`,
+          fontSize:10, fontWeight:800, color:c,
+          cursor: reasoning ? "pointer" : "default",
+        }}
+      >{score}</span>
+      {open && reasoning && (
+        <div style={{
+          position:"absolute", right:0, top:34, zIndex:200,
+          background:T.card, border:`1px solid ${c}44`,
+          borderRadius:10, padding:"10px 12px",
+          fontSize:10, color:T.text2, lineHeight:1.6,
+          width:210, boxShadow:"0 8px 24px rgba(0,0,0,0.55)",
+        }}>
+          <div style={{ fontSize:8, color:c, letterSpacing:"0.1em", fontWeight:700, marginBottom:5 }}>DUBL SCORE · {score}/5</div>
+          {reasoning}
+        </div>
+      )}
+    </div>
   );
 }
 
 function AnalysisPanel({ analysis, isLive, loading }) {
   if (!analysis) return null;
   const items = [
-    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet },
-    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou },
+    { icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet },
+    { icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou },
     { icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null },
   ].filter(i => i.text);
 
@@ -396,7 +415,7 @@ function AnalysisPanel({ analysis, isLive, loading }) {
               <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em", marginRight:6 }}>{item.label}</span>
               <span style={{ fontSize:11, color:T.text2, lineHeight:1.6 }}>{item.text}</span>
             </div>
-            <ScorePip score={item.score} />
+            <ScorePip score={item.score} reasoning={item.reasoning} />
           </div>
         ))}
       </div>
@@ -619,7 +638,7 @@ function TopPickCard({ pick, rank, onPickOdds }) {
               border:`1px solid ${color}44`, borderRadius:4, padding:"2px 7px",
             }}>{isBet ? `✦ ${pickLabel}` : `◉ ${pickLabel}`}</span>
           </div>
-          <EdgeCircle score={pick.score} />
+          <EdgeCircle score={pick.score} reasoning={pick.reasoning} />
         </div>
         {/* Team logos row */}
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
@@ -648,9 +667,9 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
     const a = aiOverrides[g.id];
     if (!a) continue;
     if (a.best_bet && a.dubl_score_bet != null)
-      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, game:g });
+      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, game:g, reasoning:a.dubl_reasoning_bet });
     if (a.ou && a.dubl_score_ou != null)
-      picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g });
+      picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g, reasoning:a.dubl_reasoning_ou });
   }
   const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
   if (top.length === 0) return null;
@@ -802,15 +821,34 @@ function BestBetCard({ prop, rank }) {
   );
 }
 
-function EdgeCircle({ score }) {
+function EdgeCircle({ score, reasoning }) {
+  const [open, setOpen] = useState(false);
   const c = edgeColor(score);
   return (
-    <div style={{
-      width:40, height:40, borderRadius:"50%",
-      border:`2.5px solid ${c}`, background:`${c}18`,
-      display:"flex", alignItems:"center", justifyContent:"center",
-      fontSize:12, fontWeight:800, color:c,
-    }}>{score}</div>
+    <div style={{ position:"relative" }}>
+      <div
+        onClick={e => { e.stopPropagation(); if (reasoning) setOpen(o => !o); }}
+        style={{
+          width:40, height:40, borderRadius:"50%",
+          border:`2.5px solid ${c}`, background:`${c}18`,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontSize:12, fontWeight:800, color:c,
+          cursor: reasoning ? "pointer" : "default",
+        }}
+      >{score}</div>
+      {open && reasoning && (
+        <div style={{
+          position:"absolute", right:0, top:46, zIndex:200,
+          background:T.card, border:`1px solid ${c}44`,
+          borderRadius:10, padding:"10px 12px",
+          fontSize:10, color:T.text2, lineHeight:1.6,
+          width:210, boxShadow:"0 8px 24px rgba(0,0,0,0.55)",
+        }}>
+          <div style={{ fontSize:8, color:c, letterSpacing:"0.1em", fontWeight:700, marginBottom:5 }}>DUBL SCORE · {score}/5</div>
+          {reasoning}
+        </div>
+      )}
+    </div>
   );
 }
 

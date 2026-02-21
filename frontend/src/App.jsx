@@ -181,6 +181,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
 
   const staticAnalysis = game.analysis;
   const displayAnalysis = aiOverride || staticAnalysis;
+  // Use lines from Gemini analysis when available — single source of truth
+  const L = aiOverride?.lines || {};
+  const dispSpread   = L.spread   || game.spread;
+  const dispOu       = L.ou       || game.ou;
+  const dispAwayOdds = L.awayOdds || game.awayOdds;
+  const dispHomeOdds = L.homeOdds || game.homeOdds;
 
   return (
     <div style={{
@@ -239,14 +245,14 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
       <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         {/* Away */}
         <div
-          style={{ flex:1, cursor: game.awayOdds && onPickOdds ? "pointer" : "default" }}
-          onClick={game.awayOdds && onPickOdds ? () => onPickOdds(game.awayOdds) : undefined}
-          title={game.awayOdds ? `Calc: ${game.awayName} ${game.awayOdds}` : undefined}
+          style={{ flex:1, cursor: dispAwayOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={dispAwayOdds && onPickOdds ? () => onPickOdds(dispAwayOdds) : undefined}
+          title={dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
         >
           <TeamBadge abbr={game.away} size={44} />
           <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.awayName}</div>
           {isUp && (
-            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{game.awayOdds}</div>
+            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{dispAwayOdds}</div>
           )}
         </div>
 
@@ -279,33 +285,33 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
 
         {/* Home */}
         <div
-          style={{ flex:1, textAlign:"right", cursor: game.homeOdds && onPickOdds ? "pointer" : "default" }}
-          onClick={game.homeOdds && onPickOdds ? () => onPickOdds(game.homeOdds) : undefined}
-          title={game.homeOdds ? `Calc: ${game.homeName} ${game.homeOdds}` : undefined}
+          style={{ flex:1, textAlign:"right", cursor: dispHomeOdds && onPickOdds ? "pointer" : "default" }}
+          onClick={dispHomeOdds && onPickOdds ? () => onPickOdds(dispHomeOdds) : undefined}
+          title={dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
         >
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <TeamBadge abbr={game.home} size={44} />
           </div>
           <div style={{ color:T.text2, fontSize:12, marginTop:6, fontWeight:500 }}>{game.homeName}</div>
           {isUp && (
-            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{game.homeOdds}</div>
+            <div style={{ color:T.text, fontSize:13, fontWeight:700, marginTop:2 }}>{dispHomeOdds}</div>
           )}
         </div>
       </div>
 
       {/* ── Odds strip ── */}
-      {(game.spread || game.ou || game.homeOdds) && (
+      {(dispSpread || dispOu || dispHomeOdds) && (
         <div style={{ display:"flex", borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}` }}>
-          {game.spread && (
-            <OddsCol label="SPREAD" value={game.spread} highlight={!isFinal}
+          {dispSpread && (
+            <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
-          {game.ou && (
-            <OddsCol label="TOTAL" value={`${game.ou}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+          {dispOu && (
+            <OddsCol label="TOTAL" value={`${dispOu}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
-          {game.homeOdds && game.awayOdds && (
-            <OddsCol label="MONEYLINE" value={`${game.awayOdds} / ${game.homeOdds}`} highlight={!isFinal} />
+          {dispHomeOdds && dispAwayOdds && (
+            <OddsCol label="MONEYLINE" value={`${dispAwayOdds} / ${dispHomeOdds}`} highlight={!isFinal} />
           )}
         </div>
       )}

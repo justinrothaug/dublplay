@@ -659,7 +659,7 @@ def build_system_prompt(games: list, injuries: set) -> str:
 
 def parse_gemini_analysis(text: str) -> dict:
     """Parse structured Gemini response into best_bet / ou / props / dubl scores."""
-    stoppers = "BEST_BET:|BET_TEAM:|OU_LEAN:|PLAYER_PROP:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
+    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|OU_LEAN:|PLAYER_PROP:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
         m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', text, re.DOTALL | re.IGNORECASE)
@@ -676,15 +676,26 @@ def parse_gemini_analysis(text: str) -> dict:
         except ValueError:
             return None
 
+    away_ml     = extract("AWAY_ML")
+    home_ml     = extract("HOME_ML")
+    spread_line = extract("SPREAD_LINE")
+    ou_line     = extract("OU_LINE")
+
     return {
-        "best_bet":       extract("BEST_BET"),
-        "bet_team":       (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
-        "ou":             extract("OU_LEAN"),
-        "props":          extract("PLAYER_PROP"),
+        "best_bet":           extract("BEST_BET"),
+        "bet_team":           (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
+        "ou":                 extract("OU_LEAN"),
+        "props":              extract("PLAYER_PROP"),
         "dubl_score_bet":     extract_score("DUBL_SCORE_BET"),
         "dubl_reasoning_bet": extract("DUBL_REASONING_BET"),
         "dubl_score_ou":      extract_score("DUBL_SCORE_OU"),
         "dubl_reasoning_ou":  extract("DUBL_REASONING_OU"),
+        "lines": {
+            "awayOdds": away_ml,
+            "homeOdds": home_ml,
+            "spread":   spread_line,
+            "ou":       ou_line,
+        } if any([away_ml, home_ml, spread_line, ou_line]) else None,
     }
 
 
@@ -1250,16 +1261,17 @@ async def analyze_game(req: AnalyzeRequest):
         prompt = (
             f"Live: {game['awayName']} {game.get('awayScore',0)} @ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            f"OFFICIAL LINES — use these exact numbers, no others: "
-            f"{game['away']} ML={away_ml} | {game['home']} ML={home_ml} | Spread={spread_ln} | O/U={ou_line}.\n"
-            "Search ONLY for player prop lines for this game tonight. Do NOT use odds from search results.\n"
+            "Search for this game's current betting lines AND player prop lines.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
-            f"BEST_BET: [Pick ONE of: '{game['away']} {away_ml}' or '{game['home']} {home_ml}' or spread '{spread_ln}'. "
-            "MUST be a team moneyline or spread — NEVER a player prop. "
+            f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
+            f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"
+            f"SPREAD_LINE: [current spread from your search, e.g. {game['away']} +5.5]\n"
+            "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
+            "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
             "Format: 'TEAM LINE — 1-2 sentence live edge reason (score situation, foul trouble, pace).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
-            f"OU_LEAN: [MUST start with exactly 'OVER {ou_line}' or 'UNDER {ou_line}' — then ' — 1-2 sentence reason citing pace, fouls, or scoring rate']\n"
-            "PLAYER_PROP: [Player prop line from your search only. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
+            "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, fouls, or scoring rate']\n"
+            "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs live price. Heavy favorite (-400+) scores lower even if likely.]\n"
             "DUBL_REASONING_BET: [1 sentence: current price and whether juice is worth it]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — value score: pace/foul/scoring edge vs -110 juice]\n"
@@ -1268,16 +1280,17 @@ async def analyze_game(req: AnalyzeRequest):
     else:
         prompt = (
             f"Pre-game: {game['awayName']} @ {game['homeName']}.\n"
-            f"OFFICIAL LINES — use these exact numbers, no others: "
-            f"{game['away']} ML={away_ml} | {game['home']} ML={home_ml} | Spread={spread_ln} | O/U={ou_line}.\n"
-            "Search ONLY for player prop lines for this game tonight. Do NOT use odds from search results.\n"
+            "Search for this game's current betting lines AND player prop lines.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
-            f"BEST_BET: [Pick ONE of: '{game['away']} {away_ml}' or '{game['home']} {home_ml}' or spread '{spread_ln}'. "
-            "MUST be a team moneyline or spread — NEVER a player prop. "
+            f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
+            f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"
+            f"SPREAD_LINE: [current spread you found, e.g. {game['away']} +5.5]\n"
+            "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
+            "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
             "Format: 'TEAM LINE — 2-sentence reason (matchup, recent form, pace, injury, schedule spot).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
-            f"OU_LEAN: [MUST start with exactly 'OVER {ou_line}' or 'UNDER {ou_line}' — then ' — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
-            "PLAYER_PROP: [Player prop line from your search only. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
+            "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
+            "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs price. Heavy favorite (-500+) scores lower.]\n"
             "DUBL_REASONING_BET: [1 sentence: price and why it is or isn't worth it]\n"
             "DUBL_SCORE_OU: [float 1.0-5.0 — value score: statistical/situational edge vs -110 juice]\n"

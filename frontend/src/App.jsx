@@ -318,7 +318,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds }) {
 
       {/* ── Results (final) or Analysis (live/upcoming) ── */}
       {isFinal
-        ? <FinalResultsPanel game={game} />
+        ? <FinalResultsPanel game={game} aiOverride={aiOverride} />
         : <AnalysisPanel
             analysis={displayAnalysis}
             isLive={isLive}
@@ -503,101 +503,155 @@ function AnalysisPanel({ analysis, isLive, loading, game }) {
 }
 
 // ── FINAL RESULTS PANEL ───────────────────────────────────────────────────────
-function FinalResultsPanel({ game }) {
+function FinalResultsPanel({ game, aiOverride }) {
   const r = calcFinalResults(game);
   if (!r) return null;
 
-  const HitBadge = ({ hit, trueVal, falseVal }) => {
-    const won = hit === trueVal;
-    const push = hit === "push" || hit === "PUSH";
-    return (
+  const analysis = aiOverride || game.analysis;
+
+  // Did pre-game picks hit?
+  let bestBetHit = null;
+  if (analysis?.bet_team) {
+    if (r.spreadResult) {
+      const bettingFav = analysis.bet_team === r.spreadResult.favAbbr;
+      bestBetHit = bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog";
+    } else {
+      bestBetHit = analysis.bet_team === r.mlWinner;
+    }
+  }
+  let ouHit = null;
+  if (analysis?.ou && r.totalResult) {
+    const leanedOver = /over/i.test(analysis.ou);
+    ouHit = leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER";
+  }
+
+  // Resolve display odds from aiOverride lines or game fallback
+  const L2 = aiOverride?.lines || {};
+  const dispAwayOdds = L2.awayOdds || game.awayOdds;
+  const dispHomeOdds = L2.homeOdds || game.homeOdds;
+
+  const ResultRow = ({ icon, iconColor, label, line, result, resultColor, sub }) => (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+      <div style={{ display:"flex", gap:6, alignItems:"center", minWidth:0, flex:1 }}>
+        <span style={{ color:iconColor, fontSize:10, flexShrink:0 }}>{icon}</span>
+        <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>
+        {line && <span style={{ fontSize:10, color:T.text3, flexShrink:0 }}>{line}</span>}
+        {sub && <span style={{ fontSize:10, color:T.text2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>→ {sub}</span>}
+      </div>
       <span style={{
-        fontSize:9, fontWeight:800, letterSpacing:"0.06em",
-        color: push ? T.gold : won ? T.green : T.red,
-        background: push ? "rgba(245,166,35,0.12)" : won ? T.greenDim : T.redDim,
-        border: `1px solid ${push ? "rgba(245,166,35,0.3)" : won ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-        borderRadius:4, padding:"2px 6px",
-      }}>
-        {push ? "PUSH" : won ? "✓ HIT" : "✗ MISS"}
-      </span>
-    );
-  };
+        fontSize:11, fontWeight:800, flexShrink:0,
+        color: resultColor,
+      }}>{result}</span>
+    </div>
+  );
+
+  const hitColor  = c => c === "push" ? T.gold : c ? T.green : T.red;
+  const hitLabel  = c => c === "push" ? "PUSH" : c ? "✓ HIT" : "✗ MISS";
+
+  const s = r.spreadResult;
+  const t = r.totalResult;
+  const away = game.awayScore ?? 0;
+  const home = game.homeScore ?? 0;
 
   return (
     <div style={{ background:"rgba(0,0,0,0.25)", padding:"12px 16px 14px", flex:1 }}>
       <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.1em", fontWeight:700, marginBottom:10 }}>
         FINAL RESULTS
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
 
-        {/* Moneyline winner */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-            <span style={{ color:T.green, fontSize:10 }}>🏆</span>
-            <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>MONEYLINE</span>
-            <span style={{ fontSize:11, color:T.text }}>{r.mlWinnerName} won by {r.margin}</span>
-          </div>
+        {/* Final score */}
+        <div style={{
+          display:"flex", justifyContent:"center", alignItems:"baseline", gap:10,
+          padding:"8px 0", borderRadius:8, background:"rgba(255,255,255,0.04)",
+          marginBottom:2,
+        }}>
+          <span style={{ fontSize:13, fontWeight:800, color: away > home ? T.text : T.text3 }}>{game.awayName}</span>
+          <span style={{ fontSize:20, fontWeight:900, color: away > home ? T.text : T.text3 }}>{away}</span>
+          <span style={{ fontSize:12, color:T.text3 }}>–</span>
+          <span style={{ fontSize:20, fontWeight:900, color: home > away ? T.text : T.text3 }}>{home}</span>
+          <span style={{ fontSize:13, fontWeight:800, color: home > away ? T.text : T.text3 }}>{game.homeName}</span>
         </div>
 
+        {/* Moneyline */}
+        <ResultRow
+          icon="🏆" iconColor={T.green}
+          label="MONEYLINE"
+          line={dispAwayOdds && dispHomeOdds ? `${game.away} ${dispAwayOdds} / ${game.home} ${dispHomeOdds}` : null}
+          sub={`${r.mlWinnerName} wins +${r.margin}`}
+          result={r.mlWinnerName}
+          resultColor={T.green}
+        />
+
         {/* Spread */}
-        {r.spreadResult && (() => {
-          const s = r.spreadResult;
-          const label = `${s.favName} ${s.line > 0 ? "+" : ""}${s.line}`;
-          const dogLabel = `${s.dogName} +${Math.abs(s.line)}`;
+        {s && (() => {
+          const lineStr = `${s.favAbbr} ${s.line > 0 ? "+" : ""}${s.line}`;
+          const sub = s.hit === "push"
+            ? `Push (won by exactly ${Math.abs(s.line)})`
+            : s.hit === "fav"
+            ? `${s.favName} covered (won by ${Math.abs(Math.round(s.actualMargin))})`
+            : `${s.dogName} +${Math.abs(s.line)} covered`;
+          const push = s.hit === "push";
           return (
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <div style={{ display:"flex", gap:7, alignItems:"center", flex:1, minWidth:0 }}>
-                <span style={{ color:"#a78bfa", fontSize:10 }}>⊖</span>
-                <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>SPREAD</span>
-                <span style={{ fontSize:11, color:T.text2, whiteSpace:"nowrap" }}>
-                  {s.hit === "fav"
-                    ? `${s.favName} covered (won by ${Math.abs(Math.round(s.actualMargin))})`
-                    : s.hit === "push"
-                    ? `Push — won by exactly ${Math.abs(s.line)}`
-                    : `${s.dogName} +${Math.abs(s.line)} covered`}
-                </span>
-              </div>
-              <div style={{ display:"flex", gap:5, flexShrink:0, marginLeft:8 }}>
-                <span style={{ fontSize:9, color:T.text3 }}>{label}</span>
-                <HitBadge hit={s.hit} trueVal="fav" />
-              </div>
-            </div>
+            <ResultRow
+              icon="⊖" iconColor="#a78bfa"
+              label="SPREAD"
+              line={lineStr}
+              sub={sub}
+              result={push ? "PUSH" : s.hit === "fav" ? `${s.favAbbr} CVR` : `${s.dogAbbr} CVR`}
+              resultColor={push ? T.gold : T.text}
+            />
           );
         })()}
 
         {/* Total */}
-        {r.totalResult && (
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <div style={{ display:"flex", gap:7, alignItems:"center", flex:1 }}>
-              <span style={{ color:T.gold, fontSize:10 }}>◉</span>
-              <span style={{ fontSize:9, fontWeight:700, color:T.text3, letterSpacing:"0.06em" }}>TOTAL</span>
-              <span style={{ fontSize:11, color:T.text2 }}>
-                {r.totalResult.combined} combined — {r.totalResult.hit} {r.totalResult.label}
-              </span>
-            </div>
-            <HitBadge hit={r.totalResult.hit} trueVal={game.analysis?.ou?.includes("OVER") ? "OVER" : "UNDER"} />
-          </div>
-        )}
+        {t && (() => {
+          const push = t.hit === "PUSH";
+          return (
+            <ResultRow
+              icon="◉" iconColor={T.gold}
+              label="TOTAL"
+              line={`O/U ${t.label.replace(" O/U","")}`}
+              sub={`${t.combined} combined`}
+              result={push ? "PUSH" : t.hit}
+              resultColor={push ? T.gold : t.hit === "OVER" ? T.red : T.green}
+            />
+          );
+        })()}
 
-        {/* AI notes */}
-        {game.analysis?.best_bet && (
+        {/* Pre-game picks + accuracy */}
+        {analysis?.best_bet && (
           <div style={{ marginTop:4, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
-            <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.08em", marginBottom:5 }}>PRE-GAME NOTES</div>
+            <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>
+              PRE-GAME PICKS
+            </div>
             {[
-              { icon:"✦", label:"BEST BET",   text:game.analysis.best_bet, color:T.green },
-              { icon:"◉", label:"O/U LEAN",   text:game.analysis.ou,       color:T.gold  },
-              { icon:"▸", label:"PLAYER PROP", text:game.analysis.props,   color:"#a78bfa" },
+              { icon:"✦", label:"BEST BET",    text:analysis.best_bet, color:T.green,   hit:bestBetHit },
+              { icon:"◉", label:"O/U LEAN",    text:analysis.ou,       color:T.gold,    hit:ouHit      },
+              { icon:"▸", label:"PLAYER PROP", text:analysis.props,    color:"#a78bfa", hit:null       },
             ].filter(i => i.text).map((item, i) => (
-              <div key={i} style={{ display:"flex", gap:7, alignItems:"flex-start", marginBottom:4 }}>
-                <span style={{ color:item.color, fontSize:9, marginTop:1, flexShrink:0 }}>{item.icon}</span>
-                <div style={{ flex:1 }}>
-                  <span style={{ fontSize:8, fontWeight:700, color:item.color, letterSpacing:"0.06em", marginRight:5 }}>{item.label}</span>
+              <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
+                <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:2 }}>
+                    <span style={{ fontSize:8, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
+                    {item.hit !== null && (
+                      <span style={{
+                        fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                        color: hitColor(item.hit),
+                        background: item.hit ? T.greenDim : T.redDim,
+                        border:`1px solid ${item.hit ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+                        borderRadius:3, padding:"1px 5px",
+                      }}>{hitLabel(item.hit)}</span>
+                    )}
+                  </div>
                   <span style={{ fontSize:10, color:T.text3, lineHeight:1.5 }}>{item.text}</span>
                 </div>
               </div>
             ))}
           </div>
         )}
+
       </div>
     </div>
   );

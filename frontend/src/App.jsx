@@ -763,11 +763,9 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         </span>
       </div>
 
-      {/* User-saved picks */}
-      {favorites && <MyPicksSection favs={favorites.picks} games={games} onRemove={onFavorite.remove} onPickOdds={onPickOdds} />}
-
-      {/* Top 3 individual picks (Best Bet / O/U) ranked by Dubl Score */}
-      <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds} />
+      {/* Top picks (auto) + My Picks (user-saved) in one scroll */}
+      <TopPicksSection games={ordered} aiOverrides={aiOverrides} onPickOdds={onPickOdds}
+        favs={favorites?.picks} onRemoveFav={onFavorite?.remove} />
 
       {/* League / view bar */}
       <div style={{
@@ -933,24 +931,25 @@ function TopPickDetailPopup({ pick, onClose, onPickOdds }) {
   );
 }
 
-function TopPickCard({ pick, rank, onExpand }) {
-  const ec = edgeColor(pick.score);
+function TopPickCard({ pick, rank, onExpand, onRemove }) {
+  const ec = pick.score != null ? edgeColor(pick.score) : T.text3;
   const isBet = pick.type === "bet";
+  const isOu  = pick.type === "ou";
+  const isMyPick = !!onRemove;
   const isLiveGame = pick.game.status === "live";
-  const color = isBet ? T.green : T.gold;
+  const color = isBet ? T.green : isOu ? T.gold : "#a78bfa";
   const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
-  // Parse direction and line from the START of the OU_LEAN text (e.g. "OVER 218.5 — reason")
-  // Using the full string with /under/i caused false matches on words like "under" in the reason.
-  const ouTextMatch = !isBet ? pick.text?.match(/^(over|under)\s+([\d.]+)/i) : null;
+  const ouTextMatch = isOu ? pick.text?.match(/^(over|under)\s+([\d.]+)/i) : null;
   const ouDir = ouTextMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
   const ouLineNum = ouTextMatch?.[2] || pick.game?.ou || "";
   const pickLabel = isBet
     ? `${pick.betTeam || "?"}${betLine ? ` ${betLine}` : ""}`
-    : `${ouDir} ${ouLineNum}`;
+    : isOu
+    ? `${ouDir} ${ouLineNum}`
+    : (pick.text?.split(" ").slice(0,3).join(" ") || "PROP");
 
-  // Live pace / margin for status badge
-  const pace = (!isBet && isLiveGame) ? calcLivePace(pick.game) : null;
-  const isOver = !isBet && ouDir === "O";
+  const pace = (isOu && isLiveGame) ? calcLivePace(pick.game) : null;
+  const isOver = isOu && ouDir === "O";
   const ouOnTrack = pace ? (isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine) : null;
   let betMargin = null;
   if (isBet && isLiveGame && pick.betTeam) {
@@ -970,44 +969,18 @@ function TopPickCard({ pick, rank, onExpand }) {
   return (
     <div style={{
       background: T.card,
-      border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
-      borderRadius:12, overflow:"hidden",
-      animation:`fadeUp ${0.1+rank*0.07}s ease`,
+      border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : isMyPick ? "rgba(167,139,250,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
+      borderRadius:12, overflow:"hidden", position:"relative",
+      animation: rank ? `fadeUp ${0.1+rank*0.07}s ease` : undefined,
     }}>
       {/* Colored top bar */}
-      <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
+      <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : isMyPick ? "linear-gradient(90deg,#a78bfa,#7c3aed)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
 
       <div style={{ padding:"8px 9px" }}>
-        {/* Row 1: live dot · rank · pick badge · live status · mini edge score */}
-        <div style={{ display:"flex", alignItems:"center", gap:3, marginBottom:7 }}>
-          {isLiveGame && <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />}
-          <span style={{ fontSize:8, color:T.text3, fontWeight:700, flexShrink:0 }}>({rank})</span>
-          <span style={{
-            fontSize:8, fontWeight:700, letterSpacing:"0.04em",
-            color, background:`${color}18`, border:`1px solid ${color}44`,
-            borderRadius:4, padding:"1px 5px",
-            flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-          }}>{isBet ? "✦" : "◉"} {pickLabel}</span>
-          {liveBadgeText && (
-            <span style={{
-              fontSize:7, fontWeight:800, letterSpacing:"0.04em",
-              color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
-              borderRadius:4, padding:"1px 4px", flexShrink:0,
-            }}>{liveBadgeText}</span>
-          )}
-          {/* Mini edge score circle */}
-          <span style={{
-            width:22, height:22, borderRadius:"50%", flexShrink:0,
-            border:`2px solid ${ec}`, background:`${ec}18`,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:8, fontWeight:800, color:ec,
-          }}>{pick.score}</span>
-        </div>
-
-        {/* Row 2: team logos + abbr — tap to open detail popup */}
+        {/* Row 1: team logos + abbr/live score — tap to open detail */}
         <div
           onClick={() => onExpand(pick)}
-          style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer", WebkitTapHighlightColor:"transparent" }}
+          style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer", WebkitTapHighlightColor:"transparent", marginBottom:7 }}
         >
           <TeamBadge abbr={pick.game.away} size={20} />
           <span style={{ flex:1, fontSize:8, color:T.text3, textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
@@ -1017,97 +990,55 @@ function TopPickCard({ pick, rank, onExpand }) {
           </span>
           <TeamBadge abbr={pick.game.home} size={20} />
         </div>
-      </div>
-    </div>
-  );
-}
 
-// ── MY PICKS (user-saved, horizontal scroll) ──────────────────────────────────
-function MyPickCard({ pick, liveGame, onRemove, onExpand }) {
-  const isLive = liveGame?.status === "live";
-  const ec = pick.score != null ? edgeColor(pick.score) : T.text3;
-  return (
-    <div onClick={() => onExpand(pick, liveGame)} style={{
-      flexShrink:0, width:158,
-      background:T.card,
-      border:`1px solid ${isLive ? "rgba(248,70,70,0.35)" : T.border}`,
-      borderRadius:12, overflow:"hidden", cursor:"pointer",
-      position:"relative", WebkitTapHighlightColor:"transparent",
-    }}>
-      <div style={{ height:2, background: isLive ? "linear-gradient(90deg,#f84646,#ff8c00)" : `${pick.color}66` }} />
-      <div style={{ padding:"9px 10px 10px" }}>
-        {/* type badge + score */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
-          <span style={{ fontSize:8, color:pick.color, fontWeight:800, letterSpacing:"0.07em",
-            background:`${pick.color}18`, border:`1px solid ${pick.color}44`,
-            borderRadius:4, padding:"2px 6px" }}>{pick.icon} {pick.label}</span>
+        {/* Row 2: live dot · rank/★ · pick badge · live status · mini edge score */}
+        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+          {isLiveGame && <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />}
+          <span style={{ fontSize:8, color: isMyPick ? "#a78bfa" : T.text3, fontWeight:700, flexShrink:0 }}>
+            {isMyPick ? "★" : `(${rank})`}
+          </span>
+          <span style={{
+            fontSize:8, fontWeight:700, letterSpacing:"0.04em",
+            color, background:`${color}18`, border:`1px solid ${color}44`,
+            borderRadius:4, padding:"1px 5px",
+            flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+          }}>{isBet ? "✦" : isOu ? "◉" : "▸"} {pickLabel}</span>
+          {liveBadgeText && (
+            <span style={{
+              fontSize:7, fontWeight:800, letterSpacing:"0.04em",
+              color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
+              borderRadius:4, padding:"1px 4px", flexShrink:0,
+            }}>{liveBadgeText}</span>
+          )}
           {pick.score != null && (
-            <span style={{ fontSize:10, fontWeight:800, color:ec }}>{pick.score}</span>
+            <span style={{
+              width:22, height:22, borderRadius:"50%", flexShrink:0,
+              border:`2px solid ${ec}`, background:`${ec}18`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:8, fontWeight:800, color:ec,
+            }}>{pick.score}</span>
           )}
         </div>
-        {/* matchup / live score */}
-        {isLive ? (
-          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:5 }}>
-            <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
-            <span style={{ fontSize:9, color:T.red, fontWeight:700 }}>
-              {liveGame.away} {liveGame.awayScore}–{liveGame.homeScore} {liveGame.home}
-            </span>
-          </div>
-        ) : (
-          <div style={{ fontSize:9, color:T.text3, marginBottom:5 }}>{pick.matchup}</div>
-        )}
-        {/* pick text */}
-        <div style={{ fontSize:10, color:T.text2, lineHeight:1.5,
-          overflow:"hidden", display:"-webkit-box",
-          WebkitLineClamp:3, WebkitBoxOrient:"vertical" }}>{pick.text}</div>
       </div>
-      {/* remove button */}
-      <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
-        position:"absolute", top:6, right:6,
-        background:"rgba(0,0,0,0.5)", border:"none", borderRadius:"50%",
-        width:17, height:17, color:T.text3, fontSize:10, cursor:"pointer",
-        display:"flex", alignItems:"center", justifyContent:"center",
-        padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
-      }}>×</button>
-    </div>
-  );
-}
 
-function MyPicksSection({ favs, games, onRemove, onPickOdds }) {
-  const [expandedPick, setExpandedPick] = useState(null);
-  const [expandedGame, setExpandedGame] = useState(null);
-  if (favs.length === 0) return null;
-
-  const handleExpand = (pick, liveGame) => {
-    const g = liveGame || { ...pick.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
-    setExpandedPick({ type:pick.type, score:pick.score, text:pick.text, reasoning:pick.reasoning, betTeam:pick.betTeam, betIsSpread:pick.betIsSpread, game:g });
-    setExpandedGame(g);
-  };
-
-  return (
-    <div style={{ padding:"0 16px", marginBottom:14 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-        <SectionLabel style={{ marginBottom:0 }}>MY PICKS</SectionLabel>
-        <span style={{ fontSize:9, color:T.text3 }}>{favs.length} saved</span>
-      </div>
-      <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6,
-        scrollbarWidth:"none", MsOverflowStyle:"none", WebkitOverflowScrolling:"touch" }}>
-        {favs.map(pick => {
-          const liveGame = games.find(g => g.id === pick.gameId) || null;
-          return (
-            <MyPickCard key={pick.id} pick={pick} liveGame={liveGame} onRemove={() => onRemove(pick.id)} onExpand={handleExpand} />
-          );
-        })}
-      </div>
-      {expandedPick && (
-        <TopPickDetailPopup pick={expandedPick} onClose={() => setExpandedPick(null)} onPickOdds={onPickOdds} />
+      {/* Remove button for My Picks */}
+      {onRemove && (
+        <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+          position:"absolute", top:5, right:5,
+          background:"rgba(0,0,0,0.55)", border:"none", borderRadius:"50%",
+          width:16, height:16, color:T.text3, fontSize:10, cursor:"pointer",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent",
+        }}>×</button>
       )}
     </div>
   );
 }
 
-function TopPicksSection({ games, aiOverrides, onPickOdds }) {
+function TopPicksSection({ games, aiOverrides, onPickOdds, favs, onRemoveFav }) {
   const [expandedPick, setExpandedPick] = useState(null);
+
+  // Auto-generated top picks
   const picks = [];
   for (const g of games) {
     if (g.status === "final") continue;
@@ -1116,16 +1047,33 @@ function TopPicksSection({ games, aiOverrides, onPickOdds }) {
     if (a.best_bet && a.dubl_score_bet != null)
       picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, betIsSpread:a.bet_is_spread, game:g, reasoning:a.dubl_reasoning_bet });
     if (a.ou && a.dubl_score_ou != null)
-      picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou,       game:g, reasoning:a.dubl_reasoning_ou });
+      picks.push({ type:"ou",  score:a.dubl_score_ou,  text:a.ou, game:g, reasoning:a.dubl_reasoning_ou });
   }
   const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
-  if (top.length === 0) return null;
+
+  // User-saved picks enriched with live game data
+  const myPicks = (favs || []).map(p => {
+    const liveGame = games.find(g => g.id === p.gameId);
+    const game = liveGame || { ...p.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
+    return { ...p, game };
+  });
+
+  if (top.length === 0 && myPicks.length === 0) return null;
+
   return (
     <div style={{ padding:"0 16px", marginBottom:14 }}>
-      <SectionLabel>TOP PICKS — BEST BET & O/U RANKED BY DUBL SCORE</SectionLabel>
-      <div style={{ display:"grid", gap:8, gridTemplateColumns:"repeat(3,minmax(100px,155px))" }}>
+      <SectionLabel>TOP PICKS{myPicks.length > 0 ? " & MY PICKS" : " — BEST BET & O/U RANKED BY DUBL SCORE"}</SectionLabel>
+      <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4,
+        scrollbarWidth:"none", MsOverflowStyle:"none", WebkitOverflowScrolling:"touch" }}>
+        {myPicks.map(pick => (
+          <div key={`my-${pick.id}`} style={{ flexShrink:0, width:155 }}>
+            <TopPickCard pick={pick} onExpand={setExpandedPick} onRemove={() => onRemoveFav(pick.id)} />
+          </div>
+        ))}
         {top.map((pick,i) => (
-          <TopPickCard key={`${pick.game.id}-${pick.type}`} pick={pick} rank={i+1} onExpand={setExpandedPick} />
+          <div key={`top-${pick.game.id}-${pick.type}`} style={{ flexShrink:0, width:155 }}>
+            <TopPickCard pick={pick} rank={i+1} onExpand={setExpandedPick} />
+          </div>
         ))}
       </div>
       {expandedPick && (

@@ -990,13 +990,17 @@ async def get_games(date: Optional[str] = None):
                 changed = True
         if changed:
             _save_odds_to_firestore(date_str, _sticky_odds)
-    elif not _sticky_odds:
-        # Absolute last resort: Gemini grounded search
-        async with httpx.AsyncClient() as client:
-            odds_map = await fetch_gemini_odds(client, games)
-        if odds_map:
-            _sticky_odds.update(odds_map)
-            _save_odds_to_firestore(date_str, _sticky_odds)
+    elif not odds_map:
+        # Check if today's upcoming games actually have odds coverage in sticky
+        upcoming_ids = [re.sub(r'-\d{8}$', '', g["id"]) for g in games if g.get("status") == "upcoming"]
+        has_coverage = any(_sticky_odds.get(gid, {}).get("homeOdds") for gid in upcoming_ids)
+        if not has_coverage:
+            # Sticky has no matching odds for today's games — fall back to Gemini
+            async with httpx.AsyncClient() as client:
+                odds_map = await fetch_gemini_odds(client, games)
+            if odds_map:
+                _sticky_odds.update(odds_map)
+                _save_odds_to_firestore(date_str, _sticky_odds)
 
     # ── 4. Always kick off a background refresh (compares, writes only if changed)
     asyncio.create_task(_background_refresh_odds(date_str))

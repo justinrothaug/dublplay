@@ -351,7 +351,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
       {/* ── Odds strip ── */}
       {(dispSpread || dispOu || dispHomeOdds) && (
-        <div style={{ display:"flex", background:"#0f0d0a" }}>
+        <div style={{ display:"flex", background:"#0f0d0a", marginTop: isLive ? 0 : -12 }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />

@@ -465,23 +465,23 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
 
 async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dict:
     """
-    Last-resort fallback: ask Gemini + Google Search for today's NBA moneylines.
-    Called only when Odds API and DraftKings both return nothing.
+    Ask Gemini + Google Search for NBA moneylines for the given games.
+    games should already be filtered to only those missing moneylines.
     """
     if not GEMINI_API_KEY:
         return {}
-    upcoming = [g for g in games if g.get("status") != "final"]
-    if not upcoming:
+    if not games:
         return {}
 
-    lines = "\n".join(f"{g['awayName']} @ {g['homeName']}" for g in upcoming)
+    lines = "\n".join(f"{g['awayName']} @ {g['homeName']}" for g in games)
     prompt = (
-        f"Search for today's NBA betting odds for these games:\n{lines}\n\n"
+        f"Search for today's NBA moneyline odds for these games:\n{lines}\n\n"
+        "I need ONLY the moneyline (who is favored and by how much). "
         "Return ONLY a raw JSON array — no markdown, no explanation. "
-        "Each element: {\"away\":\"ABBR\",\"home\":\"ABBR\","
-        "\"awayOdds\":\"+110\",\"homeOdds\":\"-130\","
-        "\"spread\":\"HOME -2.5\",\"ou\":\"225.5\"} "
-        "Use American odds format. Only include games you found real odds for."
+        "Each element must have: {\"away\":\"ABBR\",\"home\":\"ABBR\","
+        "\"awayOdds\":\"+110\",\"homeOdds\":\"-130\"} "
+        "Use 3-letter NBA team abbreviations (e.g. BKN, ATL, LAL, GSW). "
+        "Use American odds format. You MUST include awayOdds and homeOdds for every game."
     )
     try:
         resp = await client.post(
@@ -869,7 +869,7 @@ def get_effective_key(request_key: str) -> str:
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
-def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
+def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = None) -> list[dict]:
     """
     Merge odds into ESPN game list.
     Priority: ESPN embedded odds > Odds API/DK > sticky cache.
@@ -898,7 +898,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds,
                 "homeSpreadOdds": homeSpreadOdds, "awaySpreadOdds": awaySpreadOdds,
             }.items() if v}
-            _save_sticky_odds()
+            _save_odds_to_firestore(
+                date_str or datetime.now(timezone.utc).strftime("%Y%m%d"),
+                _sticky_odds,
+            )
 
         home_prob = away_prob = 50.0
         if homeOdds and awayOdds:
@@ -973,39 +976,11 @@ async def get_games(date: Optional[str] = None):
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    # ── 3. For upcoming games missing ESPN moneylines and not in sticky, use Gemini
-    upcoming_missing = [
-        g for g in games
-        if g.get("status") == "upcoming"
-        and not g.get("espn_homeOdds")
-        and not (_sticky_odds.get(re.sub(r'-\d{8}$', '', g["id"]), {}) or {}).get("homeOdds")
-    ]
-    if upcoming_missing:
-        async with httpx.AsyncClient() as client:
-            gemini_map = await fetch_gemini_odds(client, games)
-        if gemini_map:
-            for k, v in gemini_map.items():
-                _sticky_odds[k] = {**_sticky_odds.get(k, {}), **v}
-            _save_odds_to_firestore(date_str, _sticky_odds)
-    odds_map: dict = {}
-
-    # ── 4. Always kick off a background refresh (compares, writes only if changed)
+    # ── 3. Background refresh of ESPN odds
     asyncio.create_task(_background_refresh_odds(date_str))
 
-    # ── 5. Merge and return ────────────────────────────────────────────────────
-    merged = _merge_odds(games, odds_map)
-
-    # For any final games still missing lines, ask Gemini for historical pre-game odds
-    async with httpx.AsyncClient() as client:
-        hist = await fetch_gemini_historical_odds(client, merged)
-    if hist:
-        for g in merged:
-            base_id = re.sub(r'-\d{8}$', '', g["id"])
-            h = hist.get(base_id) or hist.get(g["id"]) or {}
-            if h:
-                for field in ("spread", "ou", "homeOdds", "awayOdds"):
-                    if not g.get(field) and h.get(field):
-                        g[field] = h[field]
+    # ── 4. Merge ESPN + sticky (lines from analyze_game are persisted there)
+    merged = _merge_odds(games, {}, date_str)
 
     return {
         "games": merged,
@@ -1326,8 +1301,24 @@ async def analyze_game(req: AnalyzeRequest):
     data = resp.json()
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"]["message"])
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return {"analysis": parse_gemini_analysis(text)}
+    parts = data["candidates"][0]["content"]["parts"]
+    text = " ".join(p.get("text", "") for p in parts if "text" in p)
+    analysis = parse_gemini_analysis(text)
+
+    # Persist any lines Gemini found back to sticky so /api/games shows real win prob
+    lines = analysis.get("lines") or {}
+    if any(v for v in lines.values() if v):
+        date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
+        entry = {k: v for k, v in {
+            "awayOdds": lines.get("awayOdds"),
+            "homeOdds": lines.get("homeOdds"),
+            "spread":   lines.get("spread"),
+            "ou":       lines.get("ou"),
+        }.items() if v}
+        _sticky_odds[base_game_id] = {**_sticky_odds.get(base_game_id, {}), **entry}
+        _save_odds_to_firestore(date_str, _sticky_odds)
+
+    return {"analysis": analysis}
 
 
 @app.post("/api/chat")

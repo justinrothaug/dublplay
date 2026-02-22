@@ -869,7 +869,7 @@ def get_effective_key(request_key: str) -> str:
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
-def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
+def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = None) -> list[dict]:
     """
     Merge odds into ESPN game list.
     Priority: ESPN embedded odds > Odds API/DK > sticky cache.
@@ -898,7 +898,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds,
                 "homeSpreadOdds": homeSpreadOdds, "awaySpreadOdds": awaySpreadOdds,
             }.items() if v}
-            _save_sticky_odds()
+            _save_odds_to_firestore(
+                date_str or datetime.now(timezone.utc).strftime("%Y%m%d"),
+                _sticky_odds,
+            )
 
         home_prob = away_prob = 50.0
         if homeOdds and awayOdds:
@@ -977,7 +980,7 @@ async def get_games(date: Optional[str] = None):
     asyncio.create_task(_background_refresh_odds(date_str))
 
     # ── 4. Merge ESPN + sticky (lines from analyze_game are persisted there)
-    merged = _merge_odds(games, {})
+    merged = _merge_odds(games, {}, date_str)
 
     return {
         "games": merged,

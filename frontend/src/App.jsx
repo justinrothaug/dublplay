@@ -258,7 +258,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
         {/* Content */}
-        <div style={{ position:"relative", zIndex:3, padding:"12px 14px 16px" }}>
+        <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px` }}>
           {/* Top row: injury alert / win-prob chips */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
             {game.injuryAlert && isUp ? (
@@ -351,7 +351,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
       {/* ── Odds strip ── */}
       {(dispSpread || dispOu || dispHomeOdds) && (
-        <div style={{ display:"flex", background:"#0f0d0a", marginTop: isLive ? 0 : -12 }}>
+        <div style={{ display:"flex", background:"#0f0d0a" }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />

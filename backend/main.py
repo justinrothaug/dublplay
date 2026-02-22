@@ -973,39 +973,11 @@ async def get_games(date: Optional[str] = None):
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    # ── 3. For upcoming games missing ESPN moneylines and not in sticky, use Gemini
-    upcoming_missing = [
-        g for g in games
-        if g.get("status") == "upcoming"
-        and not g.get("espn_homeOdds")
-        and not (_sticky_odds.get(re.sub(r'-\d{8}$', '', g["id"]), {}) or {}).get("homeOdds")
-    ]
-    if upcoming_missing:
-        async with httpx.AsyncClient() as client:
-            gemini_map = await fetch_gemini_odds(client, upcoming_missing)
-        if gemini_map:
-            for k, v in gemini_map.items():
-                _sticky_odds[k] = {**_sticky_odds.get(k, {}), **v}
-            _save_odds_to_firestore(date_str, _sticky_odds)
-    odds_map: dict = {}
-
-    # ── 4. Always kick off a background refresh (compares, writes only if changed)
+    # ── 3. Background refresh of ESPN odds
     asyncio.create_task(_background_refresh_odds(date_str))
 
-    # ── 5. Merge and return ────────────────────────────────────────────────────
-    merged = _merge_odds(games, odds_map)
-
-    # For any final games still missing lines, ask Gemini for historical pre-game odds
-    async with httpx.AsyncClient() as client:
-        hist = await fetch_gemini_historical_odds(client, merged)
-    if hist:
-        for g in merged:
-            base_id = re.sub(r'-\d{8}$', '', g["id"])
-            h = hist.get(base_id) or hist.get(g["id"]) or {}
-            if h:
-                for field in ("spread", "ou", "homeOdds", "awayOdds"):
-                    if not g.get(field) and h.get(field):
-                        g[field] = h[field]
+    # ── 4. Merge ESPN + sticky (lines from analyze_game are persisted there)
+    merged = _merge_odds(games, {})
 
     return {
         "games": merged,
@@ -1327,7 +1299,22 @@ async def analyze_game(req: AnalyzeRequest):
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"]["message"])
     text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return {"analysis": parse_gemini_analysis(text)}
+    analysis = parse_gemini_analysis(text)
+
+    # Persist any lines Gemini found back to sticky so /api/games shows real win prob
+    lines = analysis.get("lines") or {}
+    if lines.get("awayOdds") or lines.get("homeOdds"):
+        date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
+        entry = {k: v for k, v in {
+            "awayOdds": lines.get("awayOdds"),
+            "homeOdds": lines.get("homeOdds"),
+            "spread":   lines.get("spread"),
+            "ou":       lines.get("ou"),
+        }.items() if v}
+        _sticky_odds[base_game_id] = {**_sticky_odds.get(base_game_id, {}), **entry}
+        _save_odds_to_firestore(date_str, _sticky_odds)
+
+    return {"analysis": analysis}
 
 
 @app.post("/api/chat")

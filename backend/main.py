@@ -465,23 +465,23 @@ async def fetch_odds(client: httpx.AsyncClient) -> dict:
 
 async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dict:
     """
-    Last-resort fallback: ask Gemini + Google Search for today's NBA moneylines.
-    Called only when Odds API and DraftKings both return nothing.
+    Ask Gemini + Google Search for NBA moneylines for the given games.
+    games should already be filtered to only those missing moneylines.
     """
     if not GEMINI_API_KEY:
         return {}
-    upcoming = [g for g in games if g.get("status") != "final"]
-    if not upcoming:
+    if not games:
         return {}
 
-    lines = "\n".join(f"{g['awayName']} @ {g['homeName']}" for g in upcoming)
+    lines = "\n".join(f"{g['awayName']} @ {g['homeName']}" for g in games)
     prompt = (
-        f"Search for today's NBA betting odds for these games:\n{lines}\n\n"
+        f"Search for today's NBA moneyline odds for these games:\n{lines}\n\n"
+        "I need ONLY the moneyline (who is favored and by how much). "
         "Return ONLY a raw JSON array — no markdown, no explanation. "
-        "Each element: {\"away\":\"ABBR\",\"home\":\"ABBR\","
-        "\"awayOdds\":\"+110\",\"homeOdds\":\"-130\","
-        "\"spread\":\"HOME -2.5\",\"ou\":\"225.5\"} "
-        "Use American odds format. Only include games you found real odds for."
+        "Each element must have: {\"away\":\"ABBR\",\"home\":\"ABBR\","
+        "\"awayOdds\":\"+110\",\"homeOdds\":\"-130\"} "
+        "Use 3-letter NBA team abbreviations (e.g. BKN, ATL, LAL, GSW). "
+        "Use American odds format. You MUST include awayOdds and homeOdds for every game."
     )
     try:
         resp = await client.post(
@@ -982,7 +982,7 @@ async def get_games(date: Optional[str] = None):
     ]
     if upcoming_missing:
         async with httpx.AsyncClient() as client:
-            gemini_map = await fetch_gemini_odds(client, games)
+            gemini_map = await fetch_gemini_odds(client, upcoming_missing)
         if gemini_map:
             for k, v in gemini_map.items():
                 _sticky_odds[k] = {**_sticky_odds.get(k, {}), **v}

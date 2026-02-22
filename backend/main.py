@@ -1298,12 +1298,13 @@ async def analyze_game(req: AnalyzeRequest):
     data = resp.json()
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"]["message"])
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    parts = data["candidates"][0]["content"]["parts"]
+    text = " ".join(p.get("text", "") for p in parts if "text" in p)
     analysis = parse_gemini_analysis(text)
 
     # Persist any lines Gemini found back to sticky so /api/games shows real win prob
     lines = analysis.get("lines") or {}
-    if lines.get("awayOdds") or lines.get("homeOdds"):
+    if any(v for v in lines.values() if v):
         date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
         entry = {k: v for k, v in {
             "awayOdds": lines.get("awayOdds"),

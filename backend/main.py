@@ -108,6 +108,19 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+NBA_STATS_URL       = "https://stats.nba.com/stats/leaguedashteamstats"
+NBA_STATS_HEADERS   = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer":    "https://www.nba.com/",
+    "Accept":     "application/json, text/plain, */*",
+    "Origin":     "https://www.nba.com",
+}
+
+
+def _current_nba_season() -> str:
+    now = datetime.now(timezone.utc)
+    y = now.year
+    return f"{y}-{str(y + 1)[-2:]}" if now.month >= 10 else f"{y - 1}-{str(y)[-2:]}"
 
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 _cache: dict = {}
@@ -116,13 +129,13 @@ CACHE_TTL = 60  # seconds
 
 def cache_get(key: str):
     entry = _cache.get(key)
-    if entry and time.time() - entry["ts"] < CACHE_TTL:
+    if entry and time.time() - entry["ts"] < entry.get("ttl", CACHE_TTL):
         return entry["data"]
     return None
 
 
-def cache_set(key: str, data):
-    _cache[key] = {"ts": time.time(), "data": data}
+def cache_set(key: str, data, ttl: int = CACHE_TTL):
+    _cache[key] = {"ts": time.time(), "data": data, "ttl": ttl}
 
 
 # ── ESPN HELPERS ──────────────────────────────────────────────────────────────
@@ -233,6 +246,91 @@ def _save_sticky_odds() -> None:
     """Write current in-memory odds to Firestore under today's date."""
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     _save_odds_to_firestore(date_str, _sticky_odds)
+
+
+async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
+    """
+    Fetch season advanced stats (offRtg, defRtg, pace) + last-10 record for all teams.
+    Cached for 30 minutes — season averages barely move day to day.
+    Returns dict keyed by team abbreviation.
+    """
+    cached = cache_get("nba_team_stats")
+    if cached is not None:
+        return cached
+
+    season = _current_nba_season()
+    base_params = {
+        "LeagueID": "00", "Season": season, "SeasonType": "Regular Season",
+        "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
+    }
+
+    try:
+        r_adv, r_l10 = await asyncio.gather(
+            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
+                       headers=NBA_STATS_HEADERS, timeout=10),
+            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Base", "LastNGames": 10},
+                       headers=NBA_STATS_HEADERS, timeout=10),
+        )
+    except Exception as e:
+        logging.warning(f"NBA Stats API fetch failed: {e}")
+        return {}
+
+    def _parse(resp, *fields):
+        try:
+            rs = resp.json()["resultSets"][0]
+            headers, rows = rs["headers"], rs["rowSet"]
+        except Exception:
+            return {}
+        out = {}
+        for row in rows:
+            d = dict(zip(headers, row))
+            abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
+            if abbr:
+                out[abbr] = {f: d.get(f) for f in fields}
+        return out
+
+    adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
+    l10 = _parse(r_l10, "W", "L")
+    merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
+    cache_set("nba_team_stats", merged, ttl=1800)
+    return merged
+
+
+async def fetch_team_rest_days(
+    client: httpx.AsyncClient, today_abbrs: set[str], today_date: str
+) -> dict[str, int]:
+    """
+    Return days of rest for each team playing today.
+    0 = back-to-back (played yesterday), 1 = 1 day rest, 2 = 2 days rest.
+    Checks ESPN scoreboard for the previous 3 days.
+    """
+    cache_key = f"rest_{today_date}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    today_dt = datetime.strptime(today_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+    rest: dict[str, int] = {}
+    for days_back in range(1, 4):
+        if len(rest) >= len(today_abbrs):
+            break
+        check_date = (today_dt - timedelta(days=days_back)).strftime("%Y%m%d")
+        try:
+            r = await client.get(ESPN_SCOREBOARD_URL, params={"dates": check_date}, timeout=8)
+            events = r.json().get("events", [])
+        except Exception:
+            continue
+        for event in events:
+            try:
+                for c in event["competitions"][0]["competitors"]:
+                    abbr = norm_abbr(c["team"]["abbreviation"])
+                    if abbr in today_abbrs and abbr not in rest:
+                        rest[abbr] = days_back - 1  # yesterday → 0 (B2B), 2 days ago → 1, etc.
+            except Exception:
+                continue
+
+    cache_set(cache_key, rest, ttl=3600)
+    return rest
 
 
 async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
@@ -720,7 +818,12 @@ def _sign(val) -> str:
 
 
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────
-def build_system_prompt(games: list, injuries: set) -> str:
+def build_system_prompt(
+    games: list,
+    injuries: set,
+    team_stats: dict | None = None,
+    rest_days: dict | None = None,
+) -> str:
     injury_note = ""
     if injuries:
         injury_note = f"\nKEY INJURIES (OUT/Doubtful): {', '.join(sorted(injuries)[:8])}."
@@ -738,6 +841,31 @@ def build_system_prompt(games: list, injuries: set) -> str:
         for g in upcoming
     ) if upcoming else "None"
 
+    # Build team context block: offRtg, defRtg, pace, last-10, rest
+    team_ctx = ""
+    if team_stats or rest_days:
+        today_abbrs = sorted({a for g in games for a in (g["home"], g["away"])})
+        rows = []
+        for abbr in today_abbrs:
+            ts = (team_stats or {}).get(abbr, {})
+            rd = (rest_days or {}).get(abbr)
+            parts = []
+            if ts.get("OFF_RATING") is not None:
+                parts.append(f"oRtg {ts['OFF_RATING']:.1f}")
+            if ts.get("DEF_RATING") is not None:
+                parts.append(f"dRtg {ts['DEF_RATING']:.1f}")
+            if ts.get("PACE") is not None:
+                parts.append(f"pace {ts['PACE']:.1f}")
+            w, l = ts.get("W"), ts.get("L")
+            if w is not None and l is not None:
+                parts.append(f"L10 {int(w)}-{int(l)}")
+            if rd is not None:
+                parts.append("B2B" if rd == 0 else f"{rd}d rest")
+            if parts:
+                rows.append(f"  {abbr}: {', '.join(parts)}")
+        if rows:
+            team_ctx = "\nTEAM CONTEXT (season stats + rest):\n" + "\n".join(rows)
+
     return (
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
         "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
@@ -745,7 +873,8 @@ def build_system_prompt(games: list, injuries: set) -> str:
         "key injuries, rest advantages, or defensive rankings.\n"
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
-        f"{injury_note}\n"
+        f"{injury_note}"
+        f"{team_ctx}\n"
         "Respond with EXACTLY the three labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
@@ -1213,10 +1342,13 @@ def calculate_parlay(req: ParlayRequest):
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
 
+    today_date = req.date or datetime.now(timezone.utc).strftime("%Y%m%d")
+
     async with httpx.AsyncClient() as client:
-        espn_games, injuries = await asyncio.gather(
+        espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
+            fetch_nba_team_stats(client),
         )
 
     games_to_search = espn_games if espn_games else MOCK_GAMES
@@ -1224,7 +1356,11 @@ async def analyze_game(req: AnalyzeRequest):
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    system_prompt = build_system_prompt(games_to_search, injuries)
+    today_abbrs = {g["home"] for g in games_to_search} | {g["away"] for g in games_to_search}
+    async with httpx.AsyncClient() as client:
+        rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
+
+    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days)
     is_live  = game["status"] == "live"
     is_final = game["status"] == "final"
 
@@ -1325,14 +1461,21 @@ async def analyze_game(req: AnalyzeRequest):
 async def chat(req: ChatRequest):
     key = get_effective_key(req.api_key)
 
-    async with httpx.AsyncClient() as client:
-        espn_games = await fetch_espn_games(client)
-        injuries   = await fetch_espn_injuries(client)
+    today_date = datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    system_prompt = build_system_prompt(
-        espn_games if espn_games else MOCK_GAMES,
-        injuries,
-    )
+    async with httpx.AsyncClient() as client:
+        espn_games, injuries, team_stats = await asyncio.gather(
+            fetch_espn_games(client),
+            fetch_espn_injuries(client),
+            fetch_nba_team_stats(client),
+        )
+
+    games = espn_games if espn_games else MOCK_GAMES
+    today_abbrs = {g["home"] for g in games} | {g["away"] for g in games}
+    async with httpx.AsyncClient() as client:
+        rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
+
+    system_prompt = build_system_prompt(games, injuries, team_stats, rest_days)
 
     contents = [
         {"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
@@ -1360,7 +1503,7 @@ def health():
     return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
 
 
-USER_STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
+USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"
 USER_STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=USER_STATIC_DIR), name="user_static")
 

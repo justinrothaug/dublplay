@@ -997,90 +997,95 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
 
   const awayLeads = isLiveGame && (pick.game.awayScore ?? 0) > (pick.game.homeScore ?? 0);
   const homeLeads = isLiveGame && (pick.game.homeScore ?? 0) > (pick.game.awayScore ?? 0);
+  const awayC = TEAM_COLORS[pick.game.away] || "#1a3a6e";
+  const homeC = TEAM_COLORS[pick.game.home] || "#6e1a1a";
 
   return (
     <div style={{
-      background: T.card,
       border: `1px solid ${isLiveGame ? "rgba(248,70,70,0.35)" : isMyPick ? "rgba(167,139,250,0.35)" : rank===1 ? "rgba(245,166,35,0.3)" : T.border}`,
       borderRadius:12, overflow:"hidden", position:"relative",
+      display:"flex", flexDirection:"column",
       animation: rank ? `fadeUp ${0.1+rank*0.07}s ease` : undefined,
     }}>
       {/* Colored top bar */}
       <div style={{ height:2, background: isLiveGame ? "linear-gradient(90deg,#f84646,#ff8c00)" : isMyPick ? "linear-gradient(90deg,#a78bfa,#7c3aed)" : rank===1 ? "linear-gradient(90deg,#f5a623,#ff8c00)" : `linear-gradient(90deg,${ec}55,transparent)` }} />
 
-      <div style={{ padding:"8px 10px 10px" }}>
-        {/* Header row: ★/(rank) · live status (center) · × */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
-          <span style={{ fontSize:9, color: isMyPick ? "#a78bfa" : T.text3, fontWeight:700, lineHeight:1, minWidth:18 }}>
-            {isMyPick ? "★" : `(${rank})`}
-          </span>
-          {isLiveGame && (
-            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-              <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
-              <span style={{ fontSize:8, color:T.red, fontWeight:700, letterSpacing:"0.05em" }}>
-                Q{pick.game.quarter}{pick.game.clock ? ` ${pick.game.clock}` : ""}
-              </span>
-            </div>
-          )}
-          {onRemove ? (
-            <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
-              background:"rgba(0,0,0,0.55)", border:"none", borderRadius:"50%",
-              width:16, height:16, color:T.text3, fontSize:10, cursor:"pointer",
-              display:"flex", alignItems:"center", justifyContent:"center",
-              padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent", minWidth:16,
-            }}>×</button>
-          ) : <span style={{ minWidth:16 }} />}
-        </div>
+      {/* Hero — card.png + team color blend */}
+      <div style={{ position:"relative", overflow:"hidden" }}>
+        <div style={{ position:"absolute", inset:0, backgroundImage:"url('/static/card.png')", backgroundSize:"100% auto", backgroundPosition:"top center", backgroundRepeat:"no-repeat", zIndex:0 }} />
+        <div style={{ position:"absolute", inset:0, background:`linear-gradient(112deg, ${awayC} 47%, ${homeC} 47%)`, mixBlendMode:"color", zIndex:1 }} />
+        <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
-        {/* Team row — tap to open detail */}
-        <div onClick={() => onExpand(pick)} style={{ cursor:"pointer", WebkitTapHighlightColor:"transparent", marginBottom:8 }}>
-          {isLiveGame ? (
-            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-              <TeamBadge abbr={pick.game.away} size={22} />
-              <span style={{ flex:1, textAlign:"center", fontSize:14,
-                fontWeight: awayLeads ? 800 : 400,
-                color: awayLeads ? T.text1 : T.text3 }}>{pick.game.awayScore}</span>
-              <span style={{ fontSize:10, color:T.text3 }}>–</span>
-              <span style={{ flex:1, textAlign:"center", fontSize:14,
-                fontWeight: homeLeads ? 800 : 400,
-                color: homeLeads ? T.text1 : T.text3 }}>{pick.game.homeScore}</span>
-              <TeamBadge abbr={pick.game.home} size={22} />
-            </div>
-          ) : (
-            <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-              <TeamBadge abbr={pick.game.away} size={22} />
-              <span style={{ flex:1, fontSize:9, color:T.text3, textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {pick.game.away} @ {pick.game.home}
-              </span>
-              <TeamBadge abbr={pick.game.home} size={22} />
-            </div>
-          )}
-        </div>
+        <div style={{ position:"relative", zIndex:3, padding:"8px 10px 10px" }}>
+          {/* Header row: ★/(rank) · live status · × */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+            <span style={{ fontSize:9, color: isMyPick ? "#a78bfa" : T.text3, fontWeight:700, lineHeight:1, minWidth:18 }}>
+              {isMyPick ? "★" : `(${rank})`}
+            </span>
+            {isLiveGame && (
+              <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                <span style={{ width:5, height:5, borderRadius:"50%", background:T.red, flexShrink:0, animation:"pulse 1.2s infinite" }} />
+                <span style={{ fontSize:8, color:T.red, fontWeight:700, letterSpacing:"0.05em" }}>
+                  Q{pick.game.quarter}{pick.game.clock ? ` ${pick.game.clock}` : ""}
+                </span>
+              </div>
+            )}
+            {onRemove ? (
+              <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+                background:"rgba(0,0,0,0.55)", border:"none", borderRadius:"50%",
+                width:16, height:16, color:T.text3, fontSize:10, cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                padding:0, lineHeight:1, WebkitTapHighlightColor:"transparent", minWidth:16,
+              }}>×</button>
+            ) : <span style={{ minWidth:16 }} />}
+          </div>
 
-        {/* Bottom row: pick badge · live status · dubl score */}
-        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+          {/* Team row — tap to open detail */}
+          <div onClick={() => onExpand(pick)} style={{ cursor:"pointer", WebkitTapHighlightColor:"transparent" }}>
+            {isLiveGame ? (
+              <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                <TeamBadge abbr={pick.game.away} size={22} />
+                <span style={{ flex:1, textAlign:"center", fontSize:14, fontWeight: awayLeads ? 800 : 400, color: awayLeads ? "#fff" : "rgba(255,255,255,0.4)" }}>{pick.game.awayScore}</span>
+                <span style={{ fontSize:10, color:"rgba(255,255,255,0.35)" }}>–</span>
+                <span style={{ flex:1, textAlign:"center", fontSize:14, fontWeight: homeLeads ? 800 : 400, color: homeLeads ? "#fff" : "rgba(255,255,255,0.4)" }}>{pick.game.homeScore}</span>
+                <TeamBadge abbr={pick.game.home} size={22} />
+              </div>
+            ) : (
+              <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                <TeamBadge abbr={pick.game.away} size={22} />
+                <span style={{ flex:1, fontSize:9, color:"rgba(255,255,255,0.6)", textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {pick.game.away} @ {pick.game.home}
+                </span>
+                <TeamBadge abbr={pick.game.home} size={22} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Black bottom strip: BET · STATUS · SCORE */}
+      <div style={{ display:"flex", alignItems:"center", gap:4, background:"#0f0d0a", padding:"6px 10px" }}>
+        <span style={{
+          fontSize:9, fontWeight:700, letterSpacing:"0.04em",
+          color, background:`${color}18`, border:`1px solid ${color}44`,
+          borderRadius:4, padding:"2px 6px",
+          flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+        }}>{isBet ? "✦" : isOu ? "◉" : "▸"} {pickLabel}</span>
+        {liveBadgeText && (
           <span style={{
-            fontSize:9, fontWeight:700, letterSpacing:"0.04em",
-            color, background:`${color}18`, border:`1px solid ${color}44`,
-            borderRadius:4, padding:"2px 6px",
-            flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-          }}>{isBet ? "✦" : isOu ? "◉" : "▸"} {pickLabel}</span>
-          {liveBadgeText && (
-            <span style={{
-              fontSize:7, fontWeight:800, letterSpacing:"0.04em",
-              color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
-              borderRadius:4, padding:"2px 5px", flexShrink:0,
-            }}>{liveBadgeText}</span>
-          )}
-          {pick.score != null && (
-            <span style={{
-              width:24, height:24, borderRadius:"50%", flexShrink:0,
-              border:`2px solid ${ec}`, background:`${ec}18`,
-              display:"flex", alignItems:"center", justifyContent:"center",
-              fontSize:9, fontWeight:800, color:ec,
-            }}>{pick.score}</span>
-          )}
-        </div>
+            fontSize:7, fontWeight:800, letterSpacing:"0.04em",
+            color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
+            borderRadius:4, padding:"2px 5px", flexShrink:0,
+          }}>{liveBadgeText}</span>
+        )}
+        {pick.score != null && (
+          <span style={{
+            width:24, height:24, borderRadius:"50%", flexShrink:0,
+            border:`2px solid ${ec}`, background:`${ec}18`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:9, fontWeight:800, color:ec,
+          }}>{pick.score}</span>
+        )}
       </div>
     </div>
   );

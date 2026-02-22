@@ -966,6 +966,7 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
   const isOu  = pick.type === "ou";
   const isMyPick = !!onRemove;
   const isLiveGame = pick.game.status === "live";
+  const isFinalGame = pick.game.status === "final";
   const color = isBet ? T.green : isOu ? T.gold : "#a78bfa";
   const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
   const ouTextMatch = isOu ? pick.text?.match(/^(over|under)\s+([\d.]+)/i) : null;
@@ -995,8 +996,28 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
     ? betMargin > 0 ? T.green : betMargin < 0 ? T.red : T.gold
     : ouOnTrack ? T.green : T.red;
 
-  const awayLeads = isLiveGame && (pick.game.awayScore ?? 0) > (pick.game.homeScore ?? 0);
-  const homeLeads = isLiveGame && (pick.game.homeScore ?? 0) > (pick.game.awayScore ?? 0);
+  // Final result hit/miss
+  let finalHit = null;
+  if (isFinalGame) {
+    const r = calcFinalResults(pick.game);
+    if (r) {
+      if (isBet) {
+        if (pick.betIsSpread && r.spreadResult) {
+          const bettingFav = pick.betTeam === r.spreadResult.favAbbr;
+          const h = bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog";
+          finalHit = r.spreadResult.hit === "push" ? "push" : h;
+        } else if (pick.betTeam) {
+          finalHit = pick.betTeam === r.mlWinner;
+        }
+      } else if (isOu && r.totalResult) {
+        const leanedOver = ouDir === "O";
+        finalHit = r.totalResult.hit === "PUSH" ? "push" : leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER";
+      }
+    }
+  }
+
+  const awayLeads = (isLiveGame || isFinalGame) && (pick.game.awayScore ?? 0) > (pick.game.homeScore ?? 0);
+  const homeLeads = (isLiveGame || isFinalGame) && (pick.game.homeScore ?? 0) > (pick.game.awayScore ?? 0);
   const awayC = TEAM_COLORS[pick.game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[pick.game.home] || "#6e1a1a";
 
@@ -1042,7 +1063,7 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
 
           {/* Team row — tap to open detail */}
           <div onClick={() => onExpand(pick)} style={{ cursor:"pointer", WebkitTapHighlightColor:"transparent" }}>
-            {isLiveGame ? (
+            {(isLiveGame || isFinalGame) ? (
               <div style={{ display:"flex", alignItems:"center", gap:4 }}>
                 <TeamBadge abbr={pick.game.away} size={22} />
                 <span style={{ flex:1, textAlign:"center", fontSize:14, fontWeight: awayLeads ? 800 : 400, color: awayLeads ? "#fff" : "rgba(255,255,255,0.4)" }}>{pick.game.awayScore}</span>
@@ -1077,6 +1098,15 @@ function TopPickCard({ pick, rank, onExpand, onRemove }) {
             color: liveBadgeColor, background:`${liveBadgeColor}18`, border:`1px solid ${liveBadgeColor}44`,
             borderRadius:4, padding:"2px 5px", flexShrink:0,
           }}>{liveBadgeText}</span>
+        )}
+        {isFinalGame && finalHit !== null && (
+          <span style={{
+            fontSize:7, fontWeight:800, letterSpacing:"0.04em",
+            color: finalHit === "push" ? T.gold : finalHit ? T.green : T.red,
+            background: finalHit === "push" ? `${T.gold}18` : finalHit ? `${T.green}18` : `${T.red}18`,
+            border: `1px solid ${finalHit === "push" ? `${T.gold}44` : finalHit ? `${T.green}44` : `${T.red}44`}`,
+            borderRadius:4, padding:"2px 5px", flexShrink:0,
+          }}>{finalHit === "push" ? "PUSH" : finalHit ? "✓ HIT" : "✗ MISS"}</span>
         )}
         {pick.score != null && (
           <span style={{

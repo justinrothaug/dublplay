@@ -931,20 +931,23 @@ def _merge_odds(espn_games: list[dict], odds_map: dict) -> list[dict]:
 
 async def _background_refresh_odds(date_str: str) -> None:
     """
-    Fetch fresh odds from APIs and update Firestore only if something changed.
+    Re-fetch ESPN games and persist any newly available ESPN BET odds to sticky/Firestore.
     Runs after the response has already been sent so it never blocks the user.
     """
     try:
         async with httpx.AsyncClient() as client:
-            fresh = await fetch_odds(client)
-        if not fresh:
+            games = await fetch_espn_games(client, date_str)
+        if not games:
             return
         changed = False
-        for k, v in fresh.items():
-            merged = {**_sticky_odds.get(k, {}), **v}
-            if merged != _sticky_odds.get(k):
-                _sticky_odds[k] = merged
-                changed = True
+        for g in games:
+            key = re.sub(r'-\d{8}$', '', g["id"])
+            for espn_field, out_field in [("espn_homeOdds","homeOdds"),("espn_awayOdds","awayOdds"),
+                                          ("espn_spread","spread"),("espn_ou","ou")]:
+                val = g.get(espn_field)
+                if val and _sticky_odds.get(key, {}).get(out_field) != val:
+                    _sticky_odds.setdefault(key, {})[out_field] = val
+                    changed = True
         if changed:
             _save_odds_to_firestore(date_str, _sticky_odds)
     except Exception as e:
@@ -963,40 +966,28 @@ async def get_games(date: Optional[str] = None):
             _sticky_odds.update(stored)
         _firestore_last_synced[date_str] = time.time()
 
-    # ── 2. Fetch live ESPN game data (always needed for scores / status) ───────
-    #       If we already have odds in memory, skip the blocking odds API call
-    #       and let the background task handle the refresh instead.
+    # ── 2. Fetch ESPN games (includes embedded ESPN BET odds) ──────────────────
     async with httpx.AsyncClient() as client:
-        if _sticky_odds:
-            games = await fetch_espn_games(client, date)
-            odds_map: dict = {}
-        else:
-            # First time ever — nothing in memory or Firestore — fetch in parallel
-            games, odds_map = await asyncio.gather(
-                fetch_espn_games(client, date),
-                fetch_odds(client),
-            )
+        games = await fetch_espn_games(client, date)
 
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    # ── 3. If we got fresh odds, merge into sticky and persist if changed ──────
-    if odds_map:
-        changed = False
-        for k, v in odds_map.items():
-            merged_entry = {**_sticky_odds.get(k, {}), **v}
-            if merged_entry != _sticky_odds.get(k):
-                _sticky_odds[k] = merged_entry
-                changed = True
-        if changed:
-            _save_odds_to_firestore(date_str, _sticky_odds)
-    elif not _sticky_odds:
-        # Absolute last resort: Gemini grounded search
+    # ── 3. For upcoming games missing ESPN moneylines and not in sticky, use Gemini
+    upcoming_missing = [
+        g for g in games
+        if g.get("status") == "upcoming"
+        and not g.get("espn_homeOdds")
+        and not (_sticky_odds.get(re.sub(r'-\d{8}$', '', g["id"]), {}) or {}).get("homeOdds")
+    ]
+    if upcoming_missing:
         async with httpx.AsyncClient() as client:
-            odds_map = await fetch_gemini_odds(client, games)
-        if odds_map:
-            _sticky_odds.update(odds_map)
+            gemini_map = await fetch_gemini_odds(client, games)
+        if gemini_map:
+            for k, v in gemini_map.items():
+                _sticky_odds[k] = {**_sticky_odds.get(k, {}), **v}
             _save_odds_to_firestore(date_str, _sticky_odds)
+    odds_map: dict = {}
 
     # ── 4. Always kick off a background refresh (compares, writes only if changed)
     asyncio.create_task(_background_refresh_odds(date_str))

@@ -1503,7 +1503,7 @@ def health():
     return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
 
 
-USER_STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
+USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"
 USER_STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=USER_STATIC_DIR), name="user_static")
 

@@ -224,18 +224,6 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
 
-  // Derive win prob from display odds if backend defaulted to 50/50
-  let awayWinPct = game.awayWinProb;
-  let homeWinPct = game.homeWinProb;
-  if (awayWinPct === 50 && homeWinPct === 50 && dispHomeOdds && dispAwayOdds) {
-    try {
-      const toDecimal = o => { const p = parseInt(o.replace("+","")); return p > 0 ? 1+p/100 : 1+100/Math.abs(p); };
-      const hd = toDecimal(dispHomeOdds), ad = toDecimal(dispAwayOdds), tot = 1/hd + 1/ad;
-      homeWinPct = Math.round((1/hd)/tot*1000)/10;
-      awayWinPct = Math.round((1/ad)/tot*1000)/10;
-    } catch(e) {}
-  }
-
   return (
     <div style={{
       border: `1px solid ${isLive ? "rgba(248,70,70,0.35)" : "rgba(255,255,255,0.09)"}`,
@@ -324,12 +312,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               ) : (
                 <>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}>
-                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{awayWinPct}%</span>
+                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{game.awayWinProb}%</span>
                     <span style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>vs</span>
-                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{homeWinPct}%</span>
+                    <span style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{game.homeWinProb}%</span>
                   </div>
                   <div style={{ width:110, height:5, borderRadius:3, background:"rgba(255,255,255,0.12)", overflow:"hidden", margin:"6px auto 0" }}>
-                    <div style={{ height:"100%", width:`${awayWinPct}%`, background:T.green, borderRadius:3, transition:"width 0.6s" }} />
+                    <div style={{ height:"100%", width:`${game.awayWinProb}%`, background:T.green, borderRadius:3, transition:"width 0.6s" }} />
                   </div>
                   <div style={{ marginTop:3, color:"rgba(255,255,255,0.4)", fontSize:8, letterSpacing:"0.1em", fontWeight:700 }}>WIN PROBABILITY</div>
                   {game.time && (

@@ -270,68 +270,113 @@ def _espn_season_year() -> int:
     return now.year + 1 if now.month >= 10 else now.year
 
 
+def _nba_cdn_season_year() -> int:
+    """NBA CDN uses the START year of the season (2025-26 → 2025)."""
+    now = datetime.now(timezone.utc)
+    return now.year if now.month >= 10 else now.year - 1
+
+
+def _parse_espn_standings_entries(data: dict) -> dict[str, dict]:
+    """Parse entries from an ESPN standings JSON into {abbr: stats} dict."""
+    out: dict[str, dict] = {}
+    # Standings can be at top-level or under a "standings" key
+    for root in [data, data.get("standings", {})]:
+        entries = root.get("entries", [])
+        if not entries:
+            for group in root.get("groups", []):
+                entries.extend(group.get("entries", []))
+        if entries:
+            for entry in entries:
+                abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
+                if not abbr:
+                    continue
+                stats_map = {s["name"]: s.get("value") for s in entry.get("stats", []) if "name" in s}
+                ppg  = stats_map.get("avgPointsFor")   or stats_map.get("pointsFor")
+                papg = stats_map.get("avgPointsAgainst") or stats_map.get("pointsAgainst")
+                if ppg is not None and papg is not None:
+                    out[abbr] = {
+                        "OFF_RATING": round(float(ppg)  * 100 / LEAGUE_AVG_PACE, 1),
+                        "DEF_RATING": round(float(papg) * 100 / LEAGUE_AVG_PACE, 1),
+                        "PACE":       LEAGUE_AVG_PACE,
+                    }
+            if out:
+                return out
+    return out
+
+
 async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
-    """
-    Fetch team season stats from ESPN standings API.
-    Returns OFF_RATING (points/game) and DEF_RATING (points-allowed/game) keyed by abbr.
-    ESPN is reliably reachable from all hosting environments.
-    PACE is set to league average since ESPN doesn't expose per-possession pace.
-    """
+    """Try several ESPN standings URL patterns in sequence."""
     season_year = _espn_season_year()
-    # Try current season first; fall back to no-param (ESPN default) if empty
-    urls_to_try = [
+    # The site/v2 URL recently started returning only {fullViewLink:…}; try v2 (no "site/") first
+    attempts = [
+        ("https://site.api.espn.com/apis/v2/sports/basketball/nba/standings",
+         {"season": str(season_year), "seasontype": "2"}),
+        ("https://site.api.espn.com/apis/v2/sports/basketball/nba/standings", {}),
         (ESPN_STANDINGS_URL, {"season": str(season_year), "seasontype": "2"}),
         (ESPN_STANDINGS_URL, {}),
     ]
-    data = None
-    for url, params in urls_to_try:
+    for url, params in attempts:
         try:
             r = await client.get(url, params=params, timeout=10)
             data = r.json()
-            # Quick check: does the response have actual standings data?
-            s = data.get("standings", {})
-            if s.get("entries") or any(g.get("entries") for g in s.get("groups", [])):
-                break  # got real data
-            logging.debug(f"ESPN standings attempt {params} returned no entries, retrying")
+            out = _parse_espn_standings_entries(data)
+            if out:
+                logging.info(f"ESPN standings loaded ({url} {params}): {len(out)} teams")
+                return out
+            logging.debug(f"ESPN standings empty from {url} {params} — HTTP {r.status_code} — {str(data)[:200]}")
         except Exception as e:
-            logging.warning(f"ESPN standings fetch failed ({params}): {type(e).__name__}: {e}")
-    if data is None:
+            logging.debug(f"ESPN standings attempt failed ({url}): {type(e).__name__}: {e}")
+    logging.warning("All ESPN standings attempts returned no data")
+    return {}
+
+
+async def _fetch_nba_cdn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
+    """
+    Fetch team stats from NBA CDN mobile standings JSON.
+    URL: data.nba.com/data/5s/v2015/json/mobile_teams/nba/{year}/00_standings.json
+    This is a CDN-served static file that bypasses stats.nba.com IP blocks.
+    """
+    year = _nba_cdn_season_year()
+    url = f"https://data.nba.com/data/5s/v2015/json/mobile_teams/nba/{year}/00_standings.json"
+    try:
+        r = await client.get(url, timeout=10)
+        data = r.json()
+        out: dict[str, dict] = {}
+        # Structure: data["sta"]["co"][conference]["di"][division]["t"][team]
+        for conf in data.get("sta", {}).get("co", []):
+            for div in conf.get("di", []):
+                for team in div.get("t", []):
+                    abbr = norm_abbr(team.get("ta", ""))
+                    if not abbr:
+                        continue
+                    # Stats may be in "s" dict or as direct keys depending on NBA CDN version
+                    s = team.get("s", team)
+                    ppg  = _to_float(s.get("ppg")  or s.get("pts"))
+                    oppg = _to_float(s.get("oppg") or s.get("oppPts"))
+                    w = _to_float(team.get("w"))
+                    l = _to_float(team.get("l"))
+                    if ppg and oppg:
+                        out[abbr] = {
+                            "OFF_RATING": round(ppg  * 100 / LEAGUE_AVG_PACE, 1),
+                            "DEF_RATING": round(oppg * 100 / LEAGUE_AVG_PACE, 1),
+                            "PACE":       LEAGUE_AVG_PACE,
+                            **({"W": int(w), "L": int(l)} if w is not None and l is not None else {}),
+                        }
+        if out:
+            logging.info(f"NBA CDN standings loaded: {len(out)} teams")
+        else:
+            logging.warning(f"NBA CDN standings: no PPG data found. Sample: {str(data)[:300]}")
+        return out
+    except Exception as e:
+        logging.warning(f"NBA CDN standings failed: {type(e).__name__}: {e}")
         return {}
 
-    out: dict[str, dict] = {}
+
+def _to_float(v) -> float | None:
     try:
-        standings_obj = data.get("standings", {})
-        # ESPN returns either a flat entries list or groups with nested entries
-        # (conference-split view uses groups[].entries[])
-        raw_entries = standings_obj.get("entries", [])
-        if not raw_entries:
-            for group in standings_obj.get("groups", []):
-                raw_entries.extend(group.get("entries", []))
-
-        if not raw_entries:
-            # Log first 500 chars of response to diagnose structure
-            logging.warning(f"ESPN standings: no entries found. Keys: {list(standings_obj.keys())}. Response: {str(data)[:500]}")
-
-        for entry in raw_entries:
-            abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
-            if not abbr:
-                continue
-            stats_map = {s["name"]: s.get("value") for s in entry.get("stats", []) if "name" in s}
-            # ESPN uses avgPointsFor/avgPointsAgainst in standings stats
-            ppg  = stats_map.get("avgPointsFor")   or stats_map.get("pointsFor")
-            papg = stats_map.get("avgPointsAgainst") or stats_map.get("pointsAgainst")
-            if ppg is not None and papg is not None:
-                out[abbr] = {
-                    "OFF_RATING": round(ppg * 100 / LEAGUE_AVG_PACE, 1),
-                    "DEF_RATING": round(papg * 100 / LEAGUE_AVG_PACE, 1),
-                    "PACE":       LEAGUE_AVG_PACE,
-                }
-    except Exception as e:
-        logging.warning(f"ESPN standings parse failed: {e}")
-
-    if out:
-        logging.info(f"ESPN standings: loaded {len(out)} teams (PPG/PAPG as efficiency proxy)")
-    return out
+        return float(v) if v is not None and v != "" else None
+    except (ValueError, TypeError):
+        return None
 
 
 async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
@@ -394,13 +439,19 @@ async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
             cache_set("nba_team_stats", merged, ttl=1800)
             return merged
 
-    # ── Fallback: ESPN standings (real live data, always reachable)
+    # ── Fallback 1: ESPN standings (multiple URL patterns tried)
     espn_stats = await _fetch_espn_team_stats(client)
     if espn_stats:
         cache_set("nba_team_stats", espn_stats, ttl=900)
         return espn_stats
 
-    logging.warning("Both NBA Stats API and ESPN standings unavailable — simulation disabled")
+    # ── Fallback 2: NBA CDN mobile standings (bypasses stats.nba.com blocks)
+    cdn_stats = await _fetch_nba_cdn_team_stats(client)
+    if cdn_stats:
+        cache_set("nba_team_stats", cdn_stats, ttl=900)
+        return cdn_stats
+
+    logging.warning("All team stats sources unavailable (NBA Stats API, ESPN, NBA CDN) — simulation disabled")
     return {}
 
 
@@ -736,13 +787,43 @@ async def validate_with_claude(
         except Exception:
             confidence = 3
 
+        claude_bet = _ex("DUBL_BET")
+        claude_ou  = _ex("DUBL_OU")
+
+        # ── Sanity check: if Claude's own pick is the same team/direction as
+        # Gemini's, it implicitly agrees — override any spurious NO.
+        gemini_team = (gemini_analysis.get("bet_team") or "").upper()
+        if not agree_bet and gemini_team and claude_bet:
+            if gemini_team in claude_bet.upper():
+                agree_bet = True
+                logging.info(f"Dubl check: forced AGREE — same team ({gemini_team}) in DUBL_BET")
+
+        # Check O/U direction alignment (OVER/UNDER)
+        gemini_ou_dir = (gemini_ou or "").upper()[:5]  # "OVER " or "UNDER"
+        if not agree_ou and gemini_ou_dir and claude_ou:
+            if gemini_ou_dir.strip() in claude_ou.upper():
+                agree_ou = True
+
+        # Strip residual "limited data / context" caveats from reasoning
+        _CAVEAT_PATTERNS = [
+            r'\blive scoring context limits[\w\s,]+\.',
+            r'\bwithout (?:current|live|real-?time)[^.]*\.',
+            r'\black(?:ing)? (?:current|live|real-?time)[^.]*\.',
+            r'\bdata (?:limitations?|unavailable)[^.]*\.',
+            r'\b(?:limited|sparse|missing) (?:context|data|stats)[^.]*\.',
+        ]
+        reasoning = _ex("REASONING") or ""
+        for pat in _CAVEAT_PATTERNS:
+            reasoning = re.sub(pat, '', reasoning, flags=re.IGNORECASE).strip()
+        reasoning = reasoning or None
+
         return {
             "agree_bet":  agree_bet,
             "agree_ou":   agree_ou,
-            "claude_bet": _ex("DUBL_BET"),
-            "claude_ou":  _ex("DUBL_OU"),
+            "claude_bet": claude_bet,
+            "claude_ou":  claude_ou,
             "confidence": confidence,
-            "reasoning":  _ex("REASONING"),
+            "reasoning":  reasoning,
         }
     except Exception as e:
         logging.warning(f"Dubl check validation failed: {e!r}")

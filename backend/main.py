@@ -587,10 +587,10 @@ async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[
             if open_aml:
                 g["espn_opening_awayOdds"] = str(open_aml)
 
-            # Opening spread (home perspective)
+            # Opening spread — store just the numeric value (home perspective)
             open_spread_line = ps.get("home", {}).get("open", {}).get("line")
             if open_spread_line is not None:
-                g["espn_opening_spread"] = f"{home_abbr} {open_spread_line}"
+                g["espn_opening_spread"] = str(open_spread_line)
 
             # Opening total
             open_total = tot.get("over", {}).get("open", {}).get("line", "")

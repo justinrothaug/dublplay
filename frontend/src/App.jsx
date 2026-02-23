@@ -203,15 +203,16 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 }
 
 function lineMovement(current, opening) {
-  if (!current || !opening || current === opening) return null;
-  // Extract numeric part (handles "DET -3.5" → -3.5, "232.5" → 232.5, "-110" → -110)
+  if (!current || !opening) return null;
   const numOf = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
   const c = numOf(current), o = numOf(opening);
   if (c === null || o === null || c === o) return null;
   const diff = c - o;
   const arrow = diff > 0 ? "\u2191" : "\u2193";
   const color = diff > 0 ? "#4ade80" : "#f87171";
-  return { text: `${arrow} opened ${opening}`, color };
+  // For spreads: show opening value with same team as current (e.g. "DET -1.5" + opening "-2.5" → "opened -2.5")
+  const openLabel = String(opening).replace(/^[A-Z]{2,4}\s*/, ""); // strip team abbr if any
+  return { text: `${arrow} opened ${openLabel}`, color };
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import logging
 import pathlib
 import time
 import asyncio
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -24,6 +25,8 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 # ── FIREBASE / FIRESTORE ───────────────────────────────────────────────────────
 try:
@@ -331,6 +334,479 @@ async def fetch_team_rest_days(
 
     cache_set(cache_key, rest, ttl=3600)
     return rest
+
+
+# ── MONTE CARLO SIMULATION ENGINE ────────────────────────────────────────────
+
+def simulate_game(
+    home_off: float, home_def: float, home_pace: float,
+    away_off: float, away_def: float, away_pace: float,
+    home_rest: int | None = None,
+    away_rest: int | None = None,
+    n_sims: int = 10_000,
+) -> dict:
+    """
+    Run N Monte Carlo simulations of an NBA game using team ratings.
+    Returns projected scores, spread, total, win %, and evaluation vs lines.
+    """
+    LEAGUE_AVG = 112.3  # ~2024-25 NBA league-average rating
+    HCA = 2.5           # home-court advantage in points
+    SCORE_STD = 12.0    # game-to-game scoring standard deviation
+
+    # Estimated possessions (average of both teams' pace)
+    poss = np.random.normal((home_pace + away_pace) / 2, 2.5, n_sims)
+
+    # Expected points per 100 possessions (adjusted for opponent)
+    home_exp = (home_off + away_def - LEAGUE_AVG) / 100
+    away_exp = (away_off + home_def - LEAGUE_AVG) / 100
+
+    # Simulate scores
+    home_scores = poss * home_exp + HCA / 2 + np.random.normal(0, SCORE_STD, n_sims)
+    away_scores = poss * away_exp - HCA / 2 + np.random.normal(0, SCORE_STD, n_sims)
+
+    # Rest adjustments
+    if home_rest == 0:     # back-to-back
+        home_scores -= 2.0
+    elif home_rest is not None and home_rest >= 3:
+        home_scores += 1.0
+    if away_rest == 0:
+        away_scores -= 2.0
+    elif away_rest is not None and away_rest >= 3:
+        away_scores += 1.0
+
+    margin = home_scores - away_scores  # positive = home wins
+    total = home_scores + away_scores
+
+    return {
+        "projected_home_score": round(float(np.mean(home_scores)), 1),
+        "projected_away_score": round(float(np.mean(away_scores)), 1),
+        "projected_total": round(float(np.mean(total)), 1),
+        "projected_spread": round(float(np.mean(margin)), 1),  # negative = away favored
+        "home_win_pct": round(float(np.mean(margin > 0)) * 100, 1),
+        "away_win_pct": round(float(np.mean(margin < 0)) * 100, 1),
+        "total_std": round(float(np.std(total)), 1),
+        "margin_std": round(float(np.std(margin)), 1),
+        "_margin": margin,  # raw array for line evaluation
+        "_total": total,
+    }
+
+
+def evaluate_sim_vs_lines(
+    sim: dict,
+    spread_line: str | None,
+    ou_line: str | None,
+    home_abbr: str,
+    away_abbr: str,
+) -> dict:
+    """
+    Compare simulation results against actual betting lines.
+    Returns cover percentages and edge calculations.
+    """
+    margin = sim["_margin"]
+    total = sim["_total"]
+    result = {
+        "projected_home_score": sim["projected_home_score"],
+        "projected_away_score": sim["projected_away_score"],
+        "projected_total": sim["projected_total"],
+        "projected_spread": sim["projected_spread"],
+        "home_win_pct": sim["home_win_pct"],
+        "away_win_pct": sim["away_win_pct"],
+    }
+
+    # Evaluate vs spread line (e.g. "BOS -5.5" means home=-5.5 or away=+5.5)
+    if spread_line and spread_line != "N/A":
+        m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', spread_line)
+        if m:
+            fav_abbr = m.group(1)
+            line_val = float(m.group(2))
+            # Convert to home perspective
+            if fav_abbr == home_abbr:
+                home_line = line_val  # e.g. -5.5 (home needs to win by 6+)
+            else:
+                home_line = -line_val  # flip: away -5.5 → home +5.5
+            # Home covers when margin > -home_line (if home_line is -5.5, margin > 5.5)
+            home_cover_pct = round(float(np.mean(margin + home_line > 0)) * 100, 1)
+            away_cover_pct = round(100.0 - home_cover_pct, 1)
+            # Edge = sim cover% - implied 50% (break-even at -110)
+            result["spread_analysis"] = {
+                "line": spread_line,
+                "home_cover_pct": home_cover_pct,
+                "away_cover_pct": away_cover_pct,
+                "home_edge": round(home_cover_pct - 52.4, 1),  # 52.4% = break-even at -110
+                "away_edge": round(away_cover_pct - 52.4, 1),
+                "pick": f"{home_abbr} covers" if home_cover_pct > 52.4 else f"{away_abbr} covers",
+            }
+
+    # Evaluate vs O/U line
+    if ou_line and ou_line != "N/A":
+        try:
+            ou_val = float(ou_line)
+            over_pct = round(float(np.mean(total > ou_val)) * 100, 1)
+            under_pct = round(100.0 - over_pct, 1)
+            result["ou_analysis"] = {
+                "line": ou_val,
+                "over_pct": over_pct,
+                "under_pct": under_pct,
+                "over_edge": round(over_pct - 52.4, 1),
+                "under_edge": round(under_pct - 52.4, 1),
+                "pick": f"OVER {ou_val}" if over_pct > 52.4 else f"UNDER {ou_val}",
+            }
+        except ValueError:
+            pass
+
+    # ML edge: compare sim win% to implied probability from odds
+    result["ml_analysis"] = {
+        "home_win_pct": sim["home_win_pct"],
+        "away_win_pct": sim["away_win_pct"],
+    }
+
+    return result
+
+
+def run_simulation_for_game(
+    game: dict,
+    team_stats: dict,
+    rest_days: dict,
+    spread_line: str | None = None,
+    ou_line: str | None = None,
+) -> dict | None:
+    """Run full simulation pipeline for a single game."""
+    home_stats = team_stats.get(game["home"], {})
+    away_stats = team_stats.get(game["away"], {})
+
+    # Need at minimum offensive/defensive ratings and pace
+    if not all(k in home_stats for k in ("OFF_RATING", "DEF_RATING", "PACE")):
+        return None
+    if not all(k in away_stats for k in ("OFF_RATING", "DEF_RATING", "PACE")):
+        return None
+
+    sim = simulate_game(
+        home_off=home_stats["OFF_RATING"],
+        home_def=home_stats["DEF_RATING"],
+        home_pace=home_stats["PACE"],
+        away_off=away_stats["OFF_RATING"],
+        away_def=away_stats["DEF_RATING"],
+        away_pace=away_stats["PACE"],
+        home_rest=rest_days.get(game["home"]),
+        away_rest=rest_days.get(game["away"]),
+    )
+
+    return evaluate_sim_vs_lines(
+        sim, spread_line, ou_line,
+        home_abbr=game["home"], away_abbr=game["away"],
+    )
+
+
+# ── CLAUDE JUDGE / VALIDATOR ─────────────────────────────────────────────────
+
+async def validate_with_claude(
+    client: httpx.AsyncClient,
+    game: dict,
+    gemini_analysis: dict,
+    sim_results: dict | None,
+    team_stats: dict,
+    rest_days: dict,
+    injuries: set,
+) -> dict | None:
+    """
+    Send game context + Gemini's pick to Claude for independent validation.
+    Returns Claude's agreement level and its own pick.
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    home = game["home"]
+    away = game["away"]
+    home_s = team_stats.get(home, {})
+    away_s = team_stats.get(away, {})
+
+    # Build context block
+    context_parts = [f"Game: {game.get('awayName','?')} @ {game.get('homeName','?')}"]
+    for abbr, stats in [(away, away_s), (home, home_s)]:
+        if stats:
+            parts = []
+            if stats.get("OFF_RATING") is not None:
+                parts.append(f"oRtg {stats['OFF_RATING']:.1f}")
+            if stats.get("DEF_RATING") is not None:
+                parts.append(f"dRtg {stats['DEF_RATING']:.1f}")
+            if stats.get("PACE") is not None:
+                parts.append(f"pace {stats['PACE']:.1f}")
+            w, l = stats.get("W"), stats.get("L")
+            if w is not None and l is not None:
+                parts.append(f"L10 {int(w)}-{int(l)}")
+            rd = rest_days.get(abbr)
+            if rd is not None:
+                parts.append("B2B" if rd == 0 else f"{rd}d rest")
+            if parts:
+                context_parts.append(f"{abbr}: {', '.join(parts)}")
+
+    if injuries:
+        relevant = [p for p in injuries if len(p.split()) >= 2][:6]
+        if relevant:
+            context_parts.append(f"Key injuries OUT: {', '.join(relevant)}")
+
+    sim_block = ""
+    if sim_results:
+        sim_block = (
+            f"\nMonte Carlo Simulation (10,000 runs):"
+            f"\n  Projected: {away} {sim_results['projected_away_score']} - {home} {sim_results['projected_home_score']}"
+            f"\n  Projected total: {sim_results['projected_total']}"
+            f"\n  Home win: {sim_results['home_win_pct']}%"
+        )
+        if "spread_analysis" in sim_results:
+            sa = sim_results["spread_analysis"]
+            sim_block += f"\n  Spread {sa['line']}: home cover {sa['home_cover_pct']}%, away cover {sa['away_cover_pct']}%"
+        if "ou_analysis" in sim_results:
+            oa = sim_results["ou_analysis"]
+            sim_block += f"\n  O/U {oa['line']}: over {oa['over_pct']}%, under {oa['under_pct']}%"
+
+    gemini_bet = gemini_analysis.get("best_bet", "None")
+    gemini_ou = gemini_analysis.get("ou", "None")
+
+    prompt = (
+        f"{chr(10).join(context_parts)}\n{sim_block}\n\n"
+        f"Gemini's picks:\n"
+        f"  BEST BET: {gemini_bet}\n"
+        f"  O/U LEAN: {gemini_ou}\n\n"
+        "You are an independent NBA betting analyst. Evaluate Gemini's picks.\n"
+        "Respond with EXACTLY these lines:\n"
+        f"AGREE_BET: [YES or NO]\n"
+        f"CLAUDE_BET: [Your own best bet pick — same format: TEAM LINE — 1 sentence reason]\n"
+        f"AGREE_OU: [YES or NO]\n"
+        f"CLAUDE_OU: [Your own O/U pick — OVER/UNDER X.X — 1 sentence reason]\n"
+        f"CONFIDENCE: [1-5 integer — how confident are you in Gemini's picks overall]\n"
+        f"REASONING: [1-2 sentences on why you agree or disagree]"
+    )
+
+    try:
+        resp = await client.post(
+            ANTHROPIC_URL,
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 400,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
+        data = resp.json()
+        if "error" in data:
+            logging.warning(f"Claude validation error: {data['error']}")
+            return None
+        text = data["content"][0]["text"]
+
+        def _ex(marker):
+            m = re.search(rf'{marker}:\s*(.*?)(?=AGREE_BET:|CLAUDE_BET:|AGREE_OU:|CLAUDE_OU:|CONFIDENCE:|REASONING:|$)', text, re.DOTALL | re.IGNORECASE)
+            return m.group(1).strip() if m else None
+
+        agree_bet = (_ex("AGREE_BET") or "").upper().startswith("YES")
+        agree_ou = (_ex("AGREE_OU") or "").upper().startswith("YES")
+        confidence_raw = _ex("CONFIDENCE")
+        try:
+            confidence = min(5, max(1, int(re.search(r'\d+', confidence_raw or "3").group())))
+        except Exception:
+            confidence = 3
+
+        return {
+            "agree_bet": agree_bet,
+            "agree_ou": agree_ou,
+            "claude_bet": _ex("CLAUDE_BET"),
+            "claude_ou": _ex("CLAUDE_OU"),
+            "confidence": confidence,
+            "reasoning": _ex("REASONING"),
+            "consensus_bet": "high" if agree_bet else "low",
+            "consensus_ou": "high" if agree_ou else "low",
+        }
+    except Exception as e:
+        logging.warning(f"Claude validation failed: {e!r}")
+        return None
+
+
+# ── FIRESTORE PICK TRACKING ──────────────────────────────────────────────────
+
+def _save_pick_record(
+    game: dict,
+    gemini_analysis: dict,
+    sim_results: dict | None,
+    claude_validation: dict | None,
+    date_str: str,
+) -> None:
+    """Save a pick record to Firestore for tracking accuracy over time."""
+    db = _init_firestore()
+    if not db:
+        return
+
+    game_id = game.get("id", "unknown")
+    doc_id = f"{date_str}_{game_id}"
+
+    # Determine consensus level
+    consensus = "gemini_only"
+    if claude_validation:
+        both_agree = claude_validation.get("agree_bet") and claude_validation.get("agree_ou")
+        one_agrees = claude_validation.get("agree_bet") or claude_validation.get("agree_ou")
+        consensus = "high" if both_agree else "medium" if one_agrees else "low"
+
+    record = {
+        "date": date_str,
+        "game_id": game_id,
+        "home": game.get("home"),
+        "away": game.get("away"),
+        "home_name": game.get("homeName"),
+        "away_name": game.get("awayName"),
+        "status": game.get("status"),
+
+        # Gemini picks
+        "gemini_best_bet": gemini_analysis.get("best_bet"),
+        "gemini_bet_team": gemini_analysis.get("bet_team"),
+        "gemini_bet_is_spread": gemini_analysis.get("bet_is_spread"),
+        "gemini_ou": gemini_analysis.get("ou"),
+        "gemini_dubl_score_bet": gemini_analysis.get("dubl_score_bet"),
+        "gemini_dubl_score_ou": gemini_analysis.get("dubl_score_ou"),
+
+        # Lines at time of pick
+        "lines": gemini_analysis.get("lines"),
+
+        # Simulation results
+        "sim": {k: v for k, v in (sim_results or {}).items() if not k.startswith("_")} or None,
+
+        # Claude validation
+        "claude": claude_validation,
+        "consensus": consensus,
+
+        # Results — filled in later by grading task
+        "result_bet": None,  # "win" | "loss" | "push"
+        "result_ou": None,
+        "home_final_score": None,
+        "away_final_score": None,
+
+        "created_at": fb_firestore.SERVER_TIMESTAMP if _FIREBASE_AVAILABLE else datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        db.collection("pick_history").document(doc_id).set(record, merge=True)
+        logging.info(f"Saved pick record: {doc_id} (consensus: {consensus})")
+    except Exception as e:
+        logging.warning(f"Failed to save pick record: {e}")
+
+
+async def _grade_picks_for_date(date_str: str) -> dict:
+    """
+    Check final scores for a date and grade all picks.
+    Returns summary stats.
+    """
+    db = _init_firestore()
+    if not db:
+        return {"error": "Firestore not available"}
+
+    # Get final scores from ESPN
+    async with httpx.AsyncClient() as client:
+        games = await fetch_espn_games(client, date_str)
+
+    final_games = {g["id"]: g for g in games if g.get("status") == "final"}
+    if not final_games:
+        return {"graded": 0, "message": "No final games found"}
+
+    # Get all pick records for this date
+    try:
+        docs = db.collection("pick_history").where("date", "==", date_str).stream()
+    except Exception as e:
+        return {"error": str(e)}
+
+    graded = 0
+    wins = losses = pushes = 0
+
+    for doc in docs:
+        data = doc.to_dict()
+        game_id = data.get("game_id")
+        if game_id not in final_games:
+            continue
+        if data.get("result_bet") is not None:
+            # Already graded — still count for stats
+            if data["result_bet"] == "win":
+                wins += 1
+            elif data["result_bet"] == "loss":
+                losses += 1
+            else:
+                pushes += 1
+            graded += 1
+            continue
+
+        fg = final_games[game_id]
+        home_score = fg.get("homeScore", 0)
+        away_score = fg.get("awayScore", 0)
+        updates = {
+            "home_final_score": home_score,
+            "away_final_score": away_score,
+            "status": "final",
+        }
+
+        # Grade best bet
+        bet_team = data.get("gemini_bet_team")
+        is_spread = data.get("gemini_bet_is_spread", False)
+        lines = data.get("lines") or {}
+
+        if bet_team and is_spread and lines.get("spread"):
+            m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', lines["spread"])
+            if m:
+                fav_abbr = m.group(1)
+                line_val = abs(float(m.group(2)))
+                fav_score = home_score if fav_abbr == fg["home"] else away_score
+                dog_score = away_score if fav_abbr == fg["home"] else home_score
+                actual_margin = fav_score - dog_score
+                betting_fav = bet_team == fav_abbr
+                if actual_margin > line_val:
+                    updates["result_bet"] = "win" if betting_fav else "loss"
+                elif actual_margin < line_val:
+                    updates["result_bet"] = "loss" if betting_fav else "win"
+                else:
+                    updates["result_bet"] = "push"
+        elif bet_team:
+            winner = fg["home"] if home_score > away_score else fg["away"]
+            updates["result_bet"] = "win" if bet_team == winner else "loss"
+
+        # Grade O/U
+        gemini_ou = data.get("gemini_ou", "")
+        ou_line_val = None
+        if lines.get("ou"):
+            try:
+                ou_line_val = float(lines["ou"])
+            except ValueError:
+                pass
+        if gemini_ou and ou_line_val is not None:
+            combined = home_score + away_score
+            leaned_over = bool(re.search(r'\bover\b', gemini_ou, re.IGNORECASE))
+            if combined > ou_line_val:
+                updates["result_ou"] = "win" if leaned_over else "loss"
+            elif combined < ou_line_val:
+                updates["result_ou"] = "loss" if leaned_over else "win"
+            else:
+                updates["result_ou"] = "push"
+
+        try:
+            doc.reference.update(updates)
+        except Exception as e:
+            logging.warning(f"Failed to grade pick {doc.id}: {e}")
+            continue
+
+        if updates.get("result_bet") == "win":
+            wins += 1
+        elif updates.get("result_bet") == "loss":
+            losses += 1
+        elif updates.get("result_bet") == "push":
+            pushes += 1
+        graded += 1
+
+    return {
+        "graded": graded,
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "win_rate": round(wins / (wins + losses) * 100, 1) if (wins + losses) > 0 else None,
+    }
 
 
 async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
@@ -1376,6 +1852,36 @@ async def analyze_game(req: AnalyzeRequest):
     away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
     home_ml   = game.get("espn_homeOdds") or sticky.get("homeOdds") or "N/A"
 
+    # ── Run Monte Carlo simulation (pre-game only — live stats change too fast)
+    sim_results = None
+    sim_block = ""
+    if not is_live and team_stats:
+        sim_results = run_simulation_for_game(
+            game, team_stats, rest_days,
+            spread_line=spread_ln, ou_line=ou_line,
+        )
+        if sim_results:
+            sim_block = (
+                f"\n\nMONTE CARLO SIMULATION (10,000 runs):\n"
+                f"  Projected score: {game['away']} {sim_results['projected_away_score']} — {game['home']} {sim_results['projected_home_score']}\n"
+                f"  Projected total: {sim_results['projected_total']}\n"
+                f"  Win probability: {game['home']} {sim_results['home_win_pct']}% / {game['away']} {sim_results['away_win_pct']}%"
+            )
+            if "spread_analysis" in sim_results:
+                sa = sim_results["spread_analysis"]
+                sim_block += f"\n  Spread {sa['line']}: {game['home']} covers {sa['home_cover_pct']}% / {game['away']} covers {sa['away_cover_pct']}%"
+                if sa.get("home_edge") and abs(sa["home_edge"]) >= 2:
+                    sim_block += f" → SIM EDGE: {sa['pick']} ({'+' if sa.get('home_edge',0)>0 else ''}{sa.get('home_edge',0)}% vs break-even)"
+            if "ou_analysis" in sim_results:
+                oa = sim_results["ou_analysis"]
+                sim_block += f"\n  O/U {oa['line']}: over {oa['over_pct']}% / under {oa['under_pct']}%"
+                if abs(oa.get("over_edge", 0)) >= 2:
+                    sim_block += f" → SIM EDGE: {oa['pick']} ({'+' if oa.get('over_edge',0)>0 else ''}{oa.get('over_edge',0)}% vs break-even)"
+            sim_block += (
+                "\nWEIGH the simulation edges heavily in your picks. "
+                "If the sim shows >55% cover rate for one side, FAVOR that side unless you have a strong reason not to."
+            )
+
     if is_live:
         prompt = (
             f"Live: {game['awayName']} {game.get('awayScore',0)} @ {game['homeName']} {game.get('homeScore',0)} "
@@ -1404,6 +1910,7 @@ async def analyze_game(req: AnalyzeRequest):
     else:
         prompt = (
             f"Pre-game: {game['awayName']} @ {game['homeName']}.\n"
+            f"{sim_block}\n"
             "Search for this game's current betting lines AND player prop lines.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
             f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
@@ -1412,10 +1919,12 @@ async def analyze_game(req: AnalyzeRequest):
             "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
             "Look at the AWAY_ML, HOME_ML, and SPREAD_LINE you already wrote above. Compare those exact prices: what is the ML price vs -110 spread juice, and how many points of protection does the spread actually give? Use those numbers to decide which is better value, then pick it. "
+            "ALSO consider the Monte Carlo simulation results above — if the sim shows a strong edge (>55%), weight it heavily. "
             "Format: 'TEAM LINE — 2-sentence reason (matchup, recent form, pace, injury, schedule spot).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
-            "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
+            "OU_LEAN: [Use the OU_LINE you wrote above. Consider the simulation projected total. "
+            "Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs price. Heavy favorite (-500+) scores lower.]\n"
             "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
@@ -1430,7 +1939,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
+                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.5},
             },
             timeout=30,
         )
@@ -1440,6 +1949,21 @@ async def analyze_game(req: AnalyzeRequest):
     parts = data["candidates"][0]["content"]["parts"]
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
     analysis = parse_gemini_analysis(text)
+
+    # ── Run Claude judge in parallel with persisting odds (non-blocking)
+    claude_result = None
+    async with httpx.AsyncClient() as client:
+        claude_result = await validate_with_claude(
+            client, game, analysis, sim_results,
+            team_stats, rest_days, injuries,
+        )
+
+    # Merge Claude + sim into analysis response
+    if claude_result:
+        analysis["claude"] = claude_result
+    if sim_results:
+        # Strip numpy arrays before sending to frontend
+        analysis["sim"] = {k: v for k, v in sim_results.items() if not k.startswith("_")}
 
     # Persist any lines Gemini found back to sticky so /api/games shows real win prob
     lines = analysis.get("lines") or {}
@@ -1453,6 +1977,9 @@ async def analyze_game(req: AnalyzeRequest):
         }.items() if v}
         _sticky_odds[base_game_id] = {**_sticky_odds.get(base_game_id, {}), **entry}
         _save_odds_to_firestore(date_str, _sticky_odds)
+
+    # ── Save pick record to Firestore for tracking
+    _save_pick_record(game, analysis, sim_results, claude_result, today_date)
 
     return {"analysis": analysis}
 
@@ -1498,9 +2025,72 @@ async def chat(req: ChatRequest):
     return {"reply": text}
 
 
+@app.get("/api/pick-history")
+async def get_pick_history(date: Optional[str] = None, days: int = 7):
+    """
+    Get pick history and accuracy stats.
+    ?date=YYYYMMDD for a specific date, or ?days=7 for last N days.
+    """
+    db = _init_firestore()
+    if not db:
+        return {"error": "Firestore not available", "picks": [], "stats": {}}
+
+    picks = []
+    try:
+        if date:
+            docs = db.collection("pick_history").where("date", "==", date).stream()
+        else:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+            docs = db.collection("pick_history").where("date", ">=", cutoff).stream()
+
+        for doc in docs:
+            d = doc.to_dict()
+            # Strip server timestamps for JSON serialization
+            if hasattr(d.get("created_at"), "isoformat"):
+                d["created_at"] = d["created_at"].isoformat()
+            picks.append(d)
+    except Exception as e:
+        return {"error": str(e), "picks": [], "stats": {}}
+
+    # Compute aggregate stats
+    total = len(picks)
+    bet_wins = sum(1 for p in picks if p.get("result_bet") == "win")
+    bet_losses = sum(1 for p in picks if p.get("result_bet") == "loss")
+    bet_pushes = sum(1 for p in picks if p.get("result_bet") == "push")
+    ou_wins = sum(1 for p in picks if p.get("result_ou") == "win")
+    ou_losses = sum(1 for p in picks if p.get("result_ou") == "loss")
+
+    # Consensus accuracy (high consensus picks only)
+    high_consensus = [p for p in picks if p.get("consensus") == "high"]
+    hc_wins = sum(1 for p in high_consensus if p.get("result_bet") == "win")
+    hc_losses = sum(1 for p in high_consensus if p.get("result_bet") == "loss")
+
+    stats = {
+        "total_picks": total,
+        "bet_record": f"{bet_wins}-{bet_losses}-{bet_pushes}",
+        "bet_win_rate": round(bet_wins / (bet_wins + bet_losses) * 100, 1) if (bet_wins + bet_losses) > 0 else None,
+        "ou_record": f"{ou_wins}-{ou_losses}",
+        "ou_win_rate": round(ou_wins / (ou_wins + ou_losses) * 100, 1) if (ou_wins + ou_losses) > 0 else None,
+        "high_consensus_record": f"{hc_wins}-{hc_losses}" if high_consensus else "N/A",
+        "high_consensus_win_rate": round(hc_wins / (hc_wins + hc_losses) * 100, 1) if (hc_wins + hc_losses) > 0 else None,
+        "graded": sum(1 for p in picks if p.get("result_bet") is not None),
+        "pending": sum(1 for p in picks if p.get("result_bet") is None),
+    }
+
+    return {"picks": picks, "stats": stats}
+
+
+@app.post("/api/grade-picks")
+async def grade_picks(date: Optional[str] = None):
+    """Grade all picks for a date (defaults to today). Call after games finish."""
+    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+    result = await _grade_picks_for_date(date_str)
+    return result
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
+    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY), "has_claude_key": bool(ANTHROPIC_API_KEY)}
 
 
 USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"

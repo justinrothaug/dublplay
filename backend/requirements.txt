@@ -5,3 +5,4 @@ pydantic==2.9.2
 python-multipart==0.0.9
 aiofiles==24.1.0
 firebase-admin==6.5.0
+numpy==1.26.4

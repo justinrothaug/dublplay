@@ -467,8 +467,38 @@ function LiveTrackBadge({ onTrack }) {
   );
 }
 
+function ConsensusBadge({ claude }) {
+  if (!claude) return null;
+  const bothAgree = claude.agree_bet && claude.agree_ou;
+  const oneAgrees = claude.agree_bet || claude.agree_ou;
+  const level = bothAgree ? "high" : oneAgrees ? "medium" : "low";
+  const label = bothAgree ? "HIGH CONSENSUS" : oneAgrees ? "SPLIT CONSENSUS" : "LOW CONSENSUS";
+  const color = bothAgree ? T.green : oneAgrees ? T.gold : T.red;
+  return (
+    <span style={{
+      fontSize:7, fontWeight:800, letterSpacing:"0.06em",
+      color, background:`${color}18`, border:`1px solid ${color}44`,
+      borderRadius:4, padding:"2px 6px",
+    }}>{label}</span>
+  );
+}
+
+function SimBar({ label, pct, color }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:2 }}>
+      <span style={{ fontSize:8, color:"#8a7a6a", width:55, flexShrink:0, fontWeight:600 }}>{label}</span>
+      <div style={{ flex:1, height:6, borderRadius:3, background:"rgba(0,0,0,0.08)", overflow:"hidden" }}>
+        <div style={{ height:"100%", width:`${Math.min(pct,100)}%`, background: pct > 52.4 ? T.green : pct > 47.6 ? T.gold : T.red, borderRadius:3, transition:"width 0.4s" }} />
+      </div>
+      <span style={{ fontSize:9, fontWeight:700, color: pct > 52.4 ? "#2a6e14" : pct > 47.6 ? "#8a6a20" : "#8a2020", width:32, textAlign:"right" }}>{pct}%</span>
+    </div>
+  );
+}
+
 function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite }) {
   if (!analysis) return null;
+  const [showSim, setShowSim] = useState(false);
+  const [showClaude, setShowClaude] = useState(false);
 
   // Live tracking computed from scores (no AI needed)
   const pace = (isLive && game) ? calcLivePace(game) : null;
@@ -485,6 +515,9 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
     betMargin = ourScore - oppScore;
   }
 
+  const sim = analysis.sim;
+  const claude = analysis.claude;
+
   const items = [
     { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
     { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
@@ -496,11 +529,43 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 
   return (
     <div style={{ background:"#f4ede1", padding:"12px 16px 14px", flex:1 }}>
-      <div style={{ marginBottom:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10, flexWrap:"wrap" }}>
         <span style={{ fontSize:9, color:"#a09078", letterSpacing:"0.1em", fontWeight:700 }}>
           dublplay analysis
         </span>
+        <ConsensusBadge claude={claude} />
       </div>
+
+      {/* Simulation results (collapsible) */}
+      {sim && (
+        <div style={{ marginBottom:8 }}>
+          <div
+            onClick={() => setShowSim(s => !s)}
+            style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", marginBottom: showSim ? 6 : 0, WebkitTapHighlightColor:"transparent" }}
+          >
+            <span style={{ fontSize:8, color:"#6a8a5a", fontWeight:800, letterSpacing:"0.08em" }}>SIMULATION</span>
+            <span style={{ fontSize:9, color:"#6a8a5a", fontWeight:700 }}>
+              {game?.away} {sim.projected_away_score} — {game?.home} {sim.projected_home_score}
+            </span>
+            <span style={{ fontSize:8, color:"#a09078", marginLeft:"auto" }}>{showSim ? "▲" : "▼"}</span>
+          </div>
+          {showSim && (
+            <div style={{ background:"rgba(0,0,0,0.04)", borderRadius:8, padding:"8px 10px", marginBottom:4 }}>
+              <div style={{ fontSize:9, color:"#6a5a4a", marginBottom:6 }}>
+                Projected total: <strong>{sim.projected_total}</strong> · Win: {game?.home} {sim.home_win_pct}% / {game?.away} {sim.away_win_pct}%
+              </div>
+              {sim.spread_analysis && (
+                <SimBar label="SPR CVR" pct={sim.spread_analysis.home_cover_pct > sim.spread_analysis.away_cover_pct ? sim.spread_analysis.home_cover_pct : sim.spread_analysis.away_cover_pct} color={T.green} />
+              )}
+              {sim.ou_analysis && (
+                <SimBar label={sim.ou_analysis.over_pct > sim.ou_analysis.under_pct ? "OVER" : "UNDER"} pct={sim.ou_analysis.over_pct > sim.ou_analysis.under_pct ? sim.ou_analysis.over_pct : sim.ou_analysis.under_pct} color={T.gold} />
+              )}
+              <div style={{ fontSize:8, color:"#a09078", marginTop:4 }}>10,000 Monte Carlo simulations using team ratings + pace + rest</div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ display:"flex", flexDirection:"column" }}>
         {items.length === 0 && loading && (
           <span style={{ fontSize:11, color:"#9a8a7a", lineHeight:1.6 }}>
@@ -529,12 +594,24 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
         {items.map((item, i) => {
           const pickId = game ? `${game.id}-${item.type}` : null;
           const isFav = pickId ? (favorites?.has(pickId) ?? false) : false;
+          // Claude agreement badge for this specific pick
+          const claudeAgrees = item.isBet ? claude?.agree_bet : item.isOu ? claude?.agree_ou : null;
           return (
           <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start", paddingTop: i > 0 ? 10 : 0, marginTop: i > 0 ? 10 : 0, borderTop: i > 0 ? "1px solid rgba(0,0,0,0.07)" : "none" }}>
             <span style={{ color:item.color, fontSize:10, marginTop:1, flexShrink:0 }}>{item.icon}</span>
             <div style={{ flex:1 }}>
               <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:3 }}>
                 <span style={{ fontSize:9, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
+                {/* Claude agree/disagree badge */}
+                {claudeAgrees !== null && claudeAgrees !== undefined && (
+                  <span style={{
+                    fontSize:7, fontWeight:800, letterSpacing:"0.06em",
+                    color: claudeAgrees ? "#2a6e14" : "#8a2020",
+                    background: claudeAgrees ? "rgba(42,110,20,0.1)" : "rgba(138,32,32,0.1)",
+                    border: `1px solid ${claudeAgrees ? "rgba(42,110,20,0.25)" : "rgba(138,32,32,0.25)"}`,
+                    borderRadius:3, padding:"1px 5px",
+                  }}>{claudeAgrees ? "CLAUDE AGREES" : "CLAUDE DISAGREES"}</span>
+                )}
                 {/* O/U on-track badge */}
                 {item.isOu && isLive && ouOnTrack !== null && (
                   <LiveTrackBadge onTrack={ouOnTrack} />
@@ -583,6 +660,36 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
           );
         })}
       </div>
+
+      {/* Claude's take (collapsible, only if Claude disagrees on something) */}
+      {claude && (!claude.agree_bet || !claude.agree_ou) && (
+        <div style={{ marginTop:8, paddingTop:8, borderTop:"1px solid rgba(0,0,0,0.07)" }}>
+          <div
+            onClick={() => setShowClaude(s => !s)}
+            style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", WebkitTapHighlightColor:"transparent" }}
+          >
+            <span style={{ fontSize:8, color:"#6a5a8a", fontWeight:800, letterSpacing:"0.08em" }}>CLAUDE'S TAKE</span>
+            <span style={{ fontSize:8, color:"#a09078", marginLeft:"auto" }}>{showClaude ? "▲" : "▼"}</span>
+          </div>
+          {showClaude && (
+            <div style={{ background:"rgba(106,90,138,0.06)", borderRadius:8, padding:"8px 10px", marginTop:4 }}>
+              {claude.claude_bet && !claude.agree_bet && (
+                <div style={{ fontSize:10, color:"#4a3a2e", marginBottom:4 }}>
+                  <strong style={{ color:"#6a5a8a" }}>Bet:</strong> {claude.claude_bet}
+                </div>
+              )}
+              {claude.claude_ou && !claude.agree_ou && (
+                <div style={{ fontSize:10, color:"#4a3a2e", marginBottom:4 }}>
+                  <strong style={{ color:"#6a5a8a" }}>O/U:</strong> {claude.claude_ou}
+                </div>
+              )}
+              {claude.reasoning && (
+                <div style={{ fontSize:9, color:"#8a7a6a", lineHeight:1.5 }}>{claude.reasoning}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -273,6 +273,7 @@ async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
         )
     except Exception as e:
         logging.warning(f"NBA Stats API fetch failed: {e}")
+        cache_set("nba_team_stats", {}, ttl=300)  # cache failure for 5 min so we stop hammering
         return {}
 
     def _parse(resp, *fields):
@@ -1217,18 +1218,26 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         '"edge_score":4.2,"matchup":"LAL @ GSW","reason":"Brief reason"}'
     )
 
-    # Build set of team abbreviations playing today for post-parse filtering
+    # Build matchup list + team set for the prompt so Gemini uses correct abbreviations
     playing_teams: set[str] = set()
+    matchup_lines: list[str] = []
     for g in games:
-        if g.get("away"):
-            playing_teams.add(g["away"].upper())
-        if g.get("home"):
-            playing_teams.add(g["home"].upper())
+        away = g.get("away", "").upper()
+        home = g.get("home", "").upper()
+        if away:
+            playing_teams.add(away)
+        if home:
+            playing_teams.add(home)
+        if away and home:
+            matchup_lines.append(f"{g.get('awayName', away)} ({away}) @ {g.get('homeName', home)} ({home})")
+
+    games_block = "\n".join(matchup_lines) if matchup_lines else "Check today's NBA schedule"
 
     prompt = (
-        f"Search for NBA player props available right now on DraftKings or FanDuel for {today_str}. "
-        f"Return the top 50 props, with at least 5 props per game being played today. "
-        "Only include players actually playing today. "
+        f"Search for NBA player props available right now on DraftKings or FanDuel for {today_str}.\n"
+        f"Today's games:\n{games_block}\n\n"
+        f"Use ONLY these team abbreviations: {', '.join(sorted(playing_teams))}.\n"
+        f"Return the top 50 props, with at least 5 props per game. "
         "Only standard props: points, rebounds, assists, 3-pointers made, blocks, steals. "
         "Do not guess or make up any data — only return props you find in your search.\n\n"
         f"Return ONLY a raw JSON array. Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
@@ -1261,12 +1270,15 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         parts = data["candidates"][0]["content"]["parts"]
         text = " ".join(p.get("text", "") for p in parts if "text" in p)
         props = _parse_gemini_props_json(text)
+        # Normalize team abbreviations Gemini returned (e.g. "GS" → "GSW", "PHO" → "PHX")
+        for p in props:
+            p["team"] = norm_abbr(p.get("team", ""))
         if playing_teams:
             before = len(props)
-            props = [p for p in props if p.get("team", "").upper() in playing_teams]
+            props = [p for p in props if p["team"] in playing_teams]
             dropped = before - len(props)
             if dropped:
-                logging.warning(f"Dropped {dropped} props for teams not playing today")
+                logging.info(f"Filtered {dropped} props for teams not playing today")
         if props:
             logging.info(f"Gemini search-grounded props: got {len(props)} props")
             _gemini_props_cache = props

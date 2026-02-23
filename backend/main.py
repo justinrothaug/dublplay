@@ -248,207 +248,52 @@ def _save_sticky_odds() -> None:
     _save_odds_to_firestore(date_str, _sticky_odds)
 
 
-ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings"
-NBA_CDN_STANDINGS_URL = "https://cdn.nba.com/static/json/liveData/standings/standings_todaysDate.json"
-
-# Persistent fallback: last successful team stats kept in memory across cache expirations
-_last_good_team_stats: dict[str, dict] = {}
-
-
-async def _fetch_nba_stats_api(client: httpx.AsyncClient) -> dict[str, dict]:
+async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
     """
-    Source 1: NBA Stats API — full advanced stats (offRtg, defRtg, pace) + last-10 record.
-    Retries up to 3 times with exponential backoff. Uses 20s timeout.
+    Fetch season advanced stats (offRtg, defRtg, pace) + last-10 record for all teams.
+    Cached for 30 minutes — season averages barely move day to day.
+    One attempt, 10s timeout. If it fails, return {} and move on.
     """
+    cached = cache_get("nba_team_stats")
+    if cached is not None:
+        return cached
+
     season = _current_nba_season()
     base_params = {
         "LeagueID": "00", "Season": season, "SeasonType": "Regular Season",
         "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
     }
 
+    try:
+        r_adv, r_l10 = await asyncio.gather(
+            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
+                       headers=NBA_STATS_HEADERS, timeout=10),
+            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Base", "LastNGames": 10},
+                       headers=NBA_STATS_HEADERS, timeout=10),
+        )
+    except Exception as e:
+        logging.warning(f"NBA Stats API fetch failed: {e}")
+        return {}
+
     def _parse(resp, *fields):
         try:
             rs = resp.json()["resultSets"][0]
-            hdrs, rows = rs["headers"], rs["rowSet"]
+            headers, rows = rs["headers"], rs["rowSet"]
         except Exception:
             return {}
         out = {}
         for row in rows:
-            d = dict(zip(hdrs, row))
+            d = dict(zip(headers, row))
             abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
             if abbr:
                 out[abbr] = {f: d.get(f) for f in fields}
         return out
 
-    for attempt in range(1, 4):
-        try:
-            r_adv, r_l10 = await asyncio.gather(
-                client.get(NBA_STATS_URL,
-                           params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
-                           headers=NBA_STATS_HEADERS, timeout=20),
-                client.get(NBA_STATS_URL,
-                           params={**base_params, "MeasureType": "Base", "LastNGames": 10},
-                           headers=NBA_STATS_HEADERS, timeout=20),
-            )
-            adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
-            l10 = _parse(r_l10, "W", "L")
-            if adv or l10:
-                merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
-                return merged
-            logging.warning(f"NBA Stats API attempt {attempt}: empty response")
-        except Exception as e:
-            logging.warning(f"NBA Stats API attempt {attempt}: {type(e).__name__}")
-        if attempt < 3:
-            await asyncio.sleep(2 * attempt)  # 2s, 4s backoff
-    return {}
-
-
-async def _fetch_espn_standings(client: httpx.AsyncClient) -> dict[str, dict]:
-    """
-    Source 2: ESPN standings API — win/loss records and conference data.
-    Lighter data than NBA Stats but very reliable.
-    """
-    for attempt in range(1, 3):
-        try:
-            r = await client.get(ESPN_STANDINGS_URL, timeout=15)
-            data = r.json()
-            result: dict[str, dict] = {}
-            for child in data.get("children", []):
-                for entry in child.get("standings", {}).get("entries", []):
-                    try:
-                        team_info = entry.get("team", {})
-                        abbr = norm_abbr(team_info.get("abbreviation", ""))
-                        if not abbr:
-                            continue
-                        stats_map = {}
-                        for s in entry.get("stats", []):
-                            stats_map[s.get("name", "")] = s.get("value", 0)
-                        wins = int(stats_map.get("wins", 0))
-                        losses = int(stats_map.get("losses", 0))
-                        result[abbr] = {"W": wins, "L": losses}
-                        # ESPN standings have avgPointsFor/avgPointsAgainst (PPG/OPPG)
-                        ppg = stats_map.get("avgPointsFor")
-                        oppg = stats_map.get("avgPointsAgainst")
-                        if ppg:
-                            result[abbr]["OFF_RATING"] = round(float(ppg), 1)
-                        if oppg:
-                            result[abbr]["DEF_RATING"] = round(float(oppg), 1)
-                    except Exception:
-                        continue
-            if result:
-                return result
-            logging.warning(f"ESPN standings attempt {attempt}: no data parsed")
-        except Exception as e:
-            logging.warning(f"ESPN standings attempt {attempt}: {type(e).__name__}")
-        if attempt < 2:
-            await asyncio.sleep(2)
-    return {}
-
-
-async def _fetch_nba_cdn_standings(client: httpx.AsyncClient) -> dict[str, dict]:
-    """
-    Source 3: NBA CDN / data.nba.com — league standings with W/L.
-    Tries multiple known URL patterns. Best-effort fallback.
-    """
-    cdn_urls = [
-        "https://cdn.nba.com/static/json/liveData/standings/standings_todaysDate.json",
-        f"https://data.nba.com/data/v2015/json/mobile_teams/nba/{datetime.now().year}/standings_conference.json",
-    ]
-    for url in cdn_urls:
-        try:
-            r = await client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer": "https://www.nba.com/",
-                    "Origin": "https://www.nba.com",
-                },
-                timeout=12,
-            )
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            result: dict[str, dict] = {}
-            # Try multiple known JSON structures
-            # Format 1: league.standard.conference[].teams[]
-            league = data.get("league", {})
-            standard = league.get("standard", league)
-            conferences = standard.get("conference", standard.get("conferences", []))
-            if isinstance(conferences, dict):
-                conferences = list(conferences.values())
-            for conf in conferences:
-                teams_list = conf if isinstance(conf, list) else conf.get("teams", conf.get("team", []))
-                if not isinstance(teams_list, list):
-                    continue
-                for team in teams_list:
-                    try:
-                        abbr = norm_abbr(
-                            team.get("teamSitesOnly", {}).get("teamTricode", "")
-                            or team.get("triCode", "")
-                            or team.get("teamAbbreviation", "")
-                            or team.get("abbreviation", "")
-                        )
-                        if not abbr:
-                            continue
-                        result[abbr] = {
-                            "W": int(team.get("win", team.get("wins", team.get("w", 0)))),
-                            "L": int(team.get("loss", team.get("losses", team.get("l", 0)))),
-                        }
-                    except Exception:
-                        continue
-            if result:
-                return result
-        except Exception as e:
-            logging.warning(f"NBA CDN standings failed ({url[:50]}...): {type(e).__name__}")
-    return {}
-
-
-async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
-    """
-    Fetch team stats with 3-tier fallback:
-      1. NBA Stats API (full advanced stats) — 3 retries
-      2. ESPN Standings API (W/L + PPG/OPPG) — 2 retries
-      3. NBA CDN standings (W/L)
-      4. Last known good data from memory
-    Cached for 30 minutes.
-    """
-    global _last_good_team_stats
-    cached = cache_get("nba_team_stats")
-    if cached is not None:
-        return cached
-
-    # Try Source 1: NBA Stats API (best data)
-    stats = await _fetch_nba_stats_api(client)
-    if stats:
-        logging.info(f"Team stats from NBA Stats API: {len(stats)} teams")
-        _last_good_team_stats = stats
-        cache_set("nba_team_stats", stats, ttl=1800)
-        return stats
-
-    # Try Source 2: ESPN Standings
-    stats = await _fetch_espn_standings(client)
-    if stats:
-        logging.info(f"Team stats from ESPN standings: {len(stats)} teams")
-        _last_good_team_stats = stats
-        cache_set("nba_team_stats", stats, ttl=900)  # shorter TTL for partial data
-        return stats
-
-    # Try Source 3: NBA CDN
-    stats = await _fetch_nba_cdn_standings(client)
-    if stats:
-        logging.info(f"Team stats from NBA CDN: {len(stats)} teams")
-        _last_good_team_stats = stats
-        cache_set("nba_team_stats", stats, ttl=900)
-        return stats
-
-    # Fallback: last known good data
-    if _last_good_team_stats:
-        logging.warning("All live team stats sources failed — using last known good data")
-        cache_set("nba_team_stats", _last_good_team_stats, ttl=300)  # short TTL to retry sooner
-        return _last_good_team_stats
-
-    logging.warning("All team stats sources unavailable and no cached data — analysis will run without team context")
-    return {}
+    adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
+    l10 = _parse(r_l10, "W", "L")
+    merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
+    cache_set("nba_team_stats", merged, ttl=1800)
+    return merged
 
 
 async def fetch_team_rest_days(

@@ -108,19 +108,7 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
-NBA_STATS_URL       = "https://stats.nba.com/stats/leaguedashteamstats"
-NBA_STATS_HEADERS   = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer":    "https://www.nba.com/",
-    "Accept":     "application/json, text/plain, */*",
-    "Origin":     "https://www.nba.com",
-}
-
-
-def _current_nba_season() -> str:
-    now = datetime.now(timezone.utc)
-    y = now.year
-    return f"{y}-{str(y + 1)[-2:]}" if now.month >= 10 else f"{y - 1}-{str(y)[-2:]}"
+ESPN_STANDINGS_URL  = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings"
 
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 _cache: dict = {}
@@ -248,53 +236,42 @@ def _save_sticky_odds() -> None:
     _save_odds_to_firestore(date_str, _sticky_odds)
 
 
-async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
+async def fetch_espn_standings(client: httpx.AsyncClient) -> dict[str, dict]:
     """
-    Fetch season advanced stats (offRtg, defRtg, pace) + last-10 record for all teams.
-    Cached for 30 minutes — season averages barely move day to day.
-    One attempt, 10s timeout. If it fails, return {} and move on.
+    Fetch team standings from ESPN (record, ppg, opp ppg, streak, seed, L10).
+    Cached for 30 minutes. Replaces the broken stats.nba.com API.
     """
-    cached = cache_get("nba_team_stats")
+    cached = cache_get("espn_standings")
     if cached is not None:
         return cached
 
-    season = _current_nba_season()
-    base_params = {
-        "LeagueID": "00", "Season": season, "SeasonType": "Regular Season",
-        "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
-    }
-
     try:
-        r_adv, r_l10 = await asyncio.gather(
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Base", "LastNGames": 10},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-        )
+        r = await client.get(ESPN_STANDINGS_URL, timeout=10)
+        data = r.json()
     except Exception as e:
-        logging.warning(f"NBA Stats API fetch failed: {e}")
-        cache_set("nba_team_stats", {}, ttl=300)  # cache failure for 5 min so we stop hammering
+        logging.warning(f"ESPN standings fetch failed: {e}")
         return {}
 
-    def _parse(resp, *fields):
-        try:
-            rs = resp.json()["resultSets"][0]
-            headers, rows = rs["headers"], rs["rowSet"]
-        except Exception:
-            return {}
-        out = {}
-        for row in rows:
-            d = dict(zip(headers, row))
-            abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
-            if abbr:
-                out[abbr] = {f: d.get(f) for f in fields}
-        return out
-
-    adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
-    l10 = _parse(r_l10, "W", "L")
-    merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
-    cache_set("nba_team_stats", merged, ttl=1800)
-    return merged
+    teams: dict[str, dict] = {}
+    for conf in data.get("children", []):
+        for entry in conf.get("standings", {}).get("entries", []):
+            abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
+            if not abbr:
+                continue
+            stats_map = {s["name"]: s for s in entry.get("stats", [])}
+            teams[abbr] = {
+                "wins":     int(stats_map.get("wins", {}).get("value", 0)),
+                "losses":   int(stats_map.get("losses", {}).get("value", 0)),
+                "seed":     int(stats_map.get("playoffSeed", {}).get("value", 0)),
+                "ppg":      float(stats_map.get("avgPointsFor", {}).get("value", 0)),
+                "opp_ppg":  float(stats_map.get("avgPointsAgainst", {}).get("value", 0)),
+                "diff":     float(stats_map.get("differential", {}).get("value", 0)),
+                "streak":   stats_map.get("streak", {}).get("displayValue", ""),
+                "l10":      stats_map.get("Last Ten Games", {}).get("displayValue", ""),
+            }
+    cache_set("espn_standings", teams, ttl=1800)
+    logging.info(f"ESPN standings: loaded {len(teams)} teams")
+    return teams
 
 
 async def fetch_team_rest_days(
@@ -381,6 +358,13 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
                 "awayScore": int(away.get("score") or 0),
             }
 
+            # Extract team records from scoreboard (e.g. "42-13")
+            for side, prefix in [(home, "home"), (away, "away")]:
+                for rec in side.get("records", []):
+                    if rec.get("type") == "total":
+                        g[f"{prefix}_record"] = rec.get("summary", "")
+                        break
+
             if app_status == "live":
                 period = status.get("period", 1)
                 clock  = status.get("displayClock", "")
@@ -432,6 +416,83 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
 
     cache_set(cache_key, games)
     return games
+
+
+ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+
+
+async def _fetch_one_espn_summary(client: httpx.AsyncClient, espn_id: str) -> dict:
+    """Fetch a single game summary — returns pickcenter odds + predictor win prob."""
+    try:
+        r = await client.get(ESPN_SUMMARY_URL, params={"event": espn_id}, timeout=10)
+        return r.json()
+    except Exception:
+        return {}
+
+
+async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[dict]) -> None:
+    """
+    Batch-fetch ESPN /summary for each game to get:
+    - DraftKings moneylines from pickcenter (scoreboard no longer has them)
+    - ESPN BPI predictor win probabilities
+    Mutates games in-place. Cached via the normal espn_games cache.
+    """
+    tasks = []
+    game_map: list[tuple[dict, str]] = []  # (game, espn_id)
+    for g in games:
+        espn_id = g.get("espn_id")
+        if not espn_id:
+            continue
+        # Skip if already enriched (games list is cached and mutated in-place)
+        if g.get("espn_home_win_prob") is not None:
+            continue
+        tasks.append(_fetch_one_espn_summary(client, espn_id))
+        game_map.append((g, espn_id))
+
+    if not tasks:
+        return
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for (g, espn_id), result in zip(game_map, results):
+        if isinstance(result, Exception) or not isinstance(result, dict):
+            continue
+
+        home_abbr = g["home"]
+        away_abbr = g["away"]
+
+        # Extract moneylines from pickcenter (DraftKings)
+        for pc in result.get("pickcenter", []):
+            hto = pc.get("homeTeamOdds", {})
+            ato = pc.get("awayTeamOdds", {})
+            hml = hto.get("moneyLine")
+            aml = ato.get("moneyLine")
+            if hml is not None and not g.get("espn_homeOdds"):
+                g["espn_homeOdds"] = _fmt_american(hml)
+                if g["espn_homeOdds"] == "—":
+                    g["espn_homeOdds"] = None
+            if aml is not None and not g.get("espn_awayOdds"):
+                g["espn_awayOdds"] = _fmt_american(aml)
+                if g["espn_awayOdds"] == "—":
+                    g["espn_awayOdds"] = None
+            # Also grab spread odds
+            hso = hto.get("spreadOdds")
+            aso = ato.get("spreadOdds")
+            if hso is not None:
+                g["espn_homeSpreadOdds"] = _fmt_american(hso)
+            if aso is not None:
+                g["espn_awaySpreadOdds"] = _fmt_american(aso)
+            break  # first provider is enough
+
+        # Extract ESPN BPI predictor win probability
+        predictor = result.get("predictor", {})
+        home_pred = predictor.get("homeTeam", {})
+        away_pred = predictor.get("awayTeam", {})
+        try:
+            home_proj = float(home_pred.get("gameProjection", 0))
+            if home_proj > 0:
+                g["espn_home_win_prob"] = home_proj
+        except (ValueError, TypeError):
+            pass
 
 
 async def fetch_espn_injuries(client: httpx.AsyncClient) -> set[str]:
@@ -842,7 +903,7 @@ def build_system_prompt(
         for g in upcoming
     ) if upcoming else "None"
 
-    # Build team context block: offRtg, defRtg, pace, last-10, rest
+    # Build team context block from ESPN standings: record, ppg, opp ppg, L10, streak, rest
     team_ctx = ""
     if team_stats or rest_days:
         today_abbrs = sorted({a for g in games for a in (g["home"], g["away"])})
@@ -851,21 +912,33 @@ def build_system_prompt(
             ts = (team_stats or {}).get(abbr, {})
             rd = (rest_days or {}).get(abbr)
             parts = []
-            if ts.get("OFF_RATING") is not None:
-                parts.append(f"oRtg {ts['OFF_RATING']:.1f}")
-            if ts.get("DEF_RATING") is not None:
-                parts.append(f"dRtg {ts['DEF_RATING']:.1f}")
-            if ts.get("PACE") is not None:
-                parts.append(f"pace {ts['PACE']:.1f}")
-            w, l = ts.get("W"), ts.get("L")
-            if w is not None and l is not None:
-                parts.append(f"L10 {int(w)}-{int(l)}")
+            w, l = ts.get("wins"), ts.get("losses")
+            if w is not None and l is not None and (w + l) > 0:
+                parts.append(f"{w}-{l}")
+            seed = ts.get("seed")
+            if seed:
+                parts.append(f"#{seed} seed")
+            ppg = ts.get("ppg")
+            opp = ts.get("opp_ppg")
+            if ppg:
+                parts.append(f"{ppg:.1f} ppg")
+            if opp:
+                parts.append(f"{opp:.1f} opp")
+            diff = ts.get("diff")
+            if diff is not None and diff != 0:
+                parts.append(f"{diff:+.1f} diff")
+            l10 = ts.get("l10")
+            if l10:
+                parts.append(f"L10 {l10}")
+            streak = ts.get("streak")
+            if streak:
+                parts.append(streak)
             if rd is not None:
                 parts.append("B2B" if rd == 0 else f"{rd}d rest")
             if parts:
                 rows.append(f"  {abbr}: {', '.join(parts)}")
         if rows:
-            team_ctx = "\nTEAM CONTEXT (season stats + rest):\n" + "\n".join(rows)
+            team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
     return (
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
@@ -1019,8 +1092,8 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         ou              = g.get("espn_ou")        or o.get("ou")              or sticky.get("ou")
         homeOdds        = g.get("espn_homeOdds")  or o.get("homeOdds")        or sticky.get("homeOdds")
         awayOdds        = g.get("espn_awayOdds")  or o.get("awayOdds")        or sticky.get("awayOdds")
-        homeSpreadOdds  = o.get("homeSpreadOdds") or sticky.get("homeSpreadOdds")
-        awaySpreadOdds  = o.get("awaySpreadOdds") or sticky.get("awaySpreadOdds")
+        homeSpreadOdds  = g.get("espn_homeSpreadOdds") or o.get("homeSpreadOdds") or sticky.get("homeSpreadOdds")
+        awaySpreadOdds  = g.get("espn_awaySpreadOdds") or o.get("awaySpreadOdds") or sticky.get("awaySpreadOdds")
 
         # Persist under base_id so both today and tomorrow lookups can find it
         if any([spread, ou, homeOdds]):
@@ -1043,6 +1116,13 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
                 away_prob = round((1/ad) / total * 100, 1)
             except Exception:
                 pass
+
+        # Fallback: use ESPN BPI predictor win probability
+        if home_prob == 50.0 and away_prob == 50.0:
+            espn_home_prob = g.get("espn_home_win_prob")
+            if espn_home_prob is not None:
+                home_prob = round(espn_home_prob, 1)
+                away_prob = round(100 - espn_home_prob, 1)
 
         # Build result without espn_* fields
         base = {k: v for k, v in g.items() if not k.startswith("espn_")}
@@ -1099,9 +1179,11 @@ async def get_games(date: Optional[str] = None):
             _sticky_odds.update(stored)
         _firestore_last_synced[date_str] = time.time()
 
-    # ── 2. Fetch ESPN games (includes embedded ESPN BET odds) ──────────────────
+    # ── 2. Fetch ESPN games + enrich with summary data (moneylines, BPI win prob)
     async with httpx.AsyncClient() as client:
         games = await fetch_espn_games(client, date)
+        if games:
+            await enrich_games_from_espn_summary(client, games)
 
     if not games:
         return {"games": MOCK_GAMES, "source": "mock"}
@@ -1360,8 +1442,11 @@ async def analyze_game(req: AnalyzeRequest):
         espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
-            fetch_nba_team_stats(client),
+            fetch_espn_standings(client),
         )
+        # Enrich with summary data (moneylines + BPI win prob) for the analysis prompt
+        if espn_games:
+            await enrich_games_from_espn_summary(client, espn_games)
 
     games_to_search = espn_games if espn_games else MOCK_GAMES
     game = next((g for g in games_to_search if g["id"] == req.game_id), None)
@@ -1479,7 +1564,7 @@ async def chat(req: ChatRequest):
         espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client),
             fetch_espn_injuries(client),
-            fetch_nba_team_stats(client),
+            fetch_espn_standings(client),
         )
 
     games = espn_games if espn_games else MOCK_GAMES

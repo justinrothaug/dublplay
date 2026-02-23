@@ -105,6 +105,71 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
+def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
+    """Persist the full merged game list to Firestore for instant cold-start loads."""
+    db = _init_firestore()
+    if not db or not games:
+        return
+    try:
+        db.collection("nba_games").document(date_str).set(
+            {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as e:
+        logging.warning(f"Firestore games write failed: {e}")
+
+
+def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) -> None:
+    """Update a single game's analysis inside the cached game list in Firestore."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection("nba_games").document(date_str)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return
+        games = doc.to_dict().get("games", [])
+        updated = False
+        for g in games:
+            gid = re.sub(r'-\d{8}$', '', g.get("id", ""))
+            if gid == game_id:
+                g["analysis"] = analysis
+                # Also update odds if analysis found them
+                lines = analysis.get("lines") or {}
+                for k in ("homeOdds", "awayOdds", "spread", "ou"):
+                    mapped = {"homeOdds": "homeOdds", "awayOdds": "awayOdds", "spread": "spread", "ou": "ou"}
+                    val = lines.get(k)
+                    if val:
+                        g[k] = val
+                updated = True
+                break
+        if updated:
+            doc_ref.set(
+                {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+    except Exception as e:
+        logging.warning(f"Firestore analysis persist failed: {e}")
+
+
+def _load_games_from_firestore(date_str: str) -> list[dict] | None:
+    """Load the full game list from Firestore. Returns None if not found."""
+    db = _init_firestore()
+    if not db:
+        return None
+    try:
+        doc = db.collection("nba_games").document(date_str).get()
+        if doc.exists:
+            data = doc.to_dict()
+            games = data.get("games")
+            if games:
+                return games
+    except Exception as e:
+        logging.warning(f"Firestore games read failed: {e}")
+    return None
+
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
@@ -1173,32 +1238,52 @@ async def _background_refresh_odds(date_str: str) -> None:
         logging.warning(f"Background odds refresh failed: {e}")
 
 
-@app.get("/api/games")
-async def get_games(date: Optional[str] = None):
-    """Fetch games for a given date (YYYYMMDD). Defaults to today."""
-    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
-
-    # ── 1. Sync Firestore → memory (TTL-based so all replicas stay aligned) ─────
+async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict]:
+    """Fetch ESPN games, enrich with summary data, merge odds, save to Firestore."""
+    # Sync sticky odds from Firestore
     if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
         stored = _load_odds_from_firestore(date_str)
         if stored:
             _sticky_odds.setdefault(date_str, {}).update(stored)
         _firestore_last_synced[date_str] = time.time()
 
-    # ── 2. Fetch ESPN games + enrich with summary data (moneylines, BPI win prob)
     async with httpx.AsyncClient() as client:
-        games = await fetch_espn_games(client, date)
+        games = await fetch_espn_games(client, date_param)
         if games:
             await enrich_games_from_espn_summary(client, games)
 
     if not games:
-        return {"games": MOCK_GAMES, "source": "mock"}
+        return []
 
-    # ── 3. Background refresh of ESPN odds
-    asyncio.create_task(_background_refresh_odds(date_str))
-
-    # ── 4. Merge ESPN + sticky (lines from analyze_game are persisted there)
     merged = _merge_odds(games, {}, date_str)
+
+    # Persist full game state to Firestore for instant loads
+    _save_games_to_firestore(date_str, merged)
+
+    return merged
+
+
+@app.get("/api/games")
+async def get_games(date: Optional[str] = None):
+    """Fetch games for a given date (YYYYMMDD). Defaults to today."""
+    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    # ── 1. Try serving from Firestore cache (instant, survives container restarts)
+    cached_games = _load_games_from_firestore(date_str)
+    if cached_games:
+        # Serve cached immediately, refresh in background
+        asyncio.create_task(_full_espn_refresh(date_str, date))
+        return {
+            "games": cached_games,
+            "source": "live",
+            "odds_updated_at": _odds_updated_at.get(date_str),
+        }
+
+    # ── 2. No Firestore cache — first load of the day, fetch everything
+    merged = await _full_espn_refresh(date_str, date)
+
+    if not merged:
+        return {"games": MOCK_GAMES, "source": "mock"}
 
     return {
         "games": merged,
@@ -1546,10 +1631,10 @@ async def analyze_game(req: AnalyzeRequest):
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
     analysis = parse_gemini_analysis(text)
 
-    # Persist any lines Gemini found back to sticky so /api/games shows real win prob
+    # Persist lines + analysis to Firestore so next page load is instant
+    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
     lines = analysis.get("lines") or {}
     if any(v for v in lines.values() if v):
-        date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
         entry = {k: v for k, v in {
             "awayOdds": lines.get("awayOdds"),
             "homeOdds": lines.get("homeOdds"),
@@ -1558,6 +1643,9 @@ async def analyze_game(req: AnalyzeRequest):
         }.items() if v}
         existing = _get_sticky(date_str, base_game_id)
         _set_sticky(date_str, base_game_id, {**existing, **entry})
+
+    # Update the cached game list in Firestore with analysis results
+    _persist_analysis_to_firestore(date_str, base_game_id, analysis)
 
     return {"analysis": analysis}
 

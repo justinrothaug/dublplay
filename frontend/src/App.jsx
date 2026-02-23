@@ -202,6 +202,18 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
   );
 }
 
+function lineMovement(current, opening) {
+  if (!current || !opening || current === opening) return null;
+  // Extract numeric part (handles "DET -3.5" → -3.5, "232.5" → 232.5, "-110" → -110)
+  const numOf = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
+  const c = numOf(current), o = numOf(opening);
+  if (c === null || o === null || c === o) return null;
+  const diff = c - o;
+  const arrow = diff > 0 ? "\u2191" : "\u2193";
+  const color = diff > 0 ? "#4ade80" : "#f87171";
+  return { text: `${arrow} opened ${opening}`, color };
+}
+
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
 function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite }) {
   const isLive   = game.status === "live";
@@ -354,10 +366,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         <div style={{ display:"flex", background:"#0f0d0a" }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
+              movement={lineMovement(dispSpread, game.opening_spread)}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />
           )}
           {dispOu && (
             <OddsCol label="TOTAL" value={`${dispOu}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+              movement={lineMovement(dispOu, game.opening_ou)}
               onClick={onPickOdds ? () => onPickOdds("-110") : undefined} />
           )}
           {dispHomeOdds && dispAwayOdds && (
@@ -382,11 +396,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   );
 }
 
-function OddsCol({ label, value, highlight, onClick }) {
+function OddsCol({ label, value, highlight, onClick, movement }) {
   return (
     <div onClick={onClick} style={{ flex:1, padding:"10px 0", textAlign:"center", borderRight:`1px solid ${T.border}`, cursor: onClick ? "pointer" : "default" }}>
       <div style={{ fontSize:8, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:4 }}>{label}</div>
       <div style={{ fontSize:12, fontWeight:700, color: highlight ? T.text : T.text2 }}>{value}</div>
+      {movement && <div style={{ fontSize:9, color: movement.color, marginTop:2 }}>{movement.text}</div>}
     </div>
   );
 }

@@ -301,8 +301,29 @@ def _get_sticky(date_str: str, game_id: str) -> dict:
     return _sticky_odds.get(date_str, {}).get(game_id, {})
 
 
+_OPENING_FIELDS = ("spread", "ou", "homeOdds", "awayOdds", "homeSpreadOdds", "awaySpreadOdds")
+
+
 def _set_sticky(date_str: str, game_id: str, odds: dict) -> None:
-    """Set sticky odds for a specific game on a specific date, then persist."""
+    """Set sticky odds for a specific game on a specific date, then persist.
+
+    On first write, snapshots the values as opening_* so we can track movement.
+    """
+    existing = _sticky_odds.get(date_str, {}).get(game_id, {})
+
+    # Snapshot opening odds on first write — never overwrite them
+    if not existing:
+        for f in _OPENING_FIELDS:
+            if odds.get(f):
+                odds[f"opening_{f}"] = odds[f]
+    else:
+        for f in _OPENING_FIELDS:
+            opening_key = f"opening_{f}"
+            if opening_key in existing:
+                odds[opening_key] = existing[opening_key]
+            elif odds.get(f) and opening_key not in odds:
+                odds[opening_key] = odds[f]
+
     _sticky_odds.setdefault(date_str, {})[game_id] = odds
     _save_odds_to_firestore(date_str, _sticky_odds.get(date_str, {}))
 
@@ -1196,6 +1217,14 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
 
         # Build result without espn_* fields
         base = {k: v for k, v in g.items() if not k.startswith("espn_")}
+
+        # Opening lines from sticky cache (snapshotted on first write)
+        opening = {}
+        for f in _OPENING_FIELDS:
+            val = sticky.get(f"opening_{f}")
+            if val:
+                opening[f"opening_{f}"] = val
+
         result.append({
             **base,
             "homeWinProb": home_prob,
@@ -1207,6 +1236,7 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
             "spread": spread,
             "ou": ou,
             "ouDir": None,
+            **opening,
             "analysis": {"best_bet": None, "ou": None, "props": None},
         })
     return result

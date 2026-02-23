@@ -105,22 +105,75 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
+def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
+    """Persist the full merged game list to Firestore for instant cold-start loads."""
+    db = _init_firestore()
+    if not db or not games:
+        return
+    try:
+        db.collection("nba_games").document(date_str).set(
+            {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as e:
+        logging.warning(f"Firestore games write failed: {e}")
+
+
+def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) -> None:
+    """Update a single game's analysis inside the cached game list in Firestore."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection("nba_games").document(date_str)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return
+        games = doc.to_dict().get("games", [])
+        updated = False
+        for g in games:
+            gid = re.sub(r'-\d{8}$', '', g.get("id", ""))
+            if gid == game_id:
+                g["analysis"] = analysis
+                # Also update odds if analysis found them
+                lines = analysis.get("lines") or {}
+                for k in ("homeOdds", "awayOdds", "spread", "ou"):
+                    mapped = {"homeOdds": "homeOdds", "awayOdds": "awayOdds", "spread": "spread", "ou": "ou"}
+                    val = lines.get(k)
+                    if val:
+                        g[k] = val
+                updated = True
+                break
+        if updated:
+            doc_ref.set(
+                {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+    except Exception as e:
+        logging.warning(f"Firestore analysis persist failed: {e}")
+
+
+def _load_games_from_firestore(date_str: str) -> list[dict] | None:
+    """Load the full game list from Firestore. Returns None if not found."""
+    db = _init_firestore()
+    if not db:
+        return None
+    try:
+        doc = db.collection("nba_games").document(date_str).get()
+        if doc.exists:
+            data = doc.to_dict()
+            games = data.get("games")
+            if games:
+                return games
+    except Exception as e:
+        logging.warning(f"Firestore games read failed: {e}")
+    return None
+
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
-NBA_STATS_URL       = "https://stats.nba.com/stats/leaguedashteamstats"
-NBA_STATS_HEADERS   = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer":    "https://www.nba.com/",
-    "Accept":     "application/json, text/plain, */*",
-    "Origin":     "https://www.nba.com",
-}
-
-
-def _current_nba_season() -> str:
-    now = datetime.now(timezone.utc)
-    y = now.year
-    return f"{y}-{str(y + 1)[-2:]}" if now.month >= 10 else f"{y - 1}-{str(y)[-2:]}"
+ESPN_STANDINGS_URL  = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings"
 
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 _cache: dict = {}
@@ -239,61 +292,78 @@ def any_name_to_abbr(name: str) -> str:
 
 # Sticky odds: pre-game lines that persist in memory and in Firestore.
 # _sticky_odds is the hot in-memory cache; Firestore is the durable backing store.
-_sticky_odds: dict[str, dict] = {}
+# Keyed by date_str → game_id → odds dict. Each date only contains its own games.
+_sticky_odds: dict[str, dict[str, dict]] = {}
 
 
-def _save_sticky_odds() -> None:
-    """Write current in-memory odds to Firestore under today's date."""
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    _save_odds_to_firestore(date_str, _sticky_odds)
+def _get_sticky(date_str: str, game_id: str) -> dict:
+    """Get sticky odds for a specific game on a specific date."""
+    return _sticky_odds.get(date_str, {}).get(game_id, {})
 
 
-async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
+_OPENING_FIELDS = ("spread", "ou", "homeOdds", "awayOdds", "homeSpreadOdds", "awaySpreadOdds")
+
+
+def _set_sticky(date_str: str, game_id: str, odds: dict) -> None:
+    """Set sticky odds for a specific game on a specific date, then persist.
+
+    On first write, snapshots the values as opening_* so we can track movement.
     """
-    Fetch season advanced stats (offRtg, defRtg, pace) + last-10 record for all teams.
-    Cached for 30 minutes — season averages barely move day to day.
-    Returns dict keyed by team abbreviation.
+    existing = _sticky_odds.get(date_str, {}).get(game_id, {})
+
+    # Snapshot opening odds on first write — never overwrite them
+    if not existing:
+        for f in _OPENING_FIELDS:
+            if odds.get(f):
+                odds[f"opening_{f}"] = odds[f]
+    else:
+        for f in _OPENING_FIELDS:
+            opening_key = f"opening_{f}"
+            if opening_key in existing:
+                odds[opening_key] = existing[opening_key]
+            elif odds.get(f) and opening_key not in odds:
+                odds[opening_key] = odds[f]
+
+    _sticky_odds.setdefault(date_str, {})[game_id] = odds
+    _save_odds_to_firestore(date_str, _sticky_odds.get(date_str, {}))
+
+
+async def fetch_espn_standings(client: httpx.AsyncClient) -> dict[str, dict]:
     """
-    cached = cache_get("nba_team_stats")
+    Fetch team standings from ESPN (record, ppg, opp ppg, streak, seed, L10).
+    Cached for 30 minutes. Replaces the broken stats.nba.com API.
+    """
+    cached = cache_get("espn_standings")
     if cached is not None:
         return cached
 
-    season = _current_nba_season()
-    base_params = {
-        "LeagueID": "00", "Season": season, "SeasonType": "Regular Season",
-        "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
-    }
-
     try:
-        r_adv, r_l10 = await asyncio.gather(
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Base", "LastNGames": 10},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-        )
+        r = await client.get(ESPN_STANDINGS_URL, timeout=10)
+        data = r.json()
     except Exception as e:
-        logging.warning(f"NBA Stats API fetch failed: {e}")
+        logging.warning(f"ESPN standings fetch failed: {e}")
         return {}
 
-    def _parse(resp, *fields):
-        try:
-            rs = resp.json()["resultSets"][0]
-            headers, rows = rs["headers"], rs["rowSet"]
-        except Exception:
-            return {}
-        out = {}
-        for row in rows:
-            d = dict(zip(headers, row))
-            abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
-            if abbr:
-                out[abbr] = {f: d.get(f) for f in fields}
-        return out
-
-    adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
-    l10 = _parse(r_l10, "W", "L")
-    merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
-    cache_set("nba_team_stats", merged, ttl=1800)
-    return merged
+    teams: dict[str, dict] = {}
+    for conf in data.get("children", []):
+        for entry in conf.get("standings", {}).get("entries", []):
+            abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
+            if not abbr:
+                continue
+            stats_map = {s["name"]: s for s in entry.get("stats", [])}
+            teams[abbr] = {
+                "wins":     int(stats_map.get("wins", {}).get("value", 0)),
+                "losses":   int(stats_map.get("losses", {}).get("value", 0)),
+                "seed":     int(stats_map.get("playoffSeed", {}).get("value", 0)),
+                "ppg":      float(stats_map.get("avgPointsFor", {}).get("value", 0)),
+                "opp_ppg":  float(stats_map.get("avgPointsAgainst", {}).get("value", 0)),
+                "diff":     float(stats_map.get("differential", {}).get("value", 0)),
+                "streak":   stats_map.get("streak", {}).get("displayValue", ""),
+                "l10":      stats_map.get("Last Ten Games", {}).get("displayValue", ""),
+            }
+    cache_set("espn_standings", teams, ttl=1800)
+    logging.info(f"ESPN standings: loaded {len(teams)} teams")
+    return teams
 
 
 async def fetch_team_rest_days(
@@ -380,6 +450,13 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
                 "awayScore": int(away.get("score") or 0),
             }
 
+            # Extract team records from scoreboard (e.g. "42-13")
+            for side, prefix in [(home, "home"), (away, "away")]:
+                for rec in side.get("records", []):
+                    if rec.get("type") == "total":
+                        g[f"{prefix}_record"] = rec.get("summary", "")
+                        break
+
             if app_status == "live":
                 period = status.get("period", 1)
                 clock  = status.get("displayClock", "")
@@ -431,6 +508,108 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
 
     cache_set(cache_key, games)
     return games
+
+
+ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+
+
+async def _fetch_one_espn_summary(client: httpx.AsyncClient, espn_id: str) -> dict:
+    """Fetch a single game summary — returns pickcenter odds + predictor win prob."""
+    try:
+        r = await client.get(ESPN_SUMMARY_URL, params={"event": espn_id}, timeout=10)
+        return r.json()
+    except Exception:
+        return {}
+
+
+async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[dict]) -> None:
+    """
+    Batch-fetch ESPN /summary for each game to get:
+    - DraftKings moneylines from pickcenter (scoreboard no longer has them)
+    - ESPN BPI predictor win probabilities
+    Mutates games in-place. Cached via the normal espn_games cache.
+    """
+    tasks = []
+    game_map: list[tuple[dict, str]] = []  # (game, espn_id)
+    for g in games:
+        espn_id = g.get("espn_id")
+        if not espn_id:
+            continue
+        # Skip if already enriched (games list is cached and mutated in-place)
+        if g.get("espn_home_win_prob") is not None:
+            continue
+        tasks.append(_fetch_one_espn_summary(client, espn_id))
+        game_map.append((g, espn_id))
+
+    if not tasks:
+        return
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for (g, espn_id), result in zip(game_map, results):
+        if isinstance(result, Exception) or not isinstance(result, dict):
+            continue
+
+        home_abbr = g["home"]
+        away_abbr = g["away"]
+
+        # Extract moneylines + open/close lines from pickcenter (DraftKings)
+        for pc in result.get("pickcenter", []):
+            hto = pc.get("homeTeamOdds", {})
+            ato = pc.get("awayTeamOdds", {})
+            hml = hto.get("moneyLine")
+            aml = ato.get("moneyLine")
+            if hml is not None and not g.get("espn_homeOdds"):
+                g["espn_homeOdds"] = _fmt_american(hml)
+                if g["espn_homeOdds"] == "—":
+                    g["espn_homeOdds"] = None
+            if aml is not None and not g.get("espn_awayOdds"):
+                g["espn_awayOdds"] = _fmt_american(aml)
+                if g["espn_awayOdds"] == "—":
+                    g["espn_awayOdds"] = None
+            # Spread odds
+            hso = hto.get("spreadOdds")
+            aso = ato.get("spreadOdds")
+            if hso is not None:
+                g["espn_homeSpreadOdds"] = _fmt_american(hso)
+            if aso is not None:
+                g["espn_awaySpreadOdds"] = _fmt_american(aso)
+
+            # Opening lines from DraftKings (structured open/close data)
+            ml = pc.get("moneyline", {})
+            ps = pc.get("pointSpread", {})
+            tot = pc.get("total", {})
+
+            # Opening moneyline
+            open_hml = ml.get("home", {}).get("open", {}).get("odds")
+            open_aml = ml.get("away", {}).get("open", {}).get("odds")
+            if open_hml:
+                g["espn_opening_homeOdds"] = str(open_hml)
+            if open_aml:
+                g["espn_opening_awayOdds"] = str(open_aml)
+
+            # Opening spread — store just the numeric value (home perspective)
+            open_spread_line = ps.get("home", {}).get("open", {}).get("line")
+            if open_spread_line is not None:
+                g["espn_opening_spread"] = str(open_spread_line)
+
+            # Opening total
+            open_total = tot.get("over", {}).get("open", {}).get("line", "")
+            if open_total:
+                # ESPN formats as "o227.5" — strip the prefix
+                g["espn_opening_ou"] = re.sub(r'^[ou]', '', str(open_total))
+
+            break  # first provider is enough
+
+        # Extract ESPN BPI predictor win probability
+        predictor = result.get("predictor", {})
+        home_pred = predictor.get("homeTeam", {})
+        away_pred = predictor.get("awayTeam", {})
+        try:
+            home_proj = float(home_pred.get("gameProjection", 0))
+            if home_proj > 0:
+                g["espn_home_win_prob"] = home_proj
+        except (ValueError, TypeError):
+            pass
 
 
 async def fetch_espn_injuries(client: httpx.AsyncClient) -> set[str]:
@@ -547,11 +726,6 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
 
         if odds_data:
             result[key] = odds_data
-            # Persist so live/final games still show the line
-            _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
-
-    if result:
-        _save_sticky_odds()
     cache_set("dk_game_lines", result)
     return result
 
@@ -606,9 +780,7 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
         if result:
-            _save_sticky_odds()
             cache_set("odds", result)
         return result
     except Exception:
@@ -669,9 +841,6 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
-        if result:
-            _save_sticky_odds()
         return result
     except Exception:
         return {}
@@ -841,7 +1010,7 @@ def build_system_prompt(
         for g in upcoming
     ) if upcoming else "None"
 
-    # Build team context block: offRtg, defRtg, pace, last-10, rest
+    # Build team context block from ESPN standings: record, ppg, opp ppg, L10, streak, rest
     team_ctx = ""
     if team_stats or rest_days:
         today_abbrs = sorted({a for g in games for a in (g["home"], g["away"])})
@@ -850,21 +1019,33 @@ def build_system_prompt(
             ts = (team_stats or {}).get(abbr, {})
             rd = (rest_days or {}).get(abbr)
             parts = []
-            if ts.get("OFF_RATING") is not None:
-                parts.append(f"oRtg {ts['OFF_RATING']:.1f}")
-            if ts.get("DEF_RATING") is not None:
-                parts.append(f"dRtg {ts['DEF_RATING']:.1f}")
-            if ts.get("PACE") is not None:
-                parts.append(f"pace {ts['PACE']:.1f}")
-            w, l = ts.get("W"), ts.get("L")
-            if w is not None and l is not None:
-                parts.append(f"L10 {int(w)}-{int(l)}")
+            w, l = ts.get("wins"), ts.get("losses")
+            if w is not None and l is not None and (w + l) > 0:
+                parts.append(f"{w}-{l}")
+            seed = ts.get("seed")
+            if seed:
+                parts.append(f"#{seed} seed")
+            ppg = ts.get("ppg")
+            opp = ts.get("opp_ppg")
+            if ppg:
+                parts.append(f"{ppg:.1f} ppg")
+            if opp:
+                parts.append(f"{opp:.1f} opp")
+            diff = ts.get("diff")
+            if diff is not None and diff != 0:
+                parts.append(f"{diff:+.1f} diff")
+            l10 = ts.get("l10")
+            if l10:
+                parts.append(f"L10 {l10}")
+            streak = ts.get("streak")
+            if streak:
+                parts.append(streak)
             if rd is not None:
                 parts.append("B2B" if rd == 0 else f"{rd}d rest")
             if parts:
                 rows.append(f"  {abbr}: {', '.join(parts)}")
         if rows:
-            team_ctx = "\nTEAM CONTEXT (season stats + rest):\n" + "\n".join(rows)
+            team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
     return (
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
@@ -1011,26 +1192,23 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         gid = g["id"]
         # Strip YYYYMMDD suffix so tomorrow games match odds_map keys
         base_id = re.sub(r'-\d{8}$', '', gid)
+        ds = date_str or datetime.now(timezone.utc).strftime("%Y%m%d")
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
-        sticky = _sticky_odds.get(base_id) or _sticky_odds.get(gid) or {}
+        sticky = _get_sticky(ds, base_id) or _get_sticky(ds, gid)
 
         spread          = g.get("espn_spread")   or o.get("spread")          or sticky.get("spread")
         ou              = g.get("espn_ou")        or o.get("ou")              or sticky.get("ou")
         homeOdds        = g.get("espn_homeOdds")  or o.get("homeOdds")        or sticky.get("homeOdds")
         awayOdds        = g.get("espn_awayOdds")  or o.get("awayOdds")        or sticky.get("awayOdds")
-        homeSpreadOdds  = o.get("homeSpreadOdds") or sticky.get("homeSpreadOdds")
-        awaySpreadOdds  = o.get("awaySpreadOdds") or sticky.get("awaySpreadOdds")
+        homeSpreadOdds  = g.get("espn_homeSpreadOdds") or o.get("homeSpreadOdds") or sticky.get("homeSpreadOdds")
+        awaySpreadOdds  = g.get("espn_awaySpreadOdds") or o.get("awaySpreadOdds") or sticky.get("awaySpreadOdds")
 
         # Persist under base_id so both today and tomorrow lookups can find it
         if any([spread, ou, homeOdds]):
-            _sticky_odds[base_id] = {k: v for k, v in {
+            _set_sticky(ds, base_id, {k: v for k, v in {
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds,
                 "homeSpreadOdds": homeSpreadOdds, "awaySpreadOdds": awaySpreadOdds,
-            }.items() if v}
-            _save_odds_to_firestore(
-                date_str or datetime.now(timezone.utc).strftime("%Y%m%d"),
-                _sticky_odds,
-            )
+            }.items() if v})
 
         home_prob = away_prob = 50.0
         if homeOdds and awayOdds:
@@ -1043,8 +1221,23 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
             except Exception:
                 pass
 
+        # Fallback: use ESPN BPI predictor win probability
+        if home_prob == 50.0 and away_prob == 50.0:
+            espn_home_prob = g.get("espn_home_win_prob")
+            if espn_home_prob is not None:
+                home_prob = round(espn_home_prob, 1)
+                away_prob = round(100 - espn_home_prob, 1)
+
         # Build result without espn_* fields
         base = {k: v for k, v in g.items() if not k.startswith("espn_")}
+
+        # Opening lines: prefer ESPN pickcenter open/close, fall back to sticky snapshot
+        opening = {}
+        for f in _OPENING_FIELDS:
+            val = g.get(f"espn_opening_{f}") or sticky.get(f"opening_{f}")
+            if val:
+                opening[f"opening_{f}"] = val
+
         result.append({
             **base,
             "homeWinProb": home_prob,
@@ -1056,6 +1249,7 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
             "spread": spread,
             "ou": ou,
             "ouDir": None,
+            **opening,
             "analysis": {"best_bet": None, "ou": None, "props": None},
         })
     return result
@@ -1072,18 +1266,44 @@ async def _background_refresh_odds(date_str: str) -> None:
         if not games:
             return
         changed = False
+        date_odds = _sticky_odds.setdefault(date_str, {})
         for g in games:
             key = re.sub(r'-\d{8}$', '', g["id"])
             for espn_field, out_field in [("espn_homeOdds","homeOdds"),("espn_awayOdds","awayOdds"),
                                           ("espn_spread","spread"),("espn_ou","ou")]:
                 val = g.get(espn_field)
-                if val and _sticky_odds.get(key, {}).get(out_field) != val:
-                    _sticky_odds.setdefault(key, {})[out_field] = val
+                if val and date_odds.get(key, {}).get(out_field) != val:
+                    date_odds.setdefault(key, {})[out_field] = val
                     changed = True
         if changed:
-            _save_odds_to_firestore(date_str, _sticky_odds)
+            _save_odds_to_firestore(date_str, date_odds)
     except Exception as e:
         logging.warning(f"Background odds refresh failed: {e}")
+
+
+async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict]:
+    """Fetch ESPN games, enrich with summary data, merge odds, save to Firestore."""
+    # Sync sticky odds from Firestore
+    if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
+        stored = _load_odds_from_firestore(date_str)
+        if stored:
+            _sticky_odds.setdefault(date_str, {}).update(stored)
+        _firestore_last_synced[date_str] = time.time()
+
+    async with httpx.AsyncClient() as client:
+        games = await fetch_espn_games(client, date_param)
+        if games:
+            await enrich_games_from_espn_summary(client, games)
+
+    if not games:
+        return []
+
+    merged = _merge_odds(games, {}, date_str)
+
+    # Persist full game state to Firestore for instant loads
+    _save_games_to_firestore(date_str, merged)
+
+    return merged
 
 
 @app.get("/api/games")
@@ -1091,25 +1311,22 @@ async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # ── 1. Sync Firestore → memory (TTL-based so all replicas stay aligned) ─────
-    if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
-        stored = _load_odds_from_firestore(date_str)
-        if stored:
-            _sticky_odds.update(stored)
-        _firestore_last_synced[date_str] = time.time()
+    # ── 1. Try serving from Firestore cache (instant, survives container restarts)
+    cached_games = _load_games_from_firestore(date_str)
+    if cached_games:
+        # Serve cached immediately, refresh in background
+        asyncio.create_task(_full_espn_refresh(date_str, date))
+        return {
+            "games": cached_games,
+            "source": "live",
+            "odds_updated_at": _odds_updated_at.get(date_str),
+        }
 
-    # ── 2. Fetch ESPN games (includes embedded ESPN BET odds) ──────────────────
-    async with httpx.AsyncClient() as client:
-        games = await fetch_espn_games(client, date)
+    # ── 2. No Firestore cache — first load of the day, fetch everything
+    merged = await _full_espn_refresh(date_str, date)
 
-    if not games:
+    if not merged:
         return {"games": MOCK_GAMES, "source": "mock"}
-
-    # ── 3. Background refresh of ESPN odds
-    asyncio.create_task(_background_refresh_odds(date_str))
-
-    # ── 4. Merge ESPN + sticky (lines from analyze_game are persisted there)
-    merged = _merge_odds(games, {}, date_str)
 
     return {
         "games": merged,
@@ -1126,12 +1343,14 @@ async def debug_odds():
 
     espn_ids = [g["id"] for g in espn_games]
 
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_odds = _sticky_odds.get(today, {})
     info: dict = {
         "espn_game_ids": espn_ids,
-        "sticky_odds_keys": list(_sticky_odds.keys()),
+        "sticky_odds_keys": list(today_odds.keys()),
         "dk_cache_fresh": cache_get("dk_game_lines") is not None,
-        "matched": [k for k in _sticky_odds if k in espn_ids],
-        "unmatched_espn": [k for k in espn_ids if k not in _sticky_odds],
+        "matched": [k for k in today_odds if k in espn_ids],
+        "unmatched_espn": [k for k in espn_ids if k not in today_odds],
     }
     return info
 
@@ -1217,18 +1436,26 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         '"edge_score":4.2,"matchup":"LAL @ GSW","reason":"Brief reason"}'
     )
 
-    # Build set of team abbreviations playing today for post-parse filtering
+    # Build matchup list + team set for the prompt so Gemini uses correct abbreviations
     playing_teams: set[str] = set()
+    matchup_lines: list[str] = []
     for g in games:
-        if g.get("away"):
-            playing_teams.add(g["away"].upper())
-        if g.get("home"):
-            playing_teams.add(g["home"].upper())
+        away = g.get("away", "").upper()
+        home = g.get("home", "").upper()
+        if away:
+            playing_teams.add(away)
+        if home:
+            playing_teams.add(home)
+        if away and home:
+            matchup_lines.append(f"{g.get('awayName', away)} ({away}) @ {g.get('homeName', home)} ({home})")
+
+    games_block = "\n".join(matchup_lines) if matchup_lines else "Check today's NBA schedule"
 
     prompt = (
-        f"Search for NBA player props available right now on DraftKings or FanDuel for {today_str}. "
-        f"Return the top 50 props, with at least 5 props per game being played today. "
-        "Only include players actually playing today. "
+        f"Search for NBA player props available right now on DraftKings or FanDuel for {today_str}.\n"
+        f"Today's games:\n{games_block}\n\n"
+        f"Use ONLY these team abbreviations: {', '.join(sorted(playing_teams))}.\n"
+        f"Return the top 50 props, with at least 5 props per game. "
         "Only standard props: points, rebounds, assists, 3-pointers made, blocks, steals. "
         "Do not guess or make up any data — only return props you find in your search.\n\n"
         f"Return ONLY a raw JSON array. Schema per element:\n{_PROPS_JSON_SCHEMA}\n\n"
@@ -1261,12 +1488,15 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
         parts = data["candidates"][0]["content"]["parts"]
         text = " ".join(p.get("text", "") for p in parts if "text" in p)
         props = _parse_gemini_props_json(text)
+        # Normalize team abbreviations Gemini returned (e.g. "GS" → "GSW", "PHO" → "PHX")
+        for p in props:
+            p["team"] = norm_abbr(p.get("team", ""))
         if playing_teams:
             before = len(props)
-            props = [p for p in props if p.get("team", "").upper() in playing_teams]
+            props = [p for p in props if p["team"] in playing_teams]
             dropped = before - len(props)
             if dropped:
-                logging.warning(f"Dropped {dropped} props for teams not playing today")
+                logging.info(f"Filtered {dropped} props for teams not playing today")
         if props:
             logging.info(f"Gemini search-grounded props: got {len(props)} props")
             _gemini_props_cache = props
@@ -1348,8 +1578,11 @@ async def analyze_game(req: AnalyzeRequest):
         espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
-            fetch_nba_team_stats(client),
+            fetch_espn_standings(client),
         )
+        # Enrich with summary data (moneylines + BPI win prob) for the analysis prompt
+        if espn_games:
+            await enrich_games_from_espn_summary(client, espn_games)
 
     games_to_search = espn_games if espn_games else MOCK_GAMES
     game = next((g for g in games_to_search if g["id"] == req.game_id), None)
@@ -1370,7 +1603,7 @@ async def analyze_game(req: AnalyzeRequest):
     # Resolve odds: ESPN embedded (freshest) → sticky cache → N/A
     # Strip date suffix so tomorrow game IDs (e.g. orl-phx-20260221) find cached odds
     base_game_id = re.sub(r'-\d{8}$', '', req.game_id)
-    sticky = _sticky_odds.get(base_game_id) or _sticky_odds.get(req.game_id) or {}
+    sticky = _get_sticky(today_date, base_game_id) or _get_sticky(today_date, req.game_id)
     ou_line   = game.get("espn_ou")       or sticky.get("ou")       or "N/A"
     spread_ln = game.get("espn_spread")   or sticky.get("spread")   or "N/A"
     away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
@@ -1441,18 +1674,21 @@ async def analyze_game(req: AnalyzeRequest):
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
     analysis = parse_gemini_analysis(text)
 
-    # Persist any lines Gemini found back to sticky so /api/games shows real win prob
+    # Persist lines + analysis to Firestore so next page load is instant
+    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
     lines = analysis.get("lines") or {}
     if any(v for v in lines.values() if v):
-        date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
         entry = {k: v for k, v in {
             "awayOdds": lines.get("awayOdds"),
             "homeOdds": lines.get("homeOdds"),
             "spread":   lines.get("spread"),
             "ou":       lines.get("ou"),
         }.items() if v}
-        _sticky_odds[base_game_id] = {**_sticky_odds.get(base_game_id, {}), **entry}
-        _save_odds_to_firestore(date_str, _sticky_odds)
+        existing = _get_sticky(date_str, base_game_id)
+        _set_sticky(date_str, base_game_id, {**existing, **entry})
+
+    # Update the cached game list in Firestore with analysis results
+    _persist_analysis_to_firestore(date_str, base_game_id, analysis)
 
     return {"analysis": analysis}
 
@@ -1467,7 +1703,7 @@ async def chat(req: ChatRequest):
         espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client),
             fetch_espn_injuries(client),
-            fetch_nba_team_stats(client),
+            fetch_espn_standings(client),
         )
 
     games = espn_games if espn_games else MOCK_GAMES

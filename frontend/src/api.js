@@ -14,6 +14,7 @@ export const api = {
   getGames:     (date = null)  => req(date ? `/api/games?date=${date}` : "/api/games"),
   getStandings: ()             => req("/api/standings"),
   getProps:     ()             => req("/api/props"),
+  getPicks:     (date)         => req(`/api/picks/${date}`),
   analyze:      (game_id, api_key, date = null) =>
     req("/api/analyze", { method:"POST", body: JSON.stringify({ game_id, api_key, date }) }),
   chat: (messages, api_key) =>

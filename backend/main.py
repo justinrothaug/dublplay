@@ -170,6 +170,152 @@ def _load_games_from_firestore(date_str: str) -> list[dict] | None:
     return None
 
 
+# ── DAILY PICKS PERSISTENCE ────────────────────────────────────────────────────
+
+def _save_pick_to_firestore(date_str: str, pick_data: dict) -> None:
+    """Save or update a pick entry for a game in the daily_picks collection."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection("daily_picks").document(date_str)
+        doc = doc_ref.get()
+        picks = doc.to_dict().get("picks", []) if doc.exists else []
+        game_id = pick_data["game_id"]
+        existing_idx = next((i for i, p in enumerate(picks) if p.get("game_id") == game_id), None)
+        if existing_idx is not None:
+            existing = picks[existing_idx]
+            # Preserve any already-scored result fields
+            for field in ("result_bet", "result_ou", "final_away", "final_home", "scored_at"):
+                if field in existing and field not in pick_data:
+                    pick_data[field] = existing[field]
+            picks[existing_idx] = pick_data
+        else:
+            picks.append(pick_data)
+        doc_ref.set({"picks": picks, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+    except Exception as e:
+        logging.warning(f"Firestore pick save failed: {e}")
+
+
+def _score_pick(pick: dict, away_score: int, home_score: int) -> dict:
+    """Given final scores, compute result_bet and result_ou for a pick. Returns updated pick."""
+    pick = dict(pick)
+    combined = away_score + home_score
+
+    # Score O/U
+    ou_line = pick.get("ou_line")
+    ou_direction = (pick.get("ou_direction") or "").upper()
+    if ou_line and ou_direction in ("OVER", "UNDER"):
+        try:
+            line = float(ou_line)
+            if combined > line:
+                actual = "OVER"
+            elif combined < line:
+                actual = "UNDER"
+            else:
+                actual = "PUSH"
+            pick["result_ou"] = "PUSH" if actual == "PUSH" else ("HIT" if actual == ou_direction else "MISS")
+        except (ValueError, TypeError):
+            pass
+
+    # Score Best Bet (spread or ML)
+    bet_team = (pick.get("bet_team") or "").upper()
+    bet_is_spread = pick.get("bet_is_spread", False)
+    spread_line = pick.get("spread_line") or ""
+    away_abbr = (pick.get("away") or "").upper()
+    home_abbr = (pick.get("home") or "").upper()
+
+    if bet_team:
+        if bet_is_spread and spread_line:
+            m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', spread_line.strip().upper())
+            if m:
+                fav_abbr = m.group(1)
+                line_val = float(m.group(2))  # negative = favored
+                fav_score = home_score if fav_abbr == home_abbr else away_score
+                dog_score = away_score if fav_abbr == home_abbr else home_score
+                actual_margin = fav_score - dog_score
+                needed = abs(line_val)
+                if actual_margin > needed:
+                    fav_covered, push = True, False
+                elif actual_margin < needed:
+                    fav_covered, push = False, False
+                else:
+                    fav_covered, push = False, True
+
+                if push:
+                    pick["result_bet"] = "PUSH"
+                elif bet_team == fav_abbr:
+                    pick["result_bet"] = "HIT" if fav_covered else "MISS"
+                else:
+                    pick["result_bet"] = "HIT" if not fav_covered else "MISS"
+        else:
+            # ML bet — did the picked team win?
+            if bet_team == home_abbr:
+                won = home_score > away_score
+            else:
+                won = away_score > home_score
+            pick["result_bet"] = "HIT" if won else "MISS"
+
+    pick["final_away"] = away_score
+    pick["final_home"] = home_score
+    pick["scored_at"] = datetime.now(timezone.utc).isoformat()
+    return pick
+
+
+def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
+    """Score any unscored picks against final game results for the given date."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection("daily_picks").document(date_str)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return
+        picks = doc.to_dict().get("picks", [])
+        if not picks:
+            return
+        final_by_id = {
+            re.sub(r'-\d{8}$', '', g["id"]): g
+            for g in final_games if g.get("status") == "final"
+        }
+        updated = False
+        for pick in picks:
+            # Skip already scored picks
+            if pick.get("result_bet") is not None or pick.get("result_ou") is not None:
+                continue
+            game_id = pick.get("game_id", "")
+            base_id = re.sub(r'-\d{8}$', '', game_id)
+            game = final_by_id.get(base_id) or final_by_id.get(game_id)
+            if not game:
+                continue
+            away_score = int(game.get("awayScore") or 0)
+            home_score = int(game.get("homeScore") or 0)
+            if away_score == 0 and home_score == 0:
+                continue
+            scored = _score_pick(pick, away_score, home_score)
+            pick.update(scored)
+            updated = True
+        if updated:
+            doc_ref.set({"picks": picks, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+    except Exception as e:
+        logging.warning(f"Firestore picks scoring failed: {e}")
+
+
+def _load_picks_from_firestore(date_str: str) -> list[dict]:
+    """Load picks for a given date from Firestore."""
+    db = _init_firestore()
+    if not db:
+        return []
+    try:
+        doc = db.collection("daily_picks").document(date_str).get()
+        if doc.exists:
+            return doc.to_dict().get("picks", [])
+    except Exception as e:
+        logging.warning(f"Firestore picks read failed: {e}")
+    return []
+
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
@@ -1303,6 +1449,9 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     # Persist full game state to Firestore for instant loads
     _save_games_to_firestore(date_str, merged)
 
+    # Auto-score any picks whose games are now final
+    _score_picks_for_date(date_str, merged)
+
     return merged
 
 
@@ -1353,6 +1502,36 @@ async def debug_odds():
         "unmatched_espn": [k for k in espn_ids if k not in today_odds],
     }
     return info
+
+
+@app.get("/api/picks/{date_str}")
+async def get_picks(date_str: str):
+    """Get saved daily picks + hit stats for a given date (YYYYMMDD)."""
+    # Attempt to score any pending picks using cached game data
+    games_cached = _load_games_from_firestore(date_str)
+    if games_cached:
+        _score_picks_for_date(date_str, games_cached)
+
+    picks = _load_picks_from_firestore(date_str)
+    scored_bet = [p for p in picks if p.get("result_bet") in ("HIT", "MISS")]
+    scored_ou  = [p for p in picks if p.get("result_ou")  in ("HIT", "MISS")]
+    hits_bet   = sum(1 for p in scored_bet if p["result_bet"] == "HIT")
+    hits_ou    = sum(1 for p in scored_ou  if p["result_ou"]  == "HIT")
+
+    hit_pct_bet = round(hits_bet / len(scored_bet) * 100, 1) if scored_bet else None
+    hit_pct_ou  = round(hits_ou  / len(scored_ou)  * 100, 1) if scored_ou  else None
+
+    return {
+        "date":         date_str,
+        "picks":        picks,
+        "hit_pct_bet":  hit_pct_bet,
+        "hit_pct_ou":   hit_pct_ou,
+        "hits_bet":     hits_bet,
+        "hits_ou":      hits_ou,
+        "total_picks":  len(picks),
+        "scored_bet":   len(scored_bet),
+        "scored_ou":    len(scored_ou),
+    }
 
 
 def _parse_gemini_props_json(text: str) -> list[dict]:
@@ -1689,6 +1868,33 @@ async def analyze_game(req: AnalyzeRequest):
 
     # Update the cached game list in Firestore with analysis results
     _persist_analysis_to_firestore(date_str, base_game_id, analysis)
+
+    # Save pick snapshot for pre-game analysis (not live re-analysis)
+    if not is_live and analysis.get("best_bet"):
+        ou_text = (analysis.get("ou") or "").strip()
+        ou_dir_m = re.match(r'^(OVER|UNDER)', ou_text, re.IGNORECASE)
+        ou_dir = ou_dir_m.group(1).upper() if ou_dir_m else None
+        # Strip numeric O/U line from the ou_lean text, e.g. "OVER 224.5 — ..." → "224.5"
+        ou_line_m = re.search(r'(OVER|UNDER)\s+(\d+\.?\d*)', ou_text, re.IGNORECASE)
+        ou_line_val = lines.get("ou") or (ou_line_m.group(2) if ou_line_m else None)
+        pick_data = {
+            "game_id":      base_game_id,
+            "away":         game["away"],
+            "home":         game["home"],
+            "away_name":    game.get("awayName", game["away"]),
+            "home_name":    game.get("homeName", game["home"]),
+            "best_bet":     analysis.get("best_bet"),
+            "bet_team":     analysis.get("bet_team"),
+            "bet_is_spread": analysis.get("bet_is_spread", False),
+            "spread_line":  lines.get("spread"),
+            "ou":           analysis.get("ou"),
+            "ou_line":      ou_line_val,
+            "ou_direction": ou_dir,
+            "dubl_score_bet": analysis.get("dubl_score_bet"),
+            "dubl_score_ou":  analysis.get("dubl_score_ou"),
+            "saved_at":     datetime.now(timezone.utc).isoformat(),
+        }
+        _save_pick_to_firestore(date_str, pick_data)
 
     return {"analysis": analysis}
 

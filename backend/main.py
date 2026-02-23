@@ -112,11 +112,18 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 NBA_STATS_URL       = "https://stats.nba.com/stats/leaguedashteamstats"
+# stats.nba.com requires these specific headers or it returns 400/403
 NBA_STATS_HEADERS   = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer":    "https://www.nba.com/",
-    "Accept":     "application/json, text/plain, */*",
-    "Origin":     "https://www.nba.com",
+    "User-Agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Referer":            "https://www.nba.com/stats/",
+    "Accept":             "application/json, text/plain, */*",
+    "Accept-Language":    "en-US,en;q=0.9",
+    "Accept-Encoding":    "gzip, deflate, br",
+    "Origin":             "https://www.nba.com",
+    "Host":               "stats.nba.com",
+    "Connection":         "keep-alive",
+    "x-nba-stats-origin": "stats",
+    "x-nba-stats-token":  "true",
 }
 
 
@@ -267,15 +274,31 @@ async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
         "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
     }
 
-    try:
-        r_adv, r_l10 = await asyncio.gather(
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-            client.get(NBA_STATS_URL, params={**base_params, "MeasureType": "Base", "LastNGames": 10},
-                       headers=NBA_STATS_HEADERS, timeout=10),
-        )
-    except Exception as e:
-        logging.warning(f"NBA Stats API fetch failed: {e}")
+    r_adv = r_l10 = None
+    for attempt in range(3):
+        try:
+            r_adv, r_l10 = await asyncio.gather(
+                client.get(NBA_STATS_URL,
+                           params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
+                           headers=NBA_STATS_HEADERS, timeout=20),
+                client.get(NBA_STATS_URL,
+                           params={**base_params, "MeasureType": "Base", "LastNGames": 10},
+                           headers=NBA_STATS_HEADERS, timeout=20),
+            )
+            # stats.nba.com returns 400 without proper headers; surface the status
+            if r_adv.status_code != 200:
+                logging.warning(f"NBA Stats API: HTTP {r_adv.status_code} on attempt {attempt+1} — {r_adv.text[:200]}")
+                r_adv = r_l10 = None
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                continue
+            break
+        except Exception as e:
+            logging.warning(f"NBA Stats API fetch failed (attempt {attempt+1}): {type(e).__name__}: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+
+    if r_adv is None:
         return {}
 
     def _parse(resp, *fields):
@@ -562,20 +585,31 @@ async def validate_with_claude(
 
     gemini_bet = gemini_analysis.get("best_bet", "None")
     gemini_ou = gemini_analysis.get("ou", "None")
+    today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     prompt = (
-        f"{chr(10).join(context_parts)}\n{sim_block}\n\n"
-        f"Gemini's picks:\n"
+        f"TODAY'S DATE: {today_str}\n\n"
+        "CRITICAL CONSTRAINTS — read before anything else:\n"
+        "1. You are claude-haiku with a knowledge cutoff of August 2025. Today is well after that.\n"
+        "2. You have NO internet access. You cannot look up current scores, injuries, or rosters.\n"
+        "3. The data block below is the ONLY source of truth. Do NOT use your training memory for injuries, "
+        "roster status, recent trades, or team performance — it is outdated and will be wrong.\n"
+        "4. If the injury list below is empty, assume NO relevant injuries are known. Do NOT invent or recall injuries from memory.\n"
+        "5. Agree/disagree based ONLY on the stats and simulation data provided. Never cite an injury or fact you know from training.\n\n"
+        "--- DATA (all current, fetched live today) ---\n"
+        f"{chr(10).join(context_parts)}\n{sim_block}\n"
+        "--- END DATA ---\n\n"
+        f"Gemini's picks (Gemini has live internet access and searched for current lines):\n"
         f"  BEST BET: {gemini_bet}\n"
         f"  O/U LEAN: {gemini_ou}\n\n"
-        "You are an independent NBA betting analyst. Evaluate Gemini's picks.\n"
+        "Evaluate Gemini's picks using ONLY the stats and simulation data above.\n"
         "Respond with EXACTLY these lines:\n"
-        f"AGREE_BET: [YES or NO]\n"
-        f"CLAUDE_BET: [Your own best bet pick — same format: TEAM LINE — 1 sentence reason]\n"
-        f"AGREE_OU: [YES or NO]\n"
-        f"CLAUDE_OU: [Your own O/U pick — OVER/UNDER X.X — 1 sentence reason]\n"
-        f"CONFIDENCE: [1-5 integer — how confident are you in Gemini's picks overall]\n"
-        f"REASONING: [1-2 sentences on why you agree or disagree]"
+        "AGREE_BET: [YES or NO]\n"
+        "CLAUDE_BET: [Your best bet using only the data above — TEAM LINE — 1 sentence citing a stat or sim result]\n"
+        "AGREE_OU: [YES or NO]\n"
+        "CLAUDE_OU: [Your O/U pick using only the data above — OVER/UNDER X.X — 1 sentence citing pace or ratings]\n"
+        "CONFIDENCE: [1-5 integer]\n"
+        "REASONING: [1-2 sentences citing only stats/sim from the data block above — no injuries or facts from memory]"
     )
 
     try:

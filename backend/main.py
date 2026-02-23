@@ -552,7 +552,7 @@ async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[
         home_abbr = g["home"]
         away_abbr = g["away"]
 
-        # Extract moneylines from pickcenter (DraftKings)
+        # Extract moneylines + open/close lines from pickcenter (DraftKings)
         for pc in result.get("pickcenter", []):
             hto = pc.get("homeTeamOdds", {})
             ato = pc.get("awayTeamOdds", {})
@@ -566,13 +566,38 @@ async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[
                 g["espn_awayOdds"] = _fmt_american(aml)
                 if g["espn_awayOdds"] == "—":
                     g["espn_awayOdds"] = None
-            # Also grab spread odds
+            # Spread odds
             hso = hto.get("spreadOdds")
             aso = ato.get("spreadOdds")
             if hso is not None:
                 g["espn_homeSpreadOdds"] = _fmt_american(hso)
             if aso is not None:
                 g["espn_awaySpreadOdds"] = _fmt_american(aso)
+
+            # Opening lines from DraftKings (structured open/close data)
+            ml = pc.get("moneyline", {})
+            ps = pc.get("pointSpread", {})
+            tot = pc.get("total", {})
+
+            # Opening moneyline
+            open_hml = ml.get("home", {}).get("open", {}).get("odds")
+            open_aml = ml.get("away", {}).get("open", {}).get("odds")
+            if open_hml:
+                g["espn_opening_homeOdds"] = str(open_hml)
+            if open_aml:
+                g["espn_opening_awayOdds"] = str(open_aml)
+
+            # Opening spread (home perspective)
+            open_spread_line = ps.get("home", {}).get("open", {}).get("line")
+            if open_spread_line is not None:
+                g["espn_opening_spread"] = f"{home_abbr} {open_spread_line}"
+
+            # Opening total
+            open_total = tot.get("over", {}).get("open", {}).get("line", "")
+            if open_total:
+                # ESPN formats as "o227.5" — strip the prefix
+                g["espn_opening_ou"] = re.sub(r'^[ou]', '', str(open_total))
+
             break  # first provider is enough
 
         # Extract ESPN BPI predictor win probability
@@ -1218,10 +1243,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         # Build result without espn_* fields
         base = {k: v for k, v in g.items() if not k.startswith("espn_")}
 
-        # Opening lines from sticky cache (snapshotted on first write)
+        # Opening lines: prefer ESPN pickcenter open/close, fall back to sticky snapshot
         opening = {}
         for f in _OPENING_FIELDS:
-            val = sticky.get(f"opening_{f}")
+            val = g.get(f"espn_opening_{f}") or sticky.get(f"opening_{f}")
             if val:
                 opening[f"opening_{f}"] = val
 

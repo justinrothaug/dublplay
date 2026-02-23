@@ -726,10 +726,6 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
 
         if odds_data:
             result[key] = odds_data
-            # Persist so live/final games still show the line
-            today = datetime.now(timezone.utc).strftime("%Y%m%d")
-            existing = _get_sticky(today, key)
-            _set_sticky(today, key, {**existing, **odds_data})
     cache_set("dk_game_lines", result)
     return result
 
@@ -784,9 +780,6 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                today = datetime.now(timezone.utc).strftime("%Y%m%d")
-                existing = _get_sticky(today, key)
-                _set_sticky(today, key, {**existing, **entry})
         if result:
             cache_set("odds", result)
         return result
@@ -848,11 +841,6 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                today = datetime.now(timezone.utc).strftime("%Y%m%d")
-                existing = _get_sticky(today, key)
-                _set_sticky(today, key, {**existing, **entry})
-        if result:
-            pass  # already persisted per-game above
         return result
     except Exception:
         return {}

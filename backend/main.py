@@ -264,6 +264,12 @@ def _save_sticky_odds() -> None:
     _save_odds_to_firestore(date_str, _sticky_odds)
 
 
+def _espn_season_year() -> int:
+    """ESPN uses the END year of the season (2024-25 → 2025, 2025-26 → 2026)."""
+    now = datetime.now(timezone.utc)
+    return now.year + 1 if now.month >= 10 else now.year
+
+
 async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
     """
     Fetch team season stats from ESPN standings API.
@@ -271,11 +277,25 @@ async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
     ESPN is reliably reachable from all hosting environments.
     PACE is set to league average since ESPN doesn't expose per-possession pace.
     """
-    try:
-        r = await client.get(ESPN_STANDINGS_URL, params={"season": "2025"}, timeout=10)
-        data = r.json()
-    except Exception as e:
-        logging.warning(f"ESPN standings fetch failed: {type(e).__name__}: {e}")
+    season_year = _espn_season_year()
+    # Try current season first; fall back to no-param (ESPN default) if empty
+    urls_to_try = [
+        (ESPN_STANDINGS_URL, {"season": str(season_year), "seasontype": "2"}),
+        (ESPN_STANDINGS_URL, {}),
+    ]
+    data = None
+    for url, params in urls_to_try:
+        try:
+            r = await client.get(url, params=params, timeout=10)
+            data = r.json()
+            # Quick check: does the response have actual standings data?
+            s = data.get("standings", {})
+            if s.get("entries") or any(g.get("entries") for g in s.get("groups", [])):
+                break  # got real data
+            logging.debug(f"ESPN standings attempt {params} returned no entries, retrying")
+        except Exception as e:
+            logging.warning(f"ESPN standings fetch failed ({params}): {type(e).__name__}: {e}")
+    if data is None:
         return {}
 
     out: dict[str, dict] = {}
@@ -647,27 +667,37 @@ async def validate_with_claude(
 
     gemini_bet = gemini_analysis.get("best_bet", "None")
     gemini_ou = gemini_analysis.get("ou", "None")
+    gemini_bet_reasoning = gemini_analysis.get("dubl_reasoning_bet") or ""
+    gemini_ou_reasoning  = gemini_analysis.get("dubl_reasoning_ou") or ""
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    has_stats = bool(context_parts)  # at minimum, we always have the game matchup
-    data_section = "\n".join(context_parts) + ("\n" + sim_block if sim_block else "")
+    # Skip dubl check if there's nothing concrete to validate against
+    if gemini_bet in (None, "None", "") and gemini_ou in (None, "None", ""):
+        return None
+
+    data_section = "\n".join(context_parts)
+    if sim_block:
+        data_section += "\n" + sim_block
 
     prompt = (
-        f"TODAY: {today_str}. Knowledge cutoff: Aug 2025 — do NOT use training memory for injuries, "
-        "rosters, or trades. Do NOT look anything up. Only use the data below.\n"
-        "If data is sparse, do your best with what is available — do not refuse to evaluate.\n\n"
-        f"DATA:\n{data_section}\n\n"
-        f"PICKS TO EVALUATE:\n"
-        f"  BEST BET: {gemini_bet}\n"
-        f"  O/U LEAN: {gemini_ou}\n\n"
-        "Evaluate these picks based on the data above and general basketball logic.\n"
-        "Respond with EXACTLY these lines (no other text):\n"
+        f"TODAY: {today_str}. You have NO internet access. Knowledge cutoff Aug 2025.\n"
+        "ROLE: Logic checker. Evaluate whether the following NBA picks are logically sound "
+        "based on the reasoning provided. Do NOT independently predict outcomes.\n"
+        "RULE: If the reasoning is plausible or you cannot identify a specific concrete flaw, "
+        "output AGREE_BET: YES. Only output NO for a clear, specific logical error.\n"
+        "RULE: Never mention data limitations, missing stats, or uncertainty in your output.\n\n"
+        f"STATS/CONTEXT (if available):\n{data_section}\n\n"
+        f"PICK: {gemini_bet}\n"
+        f"REASONING: {gemini_bet_reasoning}\n\n"
+        f"O/U PICK: {gemini_ou}\n"
+        f"O/U REASONING: {gemini_ou_reasoning}\n\n"
+        "Respond with EXACTLY these lines (no other text, no extra commentary):\n"
         "AGREE_BET: [YES or NO]\n"
-        "DUBL_BET: [Your best bet — TEAM LINE — 1 sentence reason]\n"
+        "DUBL_BET: [TEAM LINE — 1 sentence]\n"
         "AGREE_OU: [YES or NO]\n"
-        "DUBL_OU: [Your O/U pick — OVER/UNDER X.X — 1 sentence reason]\n"
-        "CONFIDENCE: [1-5 integer]\n"
-        "REASONING: [1-2 sentences]"
+        "DUBL_OU: [OVER/UNDER X.X — 1 sentence]\n"
+        "CONFIDENCE: [1-5]\n"
+        "REASONING: [1 sentence conclusion, no caveats about missing data]"
     )
 
     try:

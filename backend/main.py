@@ -27,6 +27,8 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+# Limit concurrent Claude calls — free tier allows ~5 concurrent but 11 games hit that limit
+_claude_semaphore = asyncio.Semaphore(2)
 
 # ── FIREBASE / FIRESTORE ───────────────────────────────────────────────────────
 try:
@@ -278,16 +280,27 @@ async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     try:
-        for entry in data.get("standings", {}).get("entries", []):
+        standings_obj = data.get("standings", {})
+        # ESPN returns either a flat entries list or groups with nested entries
+        # (conference-split view uses groups[].entries[])
+        raw_entries = standings_obj.get("entries", [])
+        if not raw_entries:
+            for group in standings_obj.get("groups", []):
+                raw_entries.extend(group.get("entries", []))
+
+        if not raw_entries:
+            # Log first 500 chars of response to diagnose structure
+            logging.warning(f"ESPN standings: no entries found. Keys: {list(standings_obj.keys())}. Response: {str(data)[:500]}")
+
+        for entry in raw_entries:
             abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
             if not abbr:
                 continue
             stats_map = {s["name"]: s.get("value") for s in entry.get("stats", []) if "name" in s}
-            ppg  = stats_map.get("pointsFor")   or stats_map.get("avgPointsFor")
-            papg = stats_map.get("pointsAgainst") or stats_map.get("avgPointsAgainst")
+            # ESPN uses avgPointsFor/avgPointsAgainst in standings stats
+            ppg  = stats_map.get("avgPointsFor")   or stats_map.get("pointsFor")
+            papg = stats_map.get("avgPointsAgainst") or stats_map.get("pointsAgainst")
             if ppg is not None and papg is not None:
-                # Scale PPG → per-100-possession equivalent (multiply by 100/pace ≈ 1.01)
-                # Good enough for relative team ranking in the simulation
                 out[abbr] = {
                     "OFF_RATING": round(ppg * 100 / LEAGUE_AVG_PACE, 1),
                     "DEF_RATING": round(papg * 100 / LEAGUE_AVG_PACE, 1),
@@ -297,7 +310,7 @@ async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
         logging.warning(f"ESPN standings parse failed: {e}")
 
     if out:
-        logging.info(f"ESPN standings: loaded {len(out)} teams (using PPG/PAPG as efficiency proxy)")
+        logging.info(f"ESPN standings: loaded {len(out)} teams (PPG/PAPG as efficiency proxy)")
     return out
 
 
@@ -658,20 +671,21 @@ async def validate_with_claude(
     )
 
     try:
-        resp = await client.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 400,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=20,
-        )
+        async with _claude_semaphore:
+            resp = await client.post(
+                ANTHROPIC_URL,
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 400,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20,
+            )
         data = resp.json()
         if "error" in data:
             logging.warning(f"Claude validation error: {data['error']}")

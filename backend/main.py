@@ -227,13 +227,19 @@ def any_name_to_abbr(name: str) -> str:
 
 # Sticky odds: pre-game lines that persist in memory and in Firestore.
 # _sticky_odds is the hot in-memory cache; Firestore is the durable backing store.
-_sticky_odds: dict[str, dict] = {}
+# Keyed by date_str → game_id → odds dict. Each date only contains its own games.
+_sticky_odds: dict[str, dict[str, dict]] = {}
 
 
-def _save_sticky_odds() -> None:
-    """Write current in-memory odds to Firestore under today's date."""
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    _save_odds_to_firestore(date_str, _sticky_odds)
+def _get_sticky(date_str: str, game_id: str) -> dict:
+    """Get sticky odds for a specific game on a specific date."""
+    return _sticky_odds.get(date_str, {}).get(game_id, {})
+
+
+def _set_sticky(date_str: str, game_id: str, odds: dict) -> None:
+    """Set sticky odds for a specific game on a specific date, then persist."""
+    _sticky_odds.setdefault(date_str, {})[game_id] = odds
+    _save_odds_to_firestore(date_str, _sticky_odds.get(date_str, {}))
 
 
 async def fetch_espn_standings(client: httpx.AsyncClient) -> dict[str, dict]:
@@ -610,10 +616,9 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
         if odds_data:
             result[key] = odds_data
             # Persist so live/final games still show the line
-            _sticky_odds[key] = {**_sticky_odds.get(key, {}), **odds_data}
-
-    if result:
-        _save_sticky_odds()
+            today = datetime.now(timezone.utc).strftime("%Y%m%d")
+            existing = _get_sticky(today, key)
+            _set_sticky(today, key, {**existing, **odds_data})
     cache_set("dk_game_lines", result)
     return result
 
@@ -668,9 +673,10 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
+                today = datetime.now(timezone.utc).strftime("%Y%m%d")
+                existing = _get_sticky(today, key)
+                _set_sticky(today, key, {**existing, **entry})
         if result:
-            _save_sticky_odds()
             cache_set("odds", result)
         return result
     except Exception:
@@ -731,9 +737,11 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
             if entry:
                 result[key] = entry
-                _sticky_odds[key] = {**_sticky_odds.get(key, {}), **entry}
+                today = datetime.now(timezone.utc).strftime("%Y%m%d")
+                existing = _get_sticky(today, key)
+                _set_sticky(today, key, {**existing, **entry})
         if result:
-            _save_sticky_odds()
+            pass  # already persisted per-game above
         return result
     except Exception:
         return {}
@@ -1085,8 +1093,9 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         gid = g["id"]
         # Strip YYYYMMDD suffix so tomorrow games match odds_map keys
         base_id = re.sub(r'-\d{8}$', '', gid)
+        ds = date_str or datetime.now(timezone.utc).strftime("%Y%m%d")
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
-        sticky = _sticky_odds.get(base_id) or _sticky_odds.get(gid) or {}
+        sticky = _get_sticky(ds, base_id) or _get_sticky(ds, gid)
 
         spread          = g.get("espn_spread")   or o.get("spread")          or sticky.get("spread")
         ou              = g.get("espn_ou")        or o.get("ou")              or sticky.get("ou")
@@ -1097,14 +1106,10 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
 
         # Persist under base_id so both today and tomorrow lookups can find it
         if any([spread, ou, homeOdds]):
-            _sticky_odds[base_id] = {k: v for k, v in {
+            _set_sticky(ds, base_id, {k: v for k, v in {
                 "spread": spread, "ou": ou, "homeOdds": homeOdds, "awayOdds": awayOdds,
                 "homeSpreadOdds": homeSpreadOdds, "awaySpreadOdds": awaySpreadOdds,
-            }.items() if v}
-            _save_odds_to_firestore(
-                date_str or datetime.now(timezone.utc).strftime("%Y%m%d"),
-                _sticky_odds,
-            )
+            }.items() if v})
 
         home_prob = away_prob = 50.0
         if homeOdds and awayOdds:
@@ -1153,16 +1158,17 @@ async def _background_refresh_odds(date_str: str) -> None:
         if not games:
             return
         changed = False
+        date_odds = _sticky_odds.setdefault(date_str, {})
         for g in games:
             key = re.sub(r'-\d{8}$', '', g["id"])
             for espn_field, out_field in [("espn_homeOdds","homeOdds"),("espn_awayOdds","awayOdds"),
                                           ("espn_spread","spread"),("espn_ou","ou")]:
                 val = g.get(espn_field)
-                if val and _sticky_odds.get(key, {}).get(out_field) != val:
-                    _sticky_odds.setdefault(key, {})[out_field] = val
+                if val and date_odds.get(key, {}).get(out_field) != val:
+                    date_odds.setdefault(key, {})[out_field] = val
                     changed = True
         if changed:
-            _save_odds_to_firestore(date_str, _sticky_odds)
+            _save_odds_to_firestore(date_str, date_odds)
     except Exception as e:
         logging.warning(f"Background odds refresh failed: {e}")
 
@@ -1176,7 +1182,7 @@ async def get_games(date: Optional[str] = None):
     if time.time() - _firestore_last_synced.get(date_str, 0) > FIRESTORE_SYNC_TTL:
         stored = _load_odds_from_firestore(date_str)
         if stored:
-            _sticky_odds.update(stored)
+            _sticky_odds.setdefault(date_str, {}).update(stored)
         _firestore_last_synced[date_str] = time.time()
 
     # ── 2. Fetch ESPN games + enrich with summary data (moneylines, BPI win prob)
@@ -1209,12 +1215,14 @@ async def debug_odds():
 
     espn_ids = [g["id"] for g in espn_games]
 
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_odds = _sticky_odds.get(today, {})
     info: dict = {
         "espn_game_ids": espn_ids,
-        "sticky_odds_keys": list(_sticky_odds.keys()),
+        "sticky_odds_keys": list(today_odds.keys()),
         "dk_cache_fresh": cache_get("dk_game_lines") is not None,
-        "matched": [k for k in _sticky_odds if k in espn_ids],
-        "unmatched_espn": [k for k in espn_ids if k not in _sticky_odds],
+        "matched": [k for k in today_odds if k in espn_ids],
+        "unmatched_espn": [k for k in espn_ids if k not in today_odds],
     }
     return info
 
@@ -1467,7 +1475,7 @@ async def analyze_game(req: AnalyzeRequest):
     # Resolve odds: ESPN embedded (freshest) → sticky cache → N/A
     # Strip date suffix so tomorrow game IDs (e.g. orl-phx-20260221) find cached odds
     base_game_id = re.sub(r'-\d{8}$', '', req.game_id)
-    sticky = _sticky_odds.get(base_game_id) or _sticky_odds.get(req.game_id) or {}
+    sticky = _get_sticky(today_date, base_game_id) or _get_sticky(today_date, req.game_id)
     ou_line   = game.get("espn_ou")       or sticky.get("ou")       or "N/A"
     spread_ln = game.get("espn_spread")   or sticky.get("spread")   or "N/A"
     away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
@@ -1548,8 +1556,8 @@ async def analyze_game(req: AnalyzeRequest):
             "spread":   lines.get("spread"),
             "ou":       lines.get("ou"),
         }.items() if v}
-        _sticky_odds[base_game_id] = {**_sticky_odds.get(base_game_id, {}), **entry}
-        _save_odds_to_firestore(date_str, _sticky_odds)
+        existing = _get_sticky(date_str, base_game_id)
+        _set_sticky(date_str, base_game_id, {**existing, **entry})
 
     return {"analysis": analysis}
 

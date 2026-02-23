@@ -38,7 +38,7 @@ const americanToPayout = (oddsStr, stake) => {
 const edgeColor = s => s >= 4.0 ? T.green : s >= 3.0 ? T.gold : T.red;
 const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
-// Adjust Dubl Score based on Claude consensus (+0.5 agree, -0.5 disagree)
+// Adjust Dubl Score based on dubl check consensus (+0.5 agree, -0.5 disagree)
 const adjustedDublScore = (score, claudeAgrees) => {
   if (score == null) return score;
   if (claudeAgrees === true)  return Math.min(5.0, Math.round((score + 0.5) * 10) / 10);
@@ -465,7 +465,7 @@ function ScorePip({ score, reasoning, claudeAgrees, claudePick, claudeReasoning 
           {claudeAgrees !== null && claudeAgrees !== undefined && (
             <div style={{ borderTop:`1px solid rgba(255,255,255,0.07)`, paddingTop:7, marginTop: reasoning ? 0 : 0 }}>
               <div style={{ fontSize:8, color:claudeColor, letterSpacing:"0.08em", fontWeight:800, marginBottom:4 }}>
-                CLAUDE · {claudeAgrees ? "✓ AGREES" : "✗ DISAGREES"}
+                DUBL CHECK · {claudeAgrees ? "✓ AGREES" : "✗ DISAGREES"}
               </div>
               {!claudeAgrees && claudePick && (
                 <div style={{ fontSize:10, color:T.text2, marginBottom:4 }}>{claudePick}</div>
@@ -1034,7 +1034,7 @@ function TopPickDetailPopup({ pick, onClose, onPickOdds }) {
               <div style={{ borderTop:`1px solid rgba(255,255,255,0.07)`, paddingTop:7 }}>
                 <div style={{ fontSize:8, letterSpacing:"0.08em", fontWeight:800, marginBottom:4,
                   color: pick.claudeAgrees ? "#53d337" : "#f84646" }}>
-                  CLAUDE · {pick.claudeAgrees ? "✓ AGREES" : "✗ DISAGREES"}
+                  DUBL CHECK · {pick.claudeAgrees ? "✓ AGREES" : "✗ DISAGREES"}
                 </div>
                 {!pick.claudeAgrees && pick.claudePick && (
                   <div style={{ fontSize:10, color:T.text2, marginBottom:4 }}>{pick.claudePick}</div>

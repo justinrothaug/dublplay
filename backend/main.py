@@ -127,6 +127,10 @@ NBA_STATS_HEADERS   = {
 }
 
 
+ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/standings"
+LEAGUE_AVG_PACE   = 99.0  # used when pace not available from primary source
+
+
 def _current_nba_season() -> str:
     now = datetime.now(timezone.utc)
     y = now.year
@@ -258,68 +262,113 @@ def _save_sticky_odds() -> None:
     _save_odds_to_firestore(date_str, _sticky_odds)
 
 
+async def _fetch_espn_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
+    """
+    Fetch team season stats from ESPN standings API.
+    Returns OFF_RATING (points/game) and DEF_RATING (points-allowed/game) keyed by abbr.
+    ESPN is reliably reachable from all hosting environments.
+    PACE is set to league average since ESPN doesn't expose per-possession pace.
+    """
+    try:
+        r = await client.get(ESPN_STANDINGS_URL, params={"season": "2025"}, timeout=10)
+        data = r.json()
+    except Exception as e:
+        logging.warning(f"ESPN standings fetch failed: {type(e).__name__}: {e}")
+        return {}
+
+    out: dict[str, dict] = {}
+    try:
+        for entry in data.get("standings", {}).get("entries", []):
+            abbr = norm_abbr(entry.get("team", {}).get("abbreviation", ""))
+            if not abbr:
+                continue
+            stats_map = {s["name"]: s.get("value") for s in entry.get("stats", []) if "name" in s}
+            ppg  = stats_map.get("pointsFor")   or stats_map.get("avgPointsFor")
+            papg = stats_map.get("pointsAgainst") or stats_map.get("avgPointsAgainst")
+            if ppg is not None and papg is not None:
+                # Scale PPG → per-100-possession equivalent (multiply by 100/pace ≈ 1.01)
+                # Good enough for relative team ranking in the simulation
+                out[abbr] = {
+                    "OFF_RATING": round(ppg * 100 / LEAGUE_AVG_PACE, 1),
+                    "DEF_RATING": round(papg * 100 / LEAGUE_AVG_PACE, 1),
+                    "PACE":       LEAGUE_AVG_PACE,
+                }
+    except Exception as e:
+        logging.warning(f"ESPN standings parse failed: {e}")
+
+    if out:
+        logging.info(f"ESPN standings: loaded {len(out)} teams (using PPG/PAPG as efficiency proxy)")
+    return out
+
+
 async def fetch_nba_team_stats(client: httpx.AsyncClient) -> dict[str, dict]:
     """
-    Fetch season advanced stats (offRtg, defRtg, pace) + last-10 record for all teams.
-    Cached for 30 minutes — season averages barely move day to day.
-    Returns dict keyed by team abbreviation.
+    Fetch season advanced stats (offRtg, defRtg, pace) for all teams.
+    Primary: stats.nba.com (exact per-100-possession ratings).
+    Fallback: ESPN standings (points/game scaled to per-100 equivalent).
+    Cached for 30 min (primary) or 15 min (ESPN fallback, retry sooner).
     """
     cached = cache_get("nba_team_stats")
     if cached is not None:
         return cached
 
+    # ── Try stats.nba.com first (exact advanced stats, but may be blocked)
     season = _current_nba_season()
     base_params = {
         "LeagueID": "00", "Season": season, "SeasonType": "Regular Season",
         "PerMode": "PerGame", "PaceAdjust": "N", "PlusMinus": "N", "Rank": "N",
     }
-
     r_adv = r_l10 = None
-    for attempt in range(3):
+    for attempt in range(2):  # 2 attempts max — if it's blocked, don't waste time
         try:
             r_adv, r_l10 = await asyncio.gather(
                 client.get(NBA_STATS_URL,
                            params={**base_params, "MeasureType": "Advanced", "LastNGames": 0},
-                           headers=NBA_STATS_HEADERS, timeout=20),
+                           headers=NBA_STATS_HEADERS, timeout=8),
                 client.get(NBA_STATS_URL,
                            params={**base_params, "MeasureType": "Base", "LastNGames": 10},
-                           headers=NBA_STATS_HEADERS, timeout=20),
+                           headers=NBA_STATS_HEADERS, timeout=8),
             )
-            # stats.nba.com returns 400 without proper headers; surface the status
             if r_adv.status_code != 200:
-                logging.warning(f"NBA Stats API: HTTP {r_adv.status_code} on attempt {attempt+1} — {r_adv.text[:200]}")
+                logging.warning(f"NBA Stats API HTTP {r_adv.status_code}: {r_adv.text[:120]}")
                 r_adv = r_l10 = None
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-                continue
+                break  # non-200 = blocked/error, go straight to ESPN fallback
             break
         except Exception as e:
-            logging.warning(f"NBA Stats API fetch failed (attempt {attempt+1}): {type(e).__name__}: {e}")
-            if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
+            logging.warning(f"NBA Stats API attempt {attempt+1}: {type(e).__name__}")
+            r_adv = r_l10 = None
 
-    if r_adv is None:
-        return {}
+    if r_adv is not None:
+        def _parse(resp, *fields):
+            try:
+                rs = resp.json()["resultSets"][0]
+                headers, rows = rs["headers"], rs["rowSet"]
+                out = {}
+                for row in rows:
+                    d = dict(zip(headers, row))
+                    abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
+                    if abbr:
+                        out[abbr] = {f: d.get(f) for f in fields}
+                return out
+            except Exception:
+                return {}
 
-    def _parse(resp, *fields):
-        try:
-            rs = resp.json()["resultSets"][0]
-            headers, rows = rs["headers"], rs["rowSet"]
-        except Exception:
-            return {}
-        out = {}
-        for row in rows:
-            d = dict(zip(headers, row))
-            abbr = norm_abbr(d.get("TEAM_ABBREVIATION", ""))
-            if abbr:
-                out[abbr] = {f: d.get(f) for f in fields}
-        return out
+        adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
+        l10 = _parse(r_l10, "W", "L")
+        if adv:
+            merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
+            logging.info(f"NBA Stats API: loaded {len(merged)} teams (exact advanced stats)")
+            cache_set("nba_team_stats", merged, ttl=1800)
+            return merged
 
-    adv = _parse(r_adv, "OFF_RATING", "DEF_RATING", "PACE")
-    l10 = _parse(r_l10, "W", "L")
-    merged = {abbr: {**adv.get(abbr, {}), **l10.get(abbr, {})} for abbr in set(adv) | set(l10)}
-    cache_set("nba_team_stats", merged, ttl=1800)
-    return merged
+    # ── Fallback: ESPN standings (real live data, always reachable)
+    espn_stats = await _fetch_espn_team_stats(client)
+    if espn_stats:
+        cache_set("nba_team_stats", espn_stats, ttl=900)
+        return espn_stats
+
+    logging.warning("Both NBA Stats API and ESPN standings unavailable — simulation disabled")
+    return {}
 
 
 async def fetch_team_rest_days(
@@ -587,29 +636,25 @@ async def validate_with_claude(
     gemini_ou = gemini_analysis.get("ou", "None")
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
+    has_stats = bool(context_parts)  # at minimum, we always have the game matchup
+    data_section = "\n".join(context_parts) + ("\n" + sim_block if sim_block else "")
+
     prompt = (
-        f"TODAY'S DATE: {today_str}\n\n"
-        "CRITICAL CONSTRAINTS — read before anything else:\n"
-        "1. You are claude-haiku with a knowledge cutoff of August 2025. Today is well after that.\n"
-        "2. You have NO internet access. You cannot look up current scores, injuries, or rosters.\n"
-        "3. The data block below is the ONLY source of truth. Do NOT use your training memory for injuries, "
-        "roster status, recent trades, or team performance — it is outdated and will be wrong.\n"
-        "4. If the injury list below is empty, assume NO relevant injuries are known. Do NOT invent or recall injuries from memory.\n"
-        "5. Agree/disagree based ONLY on the stats and simulation data provided. Never cite an injury or fact you know from training.\n\n"
-        "--- DATA (all current, fetched live today) ---\n"
-        f"{chr(10).join(context_parts)}\n{sim_block}\n"
-        "--- END DATA ---\n\n"
-        f"Gemini's picks (Gemini has live internet access and searched for current lines):\n"
+        f"TODAY: {today_str}. Knowledge cutoff: Aug 2025 — do NOT use training memory for injuries, "
+        "rosters, or trades. Do NOT look anything up. Only use the data below.\n"
+        "If data is sparse, do your best with what is available — do not refuse to evaluate.\n\n"
+        f"DATA:\n{data_section}\n\n"
+        f"PICKS TO EVALUATE:\n"
         f"  BEST BET: {gemini_bet}\n"
         f"  O/U LEAN: {gemini_ou}\n\n"
-        "Evaluate Gemini's picks using ONLY the stats and simulation data above.\n"
-        "Respond with EXACTLY these lines:\n"
+        "Evaluate these picks based on the data above and general basketball logic.\n"
+        "Respond with EXACTLY these lines (no other text):\n"
         "AGREE_BET: [YES or NO]\n"
-        "CLAUDE_BET: [Your best bet using only the data above — TEAM LINE — 1 sentence citing a stat or sim result]\n"
+        "DUBL_BET: [Your best bet — TEAM LINE — 1 sentence reason]\n"
         "AGREE_OU: [YES or NO]\n"
-        "CLAUDE_OU: [Your O/U pick using only the data above — OVER/UNDER X.X — 1 sentence citing pace or ratings]\n"
+        "DUBL_OU: [Your O/U pick — OVER/UNDER X.X — 1 sentence reason]\n"
         "CONFIDENCE: [1-5 integer]\n"
-        "REASONING: [1-2 sentences citing only stats/sim from the data block above — no injuries or facts from memory]"
+        "REASONING: [1-2 sentences]"
     )
 
     try:
@@ -633,12 +678,14 @@ async def validate_with_claude(
             return None
         text = data["content"][0]["text"]
 
+        MARKERS = r'AGREE_BET:|DUBL_BET:|AGREE_OU:|DUBL_OU:|CONFIDENCE:|REASONING:'
+
         def _ex(marker):
-            m = re.search(rf'{marker}:\s*(.*?)(?=AGREE_BET:|CLAUDE_BET:|AGREE_OU:|CLAUDE_OU:|CONFIDENCE:|REASONING:|$)', text, re.DOTALL | re.IGNORECASE)
+            m = re.search(rf'{marker}\s*(.*?)(?={MARKERS}|$)', text, re.DOTALL | re.IGNORECASE)
             return m.group(1).strip() if m else None
 
         agree_bet = (_ex("AGREE_BET") or "").upper().startswith("YES")
-        agree_ou = (_ex("AGREE_OU") or "").upper().startswith("YES")
+        agree_ou  = (_ex("AGREE_OU") or "").upper().startswith("YES")
         confidence_raw = _ex("CONFIDENCE")
         try:
             confidence = min(5, max(1, int(re.search(r'\d+', confidence_raw or "3").group())))
@@ -646,17 +693,15 @@ async def validate_with_claude(
             confidence = 3
 
         return {
-            "agree_bet": agree_bet,
-            "agree_ou": agree_ou,
-            "claude_bet": _ex("CLAUDE_BET"),
-            "claude_ou": _ex("CLAUDE_OU"),
+            "agree_bet":  agree_bet,
+            "agree_ou":   agree_ou,
+            "claude_bet": _ex("DUBL_BET"),
+            "claude_ou":  _ex("DUBL_OU"),
             "confidence": confidence,
-            "reasoning": _ex("REASONING"),
-            "consensus_bet": "high" if agree_bet else "low",
-            "consensus_ou": "high" if agree_ou else "low",
+            "reasoning":  _ex("REASONING"),
         }
     except Exception as e:
-        logging.warning(f"Claude validation failed: {e!r}")
+        logging.warning(f"Dubl check validation failed: {e!r}")
         return None
 
 

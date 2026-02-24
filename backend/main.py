@@ -115,13 +115,17 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
         return
     try:
         doc_ref = db.collection(_FS_COL).document(date_str)
-        doc_ref.set({"games": {}}, merge=True)          # ensure doc + games map exist
         updates: dict = {"updated_at": fb_firestore.SERVER_TIMESTAMP}
         for gid, o in odds.items():
             for k, v in o.items():
                 if v:
                     updates[f"games.{gid}.{k}"] = v
-        doc_ref.update(updates)
+        try:
+            doc_ref.update(updates)
+        except Exception:
+            # Document doesn't exist yet — create with just odds data
+            doc_ref.set({"updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+            doc_ref.update(updates)
         _odds_updated_at[date_str] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")

@@ -202,16 +202,28 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
   );
 }
 
-function lineMovement(current, opening) {
+function lineMovement(current, opening, isSpread) {
   if (!current || !opening) return null;
-  const numOf = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
+  const teamOf = (s) => { const m = String(s).match(/^([A-Z]{2,4})\s/); return m ? m[1] : null; };
+  const numOf  = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
   const c = numOf(current), o = numOf(opening);
-  if (c === null || o === null || c === o) return null;
-  const diff = c - o;
-  const arrow = diff > 0 ? "\u2191" : "\u2193";
-  const color = diff > 0 ? "#4ade80" : "#f87171";
-  // For spreads: show opening value with same team as current (e.g. "DET -1.5" + opening "-2.5" → "opened -2.5")
-  const openLabel = String(opening).replace(/^[A-Z]{2,4}\s*/, ""); // strip team abbr if any
+  if (c === null || o === null) return null;
+  // If the opening spread is from the other team's perspective, flip the sign
+  // e.g. current "PHI -9.5", opening "IND +6.5" → opening should be -6.5 for PHI
+  let adjustedO = o;
+  if (isSpread) {
+    const curTeam = teamOf(current), openTeam = teamOf(opening);
+    if (curTeam && openTeam && curTeam !== openTeam) adjustedO = -o;
+  }
+  if (c === adjustedO) return null;
+  const diff = c - adjustedO;
+  // For spreads: more negative = bigger favorite, so arrow up means line grew
+  const arrow = isSpread ? (Math.abs(c) > Math.abs(adjustedO) ? "\u2191" : "\u2193")
+                         : (diff > 0 ? "\u2191" : "\u2193");
+  const color = arrow === "\u2191" ? "#4ade80" : "#f87171";
+  // Show the opening value from the SAME team's perspective as the current line
+  const sign = adjustedO > 0 ? "+" : "";
+  const openLabel = isSpread ? `${sign}${adjustedO}` : String(opening).replace(/^[A-Z]{2,4}\s*/, "");
   return { text: `${arrow} opened ${openLabel}`, color };
 }
 
@@ -367,7 +379,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         <div style={{ display:"flex", background:"#0f0d0a" }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
-              movement={lineMovement(dispSpread, game.opening_spread)}
+              movement={lineMovement(dispSpread, game.opening_spread, true)}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />
           )}
           {dispOu && (
@@ -1887,7 +1899,6 @@ export default function App() {
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
-  const dateStripRef = useRef(null);
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -2089,14 +2100,6 @@ export default function App() {
     return opts;
   })();
 
-  // Scroll the date strip so TODAY is visible on mount
-  useEffect(() => {
-    const strip = dateStripRef.current;
-    if (!strip) return;
-    const todayBtn = strip.querySelector("[data-today]");
-    if (todayBtn) todayBtn.scrollIntoView({ inline: "center", block: "nearest", behavior: "instant" });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Build picks lookup map keyed by base game_id (no date suffix)
   const picksMap = {};
   if (picksData?.picks) {
@@ -2114,7 +2117,7 @@ export default function App() {
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
           </div>
           {/* Date strip — scrollable, fills remaining width */}
-          <div ref={dateStripRef} className="date-strip" style={{
+          <div className="date-strip" style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
             display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
           }}>
@@ -2122,7 +2125,7 @@ export default function App() {
               const isActive = selectedDate === val;
               const isPast = val !== null && val !== tomorrowStr;
               return (
-                <button key={label} data-today={label === "TODAY" ? "" : undefined} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
+                <button key={label} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
                   background: isActive ? T.green : "transparent",
                   border: `1px solid ${isActive ? T.green : isPast ? "rgba(255,255,255,0.14)" : T.border}`,
                   color: isActive ? "#000" : isPast ? T.text2 : T.text3,

@@ -516,7 +516,7 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
   const items = [
     { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
     { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
-    { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
+    // { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
   ].filter(i => i.text);
 
   // If live game has no analysis yet, show computed O/U status from scores alone
@@ -764,7 +764,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
             {[
               { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit },
               { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit      },
-              { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null       },
+              // { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null       },
             ].filter(i => i.text).map((item, i) => (
               <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
                 <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
@@ -2080,7 +2080,7 @@ export default function App() {
 
   const TABS = [
     { id:"games", label:"🏀 GAMES" },
-    { id:"props", label:"🎯 PROPS" },
+    // { id:"props", label:"🎯 PROPS" },
     { id:"chat",  label:"💬 CHAT"  },
   ];
 

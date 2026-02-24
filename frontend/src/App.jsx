@@ -2091,10 +2091,15 @@ export default function App() {
 
   // Scroll the date strip so TODAY is visible on mount
   useEffect(() => {
-    const strip = dateStripRef.current;
-    if (!strip) return;
-    const todayBtn = strip.querySelector("[data-today]");
-    if (todayBtn) todayBtn.scrollIntoView({ inline: "center", block: "nearest", behavior: "instant" });
+    requestAnimationFrame(() => {
+      const strip = dateStripRef.current;
+      if (!strip) return;
+      const todayBtn = strip.querySelector("[data-today]");
+      if (!todayBtn) return;
+      const stripRect = strip.getBoundingClientRect();
+      const btnRect = todayBtn.getBoundingClientRect();
+      strip.scrollLeft += btnRect.left - stripRect.left - stripRect.width / 2 + btnRect.width / 2;
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build picks lookup map keyed by base game_id (no date suffix)

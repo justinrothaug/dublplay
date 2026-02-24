@@ -1368,7 +1368,7 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         gid = g["id"]
         # Strip YYYYMMDD suffix so tomorrow games match odds_map keys
         base_id = re.sub(r'-\d{8}$', '', gid)
-        ds = date_str or datetime.now(timezone.utc).strftime("%Y%m%d")
+        ds = date_str or datetime.now().strftime("%Y%m%d")
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
         sticky = _get_sticky(ds, base_id) or _get_sticky(ds, gid)
 
@@ -1488,7 +1488,7 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
 @app.get("/api/games")
 async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
-    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+    date_str = date or datetime.now().strftime("%Y%m%d")
 
     # ── 1. Try serving from Firestore cache (instant, survives container restarts)
     cached_games = _load_games_from_firestore(date_str)
@@ -1505,6 +1505,10 @@ async def get_games(date: Optional[str] = None):
     merged = await _full_espn_refresh(date_str, date)
 
     if not merged:
+        # For a specific date query, no games = no games (e.g. All-Star break).
+        # Only fall back to mock data when loading today and the live API is down.
+        if date:
+            return {"games": [], "source": "empty"}
         return {"games": MOCK_GAMES, "source": "mock"}
 
     return {
@@ -1522,7 +1526,7 @@ async def debug_odds():
 
     espn_ids = [g["id"] for g in espn_games]
 
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today = datetime.now().strftime("%Y%m%d")
     today_odds = _sticky_odds.get(today, {})
     info: dict = {
         "espn_game_ids": espn_ids,
@@ -1781,7 +1785,7 @@ def calculate_parlay(req: ParlayRequest):
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
 
-    today_date = req.date or datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_date = req.date or datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient() as client:
         espn_games, injuries, team_stats = await asyncio.gather(
@@ -1884,7 +1888,7 @@ async def analyze_game(req: AnalyzeRequest):
     analysis = parse_gemini_analysis(text)
 
     # Persist lines + analysis to Firestore so next page load is instant
-    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
+    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now().strftime("%Y%m%d")
     lines = analysis.get("lines") or {}
     if any(v for v in lines.values() if v):
         entry = {k: v for k, v in {
@@ -1933,7 +1937,7 @@ async def analyze_game(req: AnalyzeRequest):
 async def chat(req: ChatRequest):
     key = get_effective_key(req.api_key)
 
-    today_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_date = datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient() as client:
         espn_games, injuries, team_stats = await asyncio.gather(

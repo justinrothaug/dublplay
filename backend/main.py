@@ -1917,6 +1917,12 @@ async def analyze_game(req: AnalyzeRequest):
         existing = _get_sticky(date_str, base_game_id)
         _set_sticky(date_str, base_game_id, {**existing, **entry})
 
+    # Snapshot the exact odds fed to Gemini so the frontend can detect when lines
+    # have moved and a fresh analysis is needed.
+    if analysis.get("best_bet"):
+        analysis["_snap"] = {"spread": spread_ln, "ou": ou_line,
+                              "homeOdds": home_ml, "awayOdds": away_ml}
+
     # Only persist to Firestore when we got a real analysis (non-null best_bet).
     # Persisting a null analysis would cause every page load to re-trigger Gemini.
     if analysis.get("best_bet"):

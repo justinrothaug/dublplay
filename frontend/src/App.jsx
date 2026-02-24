@@ -1947,10 +1947,20 @@ export default function App() {
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
-        // Already have valid cached analysis — load it and skip
+        // Already have valid cached analysis — load it unless odds have moved
         if (g.analysis && g.analysis.best_bet) {
-          setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
-          return;
+          const snap = g.analysis._snap;
+          // Re-analyze pre-game games when spread or O/U changed since last analysis.
+          // Live re-analysis is handled separately by effect #5.
+          const oddsStale = snap && g.status !== "live" && (
+            (g.spread && snap.spread !== "N/A" && snap.spread !== g.spread) ||
+            (g.ou     && snap.ou     !== "N/A" && snap.ou     !== g.ou)
+          );
+          if (!oddsStale) {
+            setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
+            return;
+          }
+          // Odds moved — fall through and re-run Gemini with fresh lines
         }
         // Already attempted this session — don't call Gemini again
         if (analyzedPreGameRef.current.has(g.id)) return;

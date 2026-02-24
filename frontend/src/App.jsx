@@ -2049,11 +2049,12 @@ export default function App() {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const val = d.toISOString().slice(0, 10).replace(/-/g, "");
-      const label = i === 1 ? "YST" : `${d.getMonth()+1}/${d.getDate()}`;
-      opts.push({ label, val });
+      opts.push({ label: `${d.getMonth()+1}/${d.getDate()}`, val });
     }
     opts.push({ label: "TODAY", val: null });
-    opts.push({ label: "TMW", val: tomorrowStr });
+    const tmw = new Date();
+    tmw.setDate(tmw.getDate() + 1);
+    opts.push({ label: `${tmw.getMonth()+1}/${tmw.getDate()}`, val: tomorrowStr });
     return opts;
   })();
 

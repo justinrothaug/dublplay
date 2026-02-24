@@ -128,33 +128,38 @@ def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
 
 
 def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
-    """Persist full game list into nba_daily, preserving existing picks and analysis."""
+    """Persist full game list into nba_daily using dot-notation updates.
+
+    Uses update() with dot-notation paths so that games.X.analysis and
+    games.X.pick are NEVER touched here — those fields are owned by
+    _persist_analysis_to_firestore and _save_pick_to_firestore respectively.
+    This eliminates the race condition where a 30-second poll would replace
+    real Gemini analysis with the null placeholder from _merge_odds.
+    """
     db = _init_firestore()
     if not db or not games:
         return
     try:
         doc_ref = db.collection(_FS_COL).document(date_str)
-        # Read once to preserve picks / analysis already stored
-        existing: dict[str, dict] = {}
-        doc = doc_ref.get()
-        if doc.exists:
-            existing = doc.to_dict().get("games", {})
 
-        games_map: dict[str, dict] = {}
+        # Build flat dot-notation update dict, skipping analysis and pick entirely.
+        updates: dict = {"updated_at": fb_firestore.SERVER_TIMESTAMP}
         for g in games:
             gid = re.sub(r'-\d{8}$', '', g["id"])
-            new_game = dict(g)
-            ex = existing.get(gid, {})
-            if ex.get("pick"):
-                new_game["pick"] = ex["pick"]
-            # Preserve stored analysis when fresh ESPN data has no real content.
-            # ESPN games are initialised with {"best_bet": None, ...} which is
-            # truthy, so check best_bet explicitly rather than the dict itself.
-            if ex.get("analysis", {}).get("best_bet") and not new_game.get("analysis", {}).get("best_bet"):
-                new_game["analysis"] = ex["analysis"]
-            games_map[gid] = new_game
+            for k, v in g.items():
+                if k in ("analysis", "pick"):
+                    continue  # these have dedicated writers — never overwrite
+                updates[f"games.{gid}.{k}"] = v
 
-        doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+        try:
+            doc_ref.update(updates)
+        except Exception:
+            # Document doesn't exist yet — create it without analysis/pick fields.
+            games_map: dict[str, dict] = {}
+            for g in games:
+                gid = re.sub(r'-\d{8}$', '', g["id"])
+                games_map[gid] = {k: v for k, v in g.items() if k not in ("analysis", "pick")}
+            doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP})
     except Exception as e:
         logging.warning(f"Firestore games write failed: {e}")
 

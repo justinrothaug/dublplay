@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "./api.js";
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
@@ -216,7 +216,7 @@ function lineMovement(current, opening) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -383,7 +383,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
       {/* ── Results (final) or Analysis (live/upcoming) ── */}
       {isFinal
-        ? <FinalResultsPanel game={game} aiOverride={aiOverride} />
+        ? <FinalResultsPanel game={game} aiOverride={aiOverride} pickRecord={pickRecord} />
         : <AnalysisPanel
             analysis={displayAnalysis}
             isLive={isLive}
@@ -604,25 +604,37 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 }
 
 // ── FINAL RESULTS PANEL ───────────────────────────────────────────────────────
-function FinalResultsPanel({ game, aiOverride }) {
+function FinalResultsPanel({ game, aiOverride, pickRecord }) {
   const r = calcFinalResults(game);
   if (!r) return null;
 
   const analysis = aiOverride || game.analysis;
 
-  // Did pre-game picks hit?
+  // Prefer pickRecord fields (reliable pre-game snapshot), fall back to analysis
+  const displayBestBet = pickRecord?.best_bet || analysis?.best_bet;
+  const displayOu      = pickRecord?.ou       || analysis?.ou;
+  const displayBetTeam = pickRecord?.bet_team || analysis?.bet_team;
+  const displayProps   = analysis?.props;
+
+  // Did pre-game picks hit? Use stored results if available, else compute from game data.
   let bestBetHit = null;
-  if (analysis?.bet_team) {
+  if (pickRecord?.result_bet != null) {
+    const rb = pickRecord.result_bet;
+    bestBetHit = rb === "HIT" ? true : rb === "MISS" ? false : "push";
+  } else if (displayBetTeam) {
     if (r.spreadResult) {
-      const bettingFav = analysis.bet_team === r.spreadResult.favAbbr;
+      const bettingFav = displayBetTeam === r.spreadResult.favAbbr;
       bestBetHit = bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog";
     } else {
-      bestBetHit = analysis.bet_team === r.mlWinner;
+      bestBetHit = displayBetTeam === r.mlWinner;
     }
   }
   let ouHit = null;
-  if (analysis?.ou && r.totalResult) {
-    const leanedOver = /over/i.test(analysis.ou);
+  if (pickRecord?.result_ou != null) {
+    const ro = pickRecord.result_ou;
+    ouHit = ro === "HIT" ? true : ro === "MISS" ? false : "push";
+  } else if (displayOu && r.totalResult) {
+    const leanedOver = /over/i.test(displayOu);
     ouHit = leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER";
   }
 
@@ -732,15 +744,15 @@ function FinalResultsPanel({ game, aiOverride }) {
         })()}
 
         {/* Pre-game picks + accuracy */}
-        {analysis?.best_bet && (
+        {displayBestBet && (
           <div style={{ marginTop:4, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
             <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>
               PRE-GAME PICKS
             </div>
             {[
-              { icon:"✦", label:"BEST BET",    text:analysis.best_bet, color:T.green,   hit:bestBetHit },
-              { icon:"◉", label:"O/U LEAN",    text:analysis.ou,       color:T.gold,    hit:ouHit      },
-              { icon:"▸", label:"PLAYER PROP", text:analysis.props,    color:"#a78bfa", hit:null       },
+              { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit },
+              { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit      },
+              { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null       },
             ].filter(i => i.text).map((item, i) => (
               <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
                 <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
@@ -751,8 +763,8 @@ function FinalResultsPanel({ game, aiOverride }) {
                       <span style={{
                         fontSize:8, fontWeight:800, letterSpacing:"0.06em",
                         color: hitColor(item.hit),
-                        background: item.hit ? T.greenDim : T.redDim,
-                        border:`1px solid ${item.hit ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+                        background: item.hit === "push" ? "rgba(245,166,35,0.12)" : item.hit ? T.greenDim : T.redDim,
+                        border:`1px solid ${item.hit === "push" ? "rgba(245,166,35,0.3)" : item.hit ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
                         borderRadius:3, padding:"1px 5px",
                       }}>{hitLabel(item.hit)}</span>
                     )}
@@ -770,7 +782,7 @@ function FinalResultsPanel({ game, aiOverride }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -836,18 +848,23 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
         WebkitOverflowScrolling:"touch", padding:"0 20px 20px",
         scrollbarWidth:"none",
       }}>
-        {ordered.map(g => (
-          <GameCard
-            key={g.id}
-            game={g}
-            onRefresh={onRefresh}
-            loadingRefresh={loadingIds.has(g.id)}
-            aiOverride={aiOverrides[g.id]}
-            onPickOdds={onPickOdds}
-            favorites={favorites}
-            onFavorite={onFavorite}
-          />
-        ))}
+        {ordered.map(g => {
+          const baseId = g.id.replace(/-\d{8}$/, "");
+          const pickRecord = picksMap ? (picksMap[baseId] || picksMap[g.id]) : null;
+          return (
+            <GameCard
+              key={g.id}
+              game={g}
+              onRefresh={onRefresh}
+              loadingRefresh={loadingIds.has(g.id)}
+              aiOverride={aiOverrides[g.id]}
+              onPickOdds={onPickOdds}
+              favorites={favorites}
+              onFavorite={onFavorite}
+              pickRecord={pickRecord}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -1155,12 +1172,18 @@ function TopPicksSection({ games, aiOverrides, onPickOdds, favs, onRemoveFav }) 
   }
   const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
 
-  // User-saved picks enriched with live game data
-  const myPicks = (favs || []).map(p => {
-    const liveGame = games.find(g => g.id === p.gameId);
-    const game = liveGame || { ...p.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
-    return { ...p, game };
-  });
+  // User-saved picks — only show ones whose game is in the current date's list.
+  // Match on exact id or base id (strips date suffix) so format differences don't matter.
+  const myPicks = (favs || [])
+    .map(p => {
+      const basePickId = p.gameId.replace(/-\d{8}$/, "");
+      const game = games.find(g =>
+        g.id === p.gameId || g.id.replace(/-\d{8}$/, "") === basePickId
+      );
+      if (!game) return null;
+      return { ...p, game };
+    })
+    .filter(Boolean);
 
   if (top.length === 0 && myPicks.length === 0) return null;
 
@@ -1797,6 +1820,54 @@ function parseGameProp(text, game) {
   };
 }
 
+// ── HIT STATS BANNER ──────────────────────────────────────────────────────────
+function HitStatsBanner({ overallStats, picksData }) {
+  if (!overallStats && !picksData) return null;
+  const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
+  if (totalBet === 0 && totalOu === 0) return null;
+
+  const betPct  = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
+  const ouPct   = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
+  const statColor = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
+
+  return (
+    <div style={{ maxWidth:960, margin:"0 auto", padding:"10px 20px 0" }}>
+      <div style={{
+        background:T.card, border:`1px solid ${T.border}`, borderRadius:10,
+        padding:"9px 16px", display:"flex", alignItems:"center", gap:14, flexWrap:"wrap",
+      }}>
+        <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.12em", fontWeight:700, flexShrink:0 }}>7-DAY RECORD</span>
+        {betPct !== null && (
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ fontSize:9, color:T.text2, fontWeight:600, letterSpacing:"0.05em" }}>BEST BET</span>
+            <span style={{ fontSize:13, fontWeight:800, color:statColor(betPct) }}>
+              {hitsBet}-{totalBet - hitsBet}
+            </span>
+            <span style={{ fontSize:10, color:statColor(betPct), fontWeight:700 }}>({betPct}%)</span>
+          </div>
+        )}
+        {betPct !== null && ouPct !== null && (
+          <span style={{ color:T.text3, fontSize:12 }}>|</span>
+        )}
+        {ouPct !== null && (
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ fontSize:9, color:T.text2, fontWeight:600, letterSpacing:"0.05em" }}>O/U</span>
+            <span style={{ fontSize:13, fontWeight:800, color:statColor(ouPct) }}>
+              {hitsOu}-{totalOu - hitsOu}
+            </span>
+            <span style={{ fontSize:10, color:statColor(ouPct), fontWeight:700 }}>({ouPct}%)</span>
+          </div>
+        )}
+        {picksData?.hit_pct_bet != null && (
+          <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
+            Today: {picksData.hit_pct_bet}% bet · {picksData.hit_pct_ou ?? "—"}% O/U
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [apiKey, setApiKey] = useState(null);
@@ -1811,13 +1882,28 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
+  const [picksData, setPicksData] = useState(null); // picks for the selected date
+  const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
+  const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
+
+  // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
+  const fmtLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+
+  // Stabilized: computed once on mount so midnight rollovers don't silently
+  // swap the game list mid-session. Refresh the page to get the next day.
+  const todayStr = useMemo(() => fmtLocal(new Date()), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tomorrowStr = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10).replace(/-/g, "");
+    return fmtLocal(d);
   })();
 
   // 1) Check server key
@@ -1836,7 +1922,8 @@ export default function App() {
     setDataLoaded(false);
     setGames([]);
     setAiOverrides({});
-    Promise.all([api.getGames(selectedDate), api.getProps()])
+    analyzedPreGameRef.current.clear();
+    Promise.all([api.getGames(selectedDate || todayStr), api.getProps()])
       .then(([g, p]) => {
         setGames(g.games);
         setProps(p.props);
@@ -1851,7 +1938,7 @@ export default function App() {
     const hasLive = games.some(g => g.status === "live");
     if (!hasLive || apiKey === null) return;
     const interval = setInterval(() => {
-      api.getGames(selectedDate)
+      api.getGames(selectedDate || todayStr)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
     }, 30000);
@@ -1859,19 +1946,33 @@ export default function App() {
   }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 4) Auto-analyze non-final games once data loads
-  //    Skip games that already have cached analysis from Firestore
+  //    Skip games that already have cached analysis from Firestore, or were already
+  //    attempted this session (so Gemini doesn't re-run on every page load / date change).
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
-        // If Firestore already has analysis, load it into overrides and skip the API call
+        // Already have valid cached analysis — load it unless odds have moved
         if (g.analysis && g.analysis.best_bet) {
-          setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
-          return;
+          const snap = g.analysis._snap;
+          // Re-analyze pre-game games when spread or O/U changed since last analysis.
+          // Live re-analysis is handled separately by effect #5.
+          const oddsStale = snap && g.status !== "live" && (
+            (g.spread && snap.spread !== "N/A" && snap.spread !== g.spread) ||
+            (g.ou     && snap.ou     !== "N/A" && snap.ou     !== g.ou)
+          );
+          if (!oddsStale) {
+            setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
+            return;
+          }
+          // Odds moved — fall through and re-run Gemini with fresh lines
         }
+        // Already attempted this session — don't call Gemini again
+        if (analyzedPreGameRef.current.has(g.id)) return;
+        analyzedPreGameRef.current.add(g.id);
         setLoadingIds(prev => new Set([...prev, g.id]));
-        api.analyze(g.id, apiKey, selectedDate)
+        api.analyze(g.id, apiKey, selectedDate || todayStr)
           .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
           .catch(console.error)
           .finally(() => setLoadingIds(prev => {
@@ -1890,7 +1991,7 @@ export default function App() {
     newlyLive.forEach(g => {
       analyzedLiveRef.current.add(g.id);
       setLoadingIds(prev => new Set([...prev, g.id]));
-      api.analyze(g.id, apiKey, selectedDate)
+      api.analyze(g.id, apiKey, selectedDate || todayStr)
         .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
         .catch(console.error)
         .finally(() => setLoadingIds(prev => {
@@ -1900,6 +2001,40 @@ export default function App() {
         }));
     });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 6) Load picks for the currently selected date (for HIT/MISS display on game cards)
+  useEffect(() => {
+    const dateKey = selectedDate || todayStr;
+    api.getPicks(dateKey)
+      .then(d => setPicksData(d))
+      .catch(() => setPicksData(null));
+  }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 7) On mount: load past 7 days to compute overall rolling hit stats
+  useEffect(() => {
+    const pastDays = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      pastDays.push(fmtLocal(d));
+    }
+    Promise.all(pastDays.map(d => api.getPicks(d).catch(() => null)))
+      .then(results => {
+        let hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0;
+        results.forEach(r => {
+          if (!r) return;
+          (r.picks || []).forEach(p => {
+            if (p.result_bet === "HIT") { hitsBet++; totalBet++; }
+            else if (p.result_bet === "MISS") { totalBet++; }
+            if (p.result_ou === "HIT") { hitsOu++; totalOu++; }
+            else if (p.result_ou === "MISS") { totalOu++; }
+          });
+        });
+        if (totalBet > 0 || totalOu > 0) {
+          setOverallStats({ hitsBet, totalBet, hitsOu, totalOu });
+        }
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {
@@ -1912,7 +2047,7 @@ export default function App() {
   const handleRefresh = async (gameId) => {
     setLoadingIds(prev => new Set([...prev, gameId]));
     try {
-      const d = await api.analyze(gameId, apiKey, selectedDate);
+      const d = await api.analyze(gameId, apiKey, selectedDate || todayStr);
       setAiOverrides(prev => ({ ...prev, [gameId]: d.analysis }));
     } catch(e) {
       console.error(e);
@@ -1937,37 +2072,61 @@ export default function App() {
     { id:"chat",  label:"💬 CHAT"  },
   ];
 
+  // Build 7 past days + TODAY + TMW for the calendar strip
+  const dateOptions = (() => {
+    const opts = [];
+    for (let i = 7; i >= 1; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const val = fmtLocal(d);
+      opts.push({ label: `${d.getMonth()+1}/${d.getDate()}`, val });
+    }
+    opts.push({ label: "TODAY", val: null });
+    const tmw = new Date();
+    tmw.setDate(tmw.getDate() + 1);
+    opts.push({ label: `${tmw.getMonth()+1}/${tmw.getDate()}`, val: tomorrowStr });
+    return opts;
+  })();
+
+  // Build picks lookup map keyed by base game_id (no date suffix)
+  const picksMap = {};
+  if (picksData?.picks) {
+    picksData.picks.forEach(p => { picksMap[p.game_id] = p; });
+  }
+
   return (
     <div style={{ minHeight:"100vh", background:T.bg, paddingBottom: parlay.length ? 90 : 0 }}>
       {/* ── Header ── */}
-      <div style={{ borderBottom:`1px solid ${T.border}`, background:T.card }}>
-        <div style={{ maxWidth:960, margin:"0 auto", padding:"0 20px", display:"flex", alignItems:"center", justifyContent:"space-between", height:56 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", alignItems:"center", height:52, paddingLeft:20, overflow:"hidden" }}>
+          {/* Logo — fixed, no shrink */}
+          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12 }}>
             <span style={{ fontSize:20 }}>🏀</span>
             <div>
               <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
               <span style={{ color:T.text3, fontSize:9, letterSpacing:"0.1em", marginLeft:8 }}>AI SPORTSBOOK ANALYST</span>
             </div>
           </div>
-          <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-            {[{ label:"TODAY", val:null }, { label:"TMW", val:tomorrowStr }].map(({ label, val }) => (
-              <button key={label} onClick={() => setSelectedDate(val)} style={{
-                background: selectedDate === val ? T.green : "transparent",
-                border: `1px solid ${selectedDate === val ? T.green : T.border}`,
-                color: selectedDate === val ? "#000" : T.text3,
-                borderRadius: 5, padding: "3px 9px",
-                fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-                cursor: "pointer",
-              }}>{label}</button>
-            ))}
-            <button onClick={() => setCalcSeed("-110")} style={{
-              background: "transparent",
-              border: `1px solid ${T.border}`,
-              color: T.gold,
-              borderRadius: 5, padding: "3px 9px",
-              fontSize: 13, cursor: "pointer",
-              lineHeight: 1,
-            }} title="Payout Calculator">$</button>
+          {/* Date strip — scrollable, fills remaining width */}
+          <div className="date-strip" style={{
+            flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
+            display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
+          }}>
+            {dateOptions.map(({ label, val }) => {
+              const isActive = selectedDate === val;
+              const isPast = val !== null && val !== tomorrowStr;
+              return (
+                <button key={label} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
+                  background: isActive ? T.green : "transparent",
+                  border: `1px solid ${isActive ? T.green : isPast ? "rgba(255,255,255,0.14)" : T.border}`,
+                  color: isActive ? "#000" : isPast ? T.text2 : T.text3,
+                  borderRadius: 6, padding: "4px 10px",
+                  fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+                  cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
+                  transition: "background 0.15s, color 0.15s",
+                }}>{label}</button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1989,17 +2148,21 @@ export default function App() {
 
       {/* ── Tab content ── */}
       {tab === "games" && (
-        <GamesScroll
-          games={games}
-          onRefresh={handleRefresh}
-          loadingIds={loadingIds}
-          lastUpdated={lastUpdated}
-          aiOverrides={aiOverrides}
-          upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
-          onPickOdds={odds => setCalcSeed(odds)}
-          favorites={favorites}
-          onFavorite={favorites}
-        />
+        <>
+          <HitStatsBanner overallStats={overallStats} picksData={picksData} />
+          <GamesScroll
+            games={games}
+            onRefresh={handleRefresh}
+            loadingIds={loadingIds}
+            lastUpdated={lastUpdated}
+            aiOverrides={aiOverrides}
+            upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
+            onPickOdds={odds => setCalcSeed(odds)}
+            favorites={favorites}
+            onFavorite={favorites}
+            picksMap={picksMap}
+          />
+        </>
       )}
 
       {tab !== "games" && (

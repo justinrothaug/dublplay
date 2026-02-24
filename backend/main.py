@@ -60,114 +60,317 @@ def _init_firestore():
                 cred = fb_credentials.ApplicationDefault()
             app = firebase_admin.initialize_app(cred)
         _firestore_db = fb_firestore.client(app)
-        logging.info("Firestore connected for NBA odds persistence.")
+        logging.info("Firestore connected (nba_daily collection).")
     except Exception as e:
         logging.warning(f"Firestore init failed (falling back to in-memory only): {e}")
         _firestore_db = None
     return _firestore_db
 
 
+# ── UNIFIED FIRESTORE COLLECTION ──────────────────────────────────────────────
+# Single collection "nba_daily", one document per date (YYYYMMDD).
+# Each document: { games: { game_id: { ...espn fields, analysis, pick, odds } }, updated_at }
+# Dot-notation update() calls surgically patch sub-fields without overwriting neighbours.
+
+_FS_COL = "nba_daily"
+
+
+def _fs_doc(date_str: str):
+    db = _init_firestore()
+    return db.collection(_FS_COL).document(date_str) if db else None
+
+
 def _load_odds_from_firestore(date_str: str) -> dict:
-    """Read saved odds for a given date (YYYYMMDD) from the nba_odds collection."""
+    """Extract saved odds for a date from the unified nba_daily document."""
     db = _init_firestore()
     if not db:
         return {}
     try:
-        doc = db.collection("nba_odds").document(date_str).get()
+        doc = db.collection(_FS_COL).document(date_str).get()
         if doc.exists:
             data = doc.to_dict()
             ts = data.get("updated_at")
             if ts is not None:
-                # Firestore Timestamp → datetime; fallback to str coercion
                 try:
                     _odds_updated_at[date_str] = ts.isoformat()
                 except AttributeError:
                     _odds_updated_at[date_str] = str(ts)
-            return data.get("odds", {})
+            games_map = data.get("games", {})
+            odds = {}
+            for gid, g in games_map.items():
+                entry = {k: g[k] for k in ("spread", "ou", "awayOdds", "homeOdds",
+                                            "homeSpreadOdds", "awaySpreadOdds") if g.get(k)}
+                if entry:
+                    odds[gid] = entry
+            return odds
     except Exception as e:
         logging.warning(f"Firestore read failed: {e}")
     return {}
 
 
 def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
-    """Persist odds dict for a given date to Firestore. Only writes if odds is non-empty."""
+    """Persist odds into the unified nba_daily document using dot-notation updates."""
     db = _init_firestore()
     if not db or not odds:
         return
     try:
-        db.collection("nba_odds").document(date_str).set(
-            {"odds": odds, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
-        # Record the save time in memory (server timestamp lands a few ms later,
-        # this is close enough for display purposes)
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        doc_ref.set({"games": {}}, merge=True)          # ensure doc + games map exist
+        updates: dict = {"updated_at": fb_firestore.SERVER_TIMESTAMP}
+        for gid, o in odds.items():
+            for k, v in o.items():
+                if v:
+                    updates[f"games.{gid}.{k}"] = v
+        doc_ref.update(updates)
         _odds_updated_at[date_str] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
+
 def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
-    """Persist the full merged game list to Firestore for instant cold-start loads."""
+    """Persist full game list into nba_daily using dot-notation updates.
+
+    Uses update() with dot-notation paths so that games.X.analysis and
+    games.X.pick are NEVER touched here — those fields are owned by
+    _persist_analysis_to_firestore and _save_pick_to_firestore respectively.
+    This eliminates the race condition where a 30-second poll would replace
+    real Gemini analysis with the null placeholder from _merge_odds.
+    """
     db = _init_firestore()
     if not db or not games:
         return
     try:
-        db.collection("nba_games").document(date_str).set(
-            {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
+        doc_ref = db.collection(_FS_COL).document(date_str)
+
+        # Build flat dot-notation update dict, skipping analysis and pick entirely.
+        updates: dict = {"updated_at": fb_firestore.SERVER_TIMESTAMP}
+        for g in games:
+            gid = re.sub(r'-\d{8}$', '', g["id"])
+            for k, v in g.items():
+                if k in ("analysis", "pick"):
+                    continue  # these have dedicated writers — never overwrite
+                updates[f"games.{gid}.{k}"] = v
+
+        try:
+            doc_ref.update(updates)
+        except Exception:
+            # Document doesn't exist yet — create it without analysis/pick fields.
+            games_map: dict[str, dict] = {}
+            for g in games:
+                gid = re.sub(r'-\d{8}$', '', g["id"])
+                games_map[gid] = {k: v for k, v in g.items() if k not in ("analysis", "pick")}
+            doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP})
     except Exception as e:
         logging.warning(f"Firestore games write failed: {e}")
 
 
 def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) -> None:
-    """Update a single game's analysis inside the cached game list in Firestore."""
+    """Surgically update one game's analysis (and any lines) via dot-notation."""
     db = _init_firestore()
     if not db:
         return
     try:
-        doc_ref = db.collection("nba_games").document(date_str)
-        doc = doc_ref.get()
-        if not doc.exists:
-            return
-        games = doc.to_dict().get("games", [])
-        updated = False
-        for g in games:
-            gid = re.sub(r'-\d{8}$', '', g.get("id", ""))
-            if gid == game_id:
-                g["analysis"] = analysis
-                # Also update odds if analysis found them
-                lines = analysis.get("lines") or {}
-                for k in ("homeOdds", "awayOdds", "spread", "ou"):
-                    mapped = {"homeOdds": "homeOdds", "awayOdds": "awayOdds", "spread": "spread", "ou": "ou"}
-                    val = lines.get(k)
-                    if val:
-                        g[k] = val
-                updated = True
-                break
-        if updated:
-            doc_ref.set(
-                {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-                merge=True,
-            )
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        updates: dict = {
+            f"games.{game_id}.analysis": analysis,
+            "updated_at": fb_firestore.SERVER_TIMESTAMP,
+        }
+        lines = analysis.get("lines") or {}
+        for k in ("homeOdds", "awayOdds", "spread", "ou"):
+            v = lines.get(k)
+            if v:
+                updates[f"games.{game_id}.{k}"] = v
+        doc_ref.update(updates)
     except Exception as e:
         logging.warning(f"Firestore analysis persist failed: {e}")
 
 
 def _load_games_from_firestore(date_str: str) -> list[dict] | None:
-    """Load the full game list from Firestore. Returns None if not found."""
+    """Load the game list from the unified nba_daily document."""
     db = _init_firestore()
     if not db:
         return None
     try:
-        doc = db.collection("nba_games").document(date_str).get()
+        doc = db.collection(_FS_COL).document(date_str).get()
         if doc.exists:
-            data = doc.to_dict()
-            games = data.get("games")
-            if games:
-                return games
+            games_map = doc.to_dict().get("games", {})
+            if games_map:
+                result = []
+                for key, game in games_map.items():
+                    # Skip stub entries created solely by analysis/pick dot-notation writes
+                    # (they have no away/home fields, just analysis or pick)
+                    if not game.get("away") or not game.get("home"):
+                        continue
+                    # Ensure id field is present (dot-notation writes may omit it)
+                    if "id" not in game:
+                        game = dict(game)
+                        game["id"] = key
+                    result.append(game)
+                return result if result else None
     except Exception as e:
         logging.warning(f"Firestore games read failed: {e}")
     return None
+
+
+# ── PICKS (embedded in each game inside nba_daily) ────────────────────────────
+
+def _save_pick_to_firestore(date_str: str, pick_data: dict) -> None:
+    """Upsert a pick into the game's entry in nba_daily via dot-notation update."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        game_id = pick_data["game_id"]
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        # Preserve any already-scored results
+        doc = doc_ref.get()
+        if doc.exists:
+            ex_pick = doc.to_dict().get("games", {}).get(game_id, {}).get("pick", {})
+            for field in ("result_bet", "result_ou", "final_away", "final_home", "scored_at"):
+                if field in ex_pick and field not in pick_data:
+                    pick_data[field] = ex_pick[field]
+        # Use update() directly; if the document doesn't exist yet, create it
+        # with just this pick.  NEVER use set({"games": {}}, merge=True) here —
+        # that replaces the entire games map with {} and wipes all other games.
+        try:
+            doc_ref.update({
+                f"games.{game_id}.pick": pick_data,
+                "updated_at": fb_firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            doc_ref.set({
+                "games": {game_id: {"pick": pick_data}},
+                "updated_at": fb_firestore.SERVER_TIMESTAMP,
+            })
+    except Exception as e:
+        logging.warning(f"Firestore pick save failed: {e}")
+
+
+def _score_pick(pick: dict, away_score: int, home_score: int) -> dict:
+    """Given final scores, compute result_bet and result_ou for a pick. Returns updated pick."""
+    pick = dict(pick)
+    combined = away_score + home_score
+
+    # Score O/U
+    ou_line = pick.get("ou_line")
+    ou_direction = (pick.get("ou_direction") or "").upper()
+    if ou_line and ou_direction in ("OVER", "UNDER"):
+        try:
+            line = float(ou_line)
+            if combined > line:
+                actual = "OVER"
+            elif combined < line:
+                actual = "UNDER"
+            else:
+                actual = "PUSH"
+            pick["result_ou"] = "PUSH" if actual == "PUSH" else ("HIT" if actual == ou_direction else "MISS")
+        except (ValueError, TypeError):
+            pass
+
+    # Score Best Bet (spread or ML)
+    bet_team = (pick.get("bet_team") or "").upper()
+    bet_is_spread = pick.get("bet_is_spread", False)
+    spread_line = pick.get("spread_line") or ""
+    away_abbr = (pick.get("away") or "").upper()
+    home_abbr = (pick.get("home") or "").upper()
+
+    if bet_team:
+        if bet_is_spread and spread_line:
+            m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', spread_line.strip().upper())
+            if m:
+                fav_abbr = m.group(1)
+                line_val = float(m.group(2))  # negative = favored
+                fav_score = home_score if fav_abbr == home_abbr else away_score
+                dog_score = away_score if fav_abbr == home_abbr else home_score
+                actual_margin = fav_score - dog_score
+                needed = abs(line_val)
+                if actual_margin > needed:
+                    fav_covered, push = True, False
+                elif actual_margin < needed:
+                    fav_covered, push = False, False
+                else:
+                    fav_covered, push = False, True
+
+                if push:
+                    pick["result_bet"] = "PUSH"
+                elif bet_team == fav_abbr:
+                    pick["result_bet"] = "HIT" if fav_covered else "MISS"
+                else:
+                    pick["result_bet"] = "HIT" if not fav_covered else "MISS"
+        else:
+            # ML bet — did the picked team win?
+            if bet_team == home_abbr:
+                won = home_score > away_score
+            else:
+                won = away_score > home_score
+            pick["result_bet"] = "HIT" if won else "MISS"
+
+    pick["final_away"] = away_score
+    pick["final_home"] = home_score
+    pick["scored_at"] = datetime.now(timezone.utc).isoformat()
+    return pick
+
+
+def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
+    """Score any unscored picks against final game results for the given date."""
+    db = _init_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return
+        games_map = doc.to_dict().get("games", {})
+        if not games_map:
+            return
+        final_by_id = {
+            re.sub(r'-\d{8}$', '', g["id"]): g
+            for g in final_games if g.get("status") == "final"
+        }
+        updates = {}
+        for gid, gdata in games_map.items():
+            pick = gdata.get("pick")
+            if not pick:
+                continue
+            # Skip already scored picks
+            if pick.get("result_bet") is not None or pick.get("result_ou") is not None:
+                continue
+            base_id = re.sub(r'-\d{8}$', '', gid)
+            game = final_by_id.get(base_id) or final_by_id.get(gid)
+            if not game:
+                continue
+            away_score = int(game.get("awayScore") or 0)
+            home_score = int(game.get("homeScore") or 0)
+            if away_score == 0 and home_score == 0:
+                continue
+            scored = _score_pick(pick, away_score, home_score)
+            updates[f"games.{gid}.pick"] = scored
+        if updates:
+            updates["updated_at"] = fb_firestore.SERVER_TIMESTAMP
+            doc_ref.update(updates)
+    except Exception as e:
+        logging.warning(f"Firestore picks scoring failed: {e}")
+
+
+def _load_picks_from_firestore(date_str: str) -> list[dict]:
+    """Load picks for a given date from the unified nba_daily collection."""
+    db = _init_firestore()
+    if not db:
+        return []
+    try:
+        doc = db.collection(_FS_COL).document(date_str).get()
+        if doc.exists:
+            games_map = doc.to_dict().get("games", {})
+            picks = []
+            for gdata in games_map.values():
+                pick = gdata.get("pick")
+                if pick:
+                    picks.append(pick)
+            return picks
+    except Exception as e:
+        logging.warning(f"Firestore picks read failed: {e}")
+    return []
 
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -1192,7 +1395,7 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         gid = g["id"]
         # Strip YYYYMMDD suffix so tomorrow games match odds_map keys
         base_id = re.sub(r'-\d{8}$', '', gid)
-        ds = date_str or datetime.now(timezone.utc).strftime("%Y%m%d")
+        ds = date_str or datetime.now().strftime("%Y%m%d")
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
         sticky = _get_sticky(ds, base_id) or _get_sticky(ds, gid)
 
@@ -1303,6 +1506,9 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     # Persist full game state to Firestore for instant loads
     _save_games_to_firestore(date_str, merged)
 
+    # Auto-score any picks whose games are now final
+    _score_picks_for_date(date_str, merged)
+
     return merged
 
 
@@ -1311,21 +1517,29 @@ async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # ── 1. Try serving from Firestore cache (instant, survives container restarts)
-    cached_games = _load_games_from_firestore(date_str)
-    if cached_games:
-        # Serve cached immediately, refresh in background
-        asyncio.create_task(_full_espn_refresh(date_str, date))
-        return {
-            "games": cached_games,
-            "source": "live",
-            "odds_updated_at": _odds_updated_at.get(date_str),
-        }
+    # Only use Firestore cache for dates clearly in the past (>= 2 days old from
+    # server UTC). For today / yesterday / tomorrow the cache may hold data written
+    # under a mismatched UTC date, so always do a fresh ESPN fetch for recent dates.
+    stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y%m%d")
+    if date_str < stale_cutoff:
+        # ── 1. Past date — safe to serve from Firestore cache instantly
+        cached_games = _load_games_from_firestore(date_str)
+        if cached_games:
+            asyncio.create_task(_full_espn_refresh(date_str, date))
+            return {
+                "games": cached_games,
+                "source": "live",
+                "odds_updated_at": _odds_updated_at.get(date_str),
+            }
 
-    # ── 2. No Firestore cache — first load of the day, fetch everything
+    # ── 2. Recent date or cache miss — always fetch fresh from ESPN
     merged = await _full_espn_refresh(date_str, date)
 
     if not merged:
+        # For a specific date query, no games = no games (e.g. All-Star break).
+        # Only fall back to mock data when loading today and the live API is down.
+        if date:
+            return {"games": [], "source": "empty"}
         return {"games": MOCK_GAMES, "source": "mock"}
 
     return {
@@ -1343,7 +1557,7 @@ async def debug_odds():
 
     espn_ids = [g["id"] for g in espn_games]
 
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today = datetime.now().strftime("%Y%m%d")
     today_odds = _sticky_odds.get(today, {})
     info: dict = {
         "espn_game_ids": espn_ids,
@@ -1353,6 +1567,36 @@ async def debug_odds():
         "unmatched_espn": [k for k in espn_ids if k not in today_odds],
     }
     return info
+
+
+@app.get("/api/picks/{date_str}")
+async def get_picks(date_str: str):
+    """Get saved daily picks + hit stats for a given date (YYYYMMDD)."""
+    # Attempt to score any pending picks using cached game data
+    games_cached = _load_games_from_firestore(date_str)
+    if games_cached:
+        _score_picks_for_date(date_str, games_cached)
+
+    picks = _load_picks_from_firestore(date_str)
+    scored_bet = [p for p in picks if p.get("result_bet") in ("HIT", "MISS")]
+    scored_ou  = [p for p in picks if p.get("result_ou")  in ("HIT", "MISS")]
+    hits_bet   = sum(1 for p in scored_bet if p["result_bet"] == "HIT")
+    hits_ou    = sum(1 for p in scored_ou  if p["result_ou"]  == "HIT")
+
+    hit_pct_bet = round(hits_bet / len(scored_bet) * 100, 1) if scored_bet else None
+    hit_pct_ou  = round(hits_ou  / len(scored_ou)  * 100, 1) if scored_ou  else None
+
+    return {
+        "date":         date_str,
+        "picks":        picks,
+        "hit_pct_bet":  hit_pct_bet,
+        "hit_pct_ou":   hit_pct_ou,
+        "hits_bet":     hits_bet,
+        "hits_ou":      hits_ou,
+        "total_picks":  len(picks),
+        "scored_bet":   len(scored_bet),
+        "scored_ou":    len(scored_ou),
+    }
 
 
 def _parse_gemini_props_json(text: str) -> list[dict]:
@@ -1572,7 +1816,7 @@ def calculate_parlay(req: ParlayRequest):
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)
 
-    today_date = req.date or datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_date = req.date or datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient() as client:
         espn_games, injuries, team_stats = await asyncio.gather(
@@ -1584,8 +1828,16 @@ async def analyze_game(req: AnalyzeRequest):
         if espn_games:
             await enrich_games_from_espn_summary(client, espn_games)
 
-    games_to_search = espn_games if espn_games else MOCK_GAMES
-    game = next((g for g in games_to_search if g["id"] == req.game_id), None)
+    # If ESPN failed (timeout / rate-limit / concurrent stampede), fall back to
+    # the Firestore game list rather than mock data so real games can be found.
+    if not espn_games:
+        fs_games = _load_games_from_firestore(today_date)
+        games_to_search = fs_games if fs_games else MOCK_GAMES
+    else:
+        games_to_search = espn_games
+    # Strip date suffix for lookup in case frontend ID has suffix but ESPN returned without
+    req_base_id = re.sub(r'-\d{8}$', '', req.game_id)
+    game = next((g for g in games_to_search if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
@@ -1675,7 +1927,7 @@ async def analyze_game(req: AnalyzeRequest):
     analysis = parse_gemini_analysis(text)
 
     # Persist lines + analysis to Firestore so next page load is instant
-    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now(timezone.utc).strftime("%Y%m%d")
+    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now().strftime("%Y%m%d")
     lines = analysis.get("lines") or {}
     if any(v for v in lines.values() if v):
         entry = {k: v for k, v in {
@@ -1687,8 +1939,43 @@ async def analyze_game(req: AnalyzeRequest):
         existing = _get_sticky(date_str, base_game_id)
         _set_sticky(date_str, base_game_id, {**existing, **entry})
 
-    # Update the cached game list in Firestore with analysis results
-    _persist_analysis_to_firestore(date_str, base_game_id, analysis)
+    # Snapshot the exact odds fed to Gemini so the frontend can detect when lines
+    # have moved and a fresh analysis is needed.
+    if analysis.get("best_bet"):
+        analysis["_snap"] = {"spread": spread_ln, "ou": ou_line,
+                              "homeOdds": home_ml, "awayOdds": away_ml}
+
+    # Only persist to Firestore when we got a real analysis (non-null best_bet).
+    # Persisting a null analysis would cause every page load to re-trigger Gemini.
+    if analysis.get("best_bet"):
+        _persist_analysis_to_firestore(date_str, base_game_id, analysis)
+
+    # Save pick snapshot for pre-game analysis (not live re-analysis)
+    if not is_live and analysis.get("best_bet"):
+        ou_text = (analysis.get("ou") or "").strip()
+        ou_dir_m = re.match(r'^(OVER|UNDER)', ou_text, re.IGNORECASE)
+        ou_dir = ou_dir_m.group(1).upper() if ou_dir_m else None
+        # Strip numeric O/U line from the ou_lean text, e.g. "OVER 224.5 — ..." → "224.5"
+        ou_line_m = re.search(r'(OVER|UNDER)\s+(\d+\.?\d*)', ou_text, re.IGNORECASE)
+        ou_line_val = lines.get("ou") or (ou_line_m.group(2) if ou_line_m else None)
+        pick_data = {
+            "game_id":      base_game_id,
+            "away":         game["away"],
+            "home":         game["home"],
+            "away_name":    game.get("awayName", game["away"]),
+            "home_name":    game.get("homeName", game["home"]),
+            "best_bet":     analysis.get("best_bet"),
+            "bet_team":     analysis.get("bet_team"),
+            "bet_is_spread": analysis.get("bet_is_spread", False),
+            "spread_line":  lines.get("spread"),
+            "ou":           analysis.get("ou"),
+            "ou_line":      ou_line_val,
+            "ou_direction": ou_dir,
+            "dubl_score_bet": analysis.get("dubl_score_bet"),
+            "dubl_score_ou":  analysis.get("dubl_score_ou"),
+            "saved_at":     datetime.now(timezone.utc).isoformat(),
+        }
+        _save_pick_to_firestore(date_str, pick_data)
 
     return {"analysis": analysis}
 
@@ -1697,7 +1984,7 @@ async def analyze_game(req: AnalyzeRequest):
 async def chat(req: ChatRequest):
     key = get_effective_key(req.api_key)
 
-    today_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today_date = datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient() as client:
         espn_games, injuries, team_stats = await asyncio.gather(

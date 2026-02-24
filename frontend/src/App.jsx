@@ -1887,7 +1887,6 @@ export default function App() {
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
-  const dateStripRef = useRef(null);
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -2089,19 +2088,6 @@ export default function App() {
     return opts;
   })();
 
-  // Scroll the date strip so TODAY is visible on mount
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      const strip = dateStripRef.current;
-      if (!strip) return;
-      const todayBtn = strip.querySelector("[data-today]");
-      if (!todayBtn) return;
-      const stripRect = strip.getBoundingClientRect();
-      const btnRect = todayBtn.getBoundingClientRect();
-      strip.scrollLeft += btnRect.left - stripRect.left - stripRect.width / 2 + btnRect.width / 2;
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Build picks lookup map keyed by base game_id (no date suffix)
   const picksMap = {};
   if (picksData?.picks) {
@@ -2119,7 +2105,7 @@ export default function App() {
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
           </div>
           {/* Date strip — scrollable, fills remaining width */}
-          <div ref={dateStripRef} className="date-strip" style={{
+          <div className="date-strip" ref={el => { if (el && !el.dataset.scrolled) { el.dataset.scrolled = "1"; el.scrollLeft = el.scrollWidth; } }} style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
             display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
           }}>
@@ -2127,7 +2113,7 @@ export default function App() {
               const isActive = selectedDate === val;
               const isPast = val !== null && val !== tomorrowStr;
               return (
-                <button key={label} data-today={label === "TODAY" ? "" : undefined} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
+                <button key={label} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
                   background: isActive ? T.green : "transparent",
                   border: `1px solid ${isActive ? T.green : isPast ? "rgba(255,255,255,0.14)" : T.border}`,
                   color: isActive ? "#000" : isPast ? T.text2 : T.text3,

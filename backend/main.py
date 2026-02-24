@@ -60,139 +60,161 @@ def _init_firestore():
                 cred = fb_credentials.ApplicationDefault()
             app = firebase_admin.initialize_app(cred)
         _firestore_db = fb_firestore.client(app)
-        logging.info("Firestore connected for NBA odds persistence.")
+        logging.info("Firestore connected (nba_daily collection).")
     except Exception as e:
         logging.warning(f"Firestore init failed (falling back to in-memory only): {e}")
         _firestore_db = None
     return _firestore_db
 
 
+# ── UNIFIED FIRESTORE COLLECTION ──────────────────────────────────────────────
+# Single collection "nba_daily", one document per date (YYYYMMDD).
+# Each document: { games: { game_id: { ...espn fields, analysis, pick, odds } }, updated_at }
+# Dot-notation update() calls surgically patch sub-fields without overwriting neighbours.
+
+_FS_COL = "nba_daily"
+
+
+def _fs_doc(date_str: str):
+    db = _init_firestore()
+    return db.collection(_FS_COL).document(date_str) if db else None
+
+
 def _load_odds_from_firestore(date_str: str) -> dict:
-    """Read saved odds for a given date (YYYYMMDD) from the nba_odds collection."""
+    """Extract saved odds for a date from the unified nba_daily document."""
     db = _init_firestore()
     if not db:
         return {}
     try:
-        doc = db.collection("nba_odds").document(date_str).get()
+        doc = db.collection(_FS_COL).document(date_str).get()
         if doc.exists:
             data = doc.to_dict()
             ts = data.get("updated_at")
             if ts is not None:
-                # Firestore Timestamp → datetime; fallback to str coercion
                 try:
                     _odds_updated_at[date_str] = ts.isoformat()
                 except AttributeError:
                     _odds_updated_at[date_str] = str(ts)
-            return data.get("odds", {})
+            games_map = data.get("games", {})
+            odds = {}
+            for gid, g in games_map.items():
+                entry = {k: g[k] for k in ("spread", "ou", "awayOdds", "homeOdds",
+                                            "homeSpreadOdds", "awaySpreadOdds") if g.get(k)}
+                if entry:
+                    odds[gid] = entry
+            return odds
     except Exception as e:
         logging.warning(f"Firestore read failed: {e}")
     return {}
 
 
 def _save_odds_to_firestore(date_str: str, odds: dict) -> None:
-    """Persist odds dict for a given date to Firestore. Only writes if odds is non-empty."""
+    """Persist odds into the unified nba_daily document using dot-notation updates."""
     db = _init_firestore()
     if not db or not odds:
         return
     try:
-        db.collection("nba_odds").document(date_str).set(
-            {"odds": odds, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
-        # Record the save time in memory (server timestamp lands a few ms later,
-        # this is close enough for display purposes)
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        doc_ref.set({"games": {}}, merge=True)          # ensure doc + games map exist
+        updates: dict = {"updated_at": fb_firestore.SERVER_TIMESTAMP}
+        for gid, o in odds.items():
+            for k, v in o.items():
+                if v:
+                    updates[f"games.{gid}.{k}"] = v
+        doc_ref.update(updates)
         _odds_updated_at[date_str] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logging.warning(f"Firestore write failed: {e}")
 
+
 def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
-    """Persist the full merged game list to Firestore for instant cold-start loads."""
+    """Persist full game list into nba_daily, preserving existing picks and analysis."""
     db = _init_firestore()
     if not db or not games:
         return
     try:
-        db.collection("nba_games").document(date_str).set(
-            {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        # Read once to preserve picks / analysis already stored
+        existing: dict[str, dict] = {}
+        doc = doc_ref.get()
+        if doc.exists:
+            existing = doc.to_dict().get("games", {})
+
+        games_map: dict[str, dict] = {}
+        for g in games:
+            gid = re.sub(r'-\d{8}$', '', g["id"])
+            new_game = dict(g)
+            ex = existing.get(gid, {})
+            if ex.get("pick"):
+                new_game["pick"] = ex["pick"]
+            if ex.get("analysis") and not new_game.get("analysis"):
+                new_game["analysis"] = ex["analysis"]
+            games_map[gid] = new_game
+
+        doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
     except Exception as e:
         logging.warning(f"Firestore games write failed: {e}")
 
 
 def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) -> None:
-    """Update a single game's analysis inside the cached game list in Firestore."""
+    """Surgically update one game's analysis (and any lines) via dot-notation."""
     db = _init_firestore()
     if not db:
         return
     try:
-        doc_ref = db.collection("nba_games").document(date_str)
-        doc = doc_ref.get()
-        if not doc.exists:
-            return
-        games = doc.to_dict().get("games", [])
-        updated = False
-        for g in games:
-            gid = re.sub(r'-\d{8}$', '', g.get("id", ""))
-            if gid == game_id:
-                g["analysis"] = analysis
-                # Also update odds if analysis found them
-                lines = analysis.get("lines") or {}
-                for k in ("homeOdds", "awayOdds", "spread", "ou"):
-                    mapped = {"homeOdds": "homeOdds", "awayOdds": "awayOdds", "spread": "spread", "ou": "ou"}
-                    val = lines.get(k)
-                    if val:
-                        g[k] = val
-                updated = True
-                break
-        if updated:
-            doc_ref.set(
-                {"games": games, "updated_at": fb_firestore.SERVER_TIMESTAMP},
-                merge=True,
-            )
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        updates: dict = {
+            f"games.{game_id}.analysis": analysis,
+            "updated_at": fb_firestore.SERVER_TIMESTAMP,
+        }
+        lines = analysis.get("lines") or {}
+        for k in ("homeOdds", "awayOdds", "spread", "ou"):
+            v = lines.get(k)
+            if v:
+                updates[f"games.{game_id}.{k}"] = v
+        doc_ref.update(updates)
     except Exception as e:
         logging.warning(f"Firestore analysis persist failed: {e}")
 
 
 def _load_games_from_firestore(date_str: str) -> list[dict] | None:
-    """Load the full game list from Firestore. Returns None if not found."""
+    """Load the game list from the unified nba_daily document."""
     db = _init_firestore()
     if not db:
         return None
     try:
-        doc = db.collection("nba_games").document(date_str).get()
+        doc = db.collection(_FS_COL).document(date_str).get()
         if doc.exists:
-            data = doc.to_dict()
-            games = data.get("games")
-            if games:
-                return games
+            games_map = doc.to_dict().get("games", {})
+            if games_map:
+                return list(games_map.values())
     except Exception as e:
         logging.warning(f"Firestore games read failed: {e}")
     return None
 
 
-# ── DAILY PICKS PERSISTENCE ────────────────────────────────────────────────────
+# ── PICKS (embedded in each game inside nba_daily) ────────────────────────────
 
 def _save_pick_to_firestore(date_str: str, pick_data: dict) -> None:
-    """Save or update a pick entry for a game in the daily_picks collection."""
+    """Upsert a pick into the game's entry in nba_daily via dot-notation update."""
     db = _init_firestore()
     if not db:
         return
     try:
-        doc_ref = db.collection("daily_picks").document(date_str)
-        doc = doc_ref.get()
-        picks = doc.to_dict().get("picks", []) if doc.exists else []
         game_id = pick_data["game_id"]
-        existing_idx = next((i for i, p in enumerate(picks) if p.get("game_id") == game_id), None)
-        if existing_idx is not None:
-            existing = picks[existing_idx]
-            # Preserve any already-scored result fields
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        # Preserve any already-scored results
+        doc = doc_ref.get()
+        if doc.exists:
+            ex_pick = doc.to_dict().get("games", {}).get(game_id, {}).get("pick", {})
             for field in ("result_bet", "result_ou", "final_away", "final_home", "scored_at"):
-                if field in existing and field not in pick_data:
-                    pick_data[field] = existing[field]
-            picks[existing_idx] = pick_data
-        else:
-            picks.append(pick_data)
-        doc_ref.set({"picks": picks, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+                if field in ex_pick and field not in pick_data:
+                    pick_data[field] = ex_pick[field]
+        doc_ref.set({"games": {}}, merge=True)   # ensure doc exists
+        doc_ref.update({
+            f"games.{game_id}.pick": pick_data,
+            "updated_at": fb_firestore.SERVER_TIMESTAMP,
+        })
     except Exception as e:
         logging.warning(f"Firestore pick save failed: {e}")
 
@@ -268,25 +290,27 @@ def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
     if not db:
         return
     try:
-        doc_ref = db.collection("daily_picks").document(date_str)
+        doc_ref = db.collection(_FS_COL).document(date_str)
         doc = doc_ref.get()
         if not doc.exists:
             return
-        picks = doc.to_dict().get("picks", [])
-        if not picks:
+        games_map = doc.to_dict().get("games", {})
+        if not games_map:
             return
         final_by_id = {
             re.sub(r'-\d{8}$', '', g["id"]): g
             for g in final_games if g.get("status") == "final"
         }
-        updated = False
-        for pick in picks:
+        updates = {}
+        for gid, gdata in games_map.items():
+            pick = gdata.get("pick")
+            if not pick:
+                continue
             # Skip already scored picks
             if pick.get("result_bet") is not None or pick.get("result_ou") is not None:
                 continue
-            game_id = pick.get("game_id", "")
-            base_id = re.sub(r'-\d{8}$', '', game_id)
-            game = final_by_id.get(base_id) or final_by_id.get(game_id)
+            base_id = re.sub(r'-\d{8}$', '', gid)
+            game = final_by_id.get(base_id) or final_by_id.get(gid)
             if not game:
                 continue
             away_score = int(game.get("awayScore") or 0)
@@ -294,23 +318,29 @@ def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
             if away_score == 0 and home_score == 0:
                 continue
             scored = _score_pick(pick, away_score, home_score)
-            pick.update(scored)
-            updated = True
-        if updated:
-            doc_ref.set({"picks": picks, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+            updates[f"games.{gid}.pick"] = scored
+        if updates:
+            updates["updated_at"] = fb_firestore.SERVER_TIMESTAMP
+            doc_ref.update(updates)
     except Exception as e:
         logging.warning(f"Firestore picks scoring failed: {e}")
 
 
 def _load_picks_from_firestore(date_str: str) -> list[dict]:
-    """Load picks for a given date from Firestore."""
+    """Load picks for a given date from the unified nba_daily collection."""
     db = _init_firestore()
     if not db:
         return []
     try:
-        doc = db.collection("daily_picks").document(date_str).get()
+        doc = db.collection(_FS_COL).document(date_str).get()
         if doc.exists:
-            return doc.to_dict().get("picks", [])
+            games_map = doc.to_dict().get("games", {})
+            picks = []
+            for gdata in games_map.values():
+                pick = gdata.get("pick")
+                if pick:
+                    picks.append(pick)
+            return picks
     except Exception as e:
         logging.warning(f"Firestore picks read failed: {e}")
     return []

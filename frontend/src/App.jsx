@@ -204,15 +204,26 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
 
 function lineMovement(current, opening, isSpread) {
   if (!current || !opening) return null;
-  const numOf = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
+  const teamOf = (s) => { const m = String(s).match(/^([A-Z]{2,4})\s/); return m ? m[1] : null; };
+  const numOf  = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
   const c = numOf(current), o = numOf(opening);
-  if (c === null || o === null || c === o) return null;
-  // For spreads the values are negative (e.g. -6.5 → -10.5). A MORE negative
-  // number means the favorite is favored by MORE, so compare absolute magnitudes.
-  const diff = isSpread ? Math.abs(c) - Math.abs(o) : c - o;
-  const arrow = diff > 0 ? "\u2191" : "\u2193";
-  const color = diff > 0 ? "#4ade80" : "#f87171";
-  const openLabel = String(opening).replace(/^[A-Z]{2,4}\s*/, ""); // strip team abbr if any
+  if (c === null || o === null) return null;
+  // If the opening spread is from the other team's perspective, flip the sign
+  // e.g. current "PHI -9.5", opening "IND +6.5" → opening should be -6.5 for PHI
+  let adjustedO = o;
+  if (isSpread) {
+    const curTeam = teamOf(current), openTeam = teamOf(opening);
+    if (curTeam && openTeam && curTeam !== openTeam) adjustedO = -o;
+  }
+  if (c === adjustedO) return null;
+  const diff = c - adjustedO;
+  // For spreads: more negative = bigger favorite, so arrow up means line grew
+  const arrow = isSpread ? (Math.abs(c) > Math.abs(adjustedO) ? "\u2191" : "\u2193")
+                         : (diff > 0 ? "\u2191" : "\u2193");
+  const color = arrow === "\u2191" ? "#4ade80" : "#f87171";
+  // Show the opening value from the SAME team's perspective as the current line
+  const sign = adjustedO > 0 ? "+" : "";
+  const openLabel = isSpread ? `${sign}${adjustedO}` : String(opening).replace(/^[A-Z]{2,4}\s*/, "");
   return { text: `${arrow} opened ${openLabel}`, color };
 }
 

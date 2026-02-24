@@ -2067,38 +2067,31 @@ export default function App() {
     <div style={{ minHeight:"100vh", background:T.bg, paddingBottom: parlay.length ? 90 : 0 }}>
       {/* ── Header ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
-        {/* Row 1: Logo + $ button */}
-        <div style={{ maxWidth:960, margin:"0 auto", padding:"0 20px", display:"flex", alignItems:"center", justifyContent:"space-between", height:48 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", height:52, paddingLeft:20, overflow:"hidden" }}>
+          {/* Logo — fixed, no shrink */}
+          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12 }}>
             <span style={{ fontSize:20 }}>🏀</span>
             <div>
               <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
               <span style={{ color:T.text3, fontSize:9, letterSpacing:"0.1em", marginLeft:8 }}>AI SPORTSBOOK ANALYST</span>
             </div>
           </div>
-          <button onClick={() => setCalcSeed("-110")} style={{
-            background: "transparent",
-            border: `1px solid ${T.border}`,
-            color: T.gold,
-            borderRadius: 5, padding: "3px 9px",
-            fontSize: 13, cursor: "pointer",
-            lineHeight: 1,
-          }} title="Payout Calculator">$</button>
-        </div>
-        {/* Row 2: 7-day calendar strip */}
-        <div style={{ overflowX:"auto", scrollbarWidth:"none", borderTop:`1px solid ${T.border}` }}>
-          <div style={{ display:"flex", gap:4, padding:"7px 16px", minWidth:"max-content" }}>
+          {/* Date strip — scrollable, fills remaining width */}
+          <div className="date-strip" style={{
+            flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
+            display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
+          }}>
             {dateOptions.map(({ label, val }) => {
               const isActive = selectedDate === val;
               const isPast = val !== null && val !== tomorrowStr;
               return (
                 <button key={label} onClick={() => { setSelectedDate(val); setPicksData(null); }} style={{
                   background: isActive ? T.green : "transparent",
-                  border: `1px solid ${isActive ? T.green : isPast ? "rgba(255,255,255,0.12)" : T.border}`,
+                  border: `1px solid ${isActive ? T.green : isPast ? "rgba(255,255,255,0.14)" : T.border}`,
                   color: isActive ? "#000" : isPast ? T.text2 : T.text3,
                   borderRadius: 6, padding: "4px 10px",
                   fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-                  cursor: "pointer", flexShrink: 0,
+                  cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
                   transition: "background 0.15s, color 0.15s",
                 }}>{label}</button>
               );

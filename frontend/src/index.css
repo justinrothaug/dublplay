@@ -15,6 +15,10 @@ body {
 div[style*="scrollSnapType"] { -ms-overflow-style: none; scrollbar-width: none; }
 div[style*="scrollSnapType"]::-webkit-scrollbar { display: none; }
 
+/* Hide scrollbar on date strip */
+.date-strip { -ms-overflow-style: none; scrollbar-width: none; }
+.date-strip::-webkit-scrollbar { display: none; }
+
 /* Thin scrollbar for tables/chat */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -238,7 +238,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const staticAnalysis = game.analysis;
   const displayAnalysis = aiOverride || staticAnalysis;
   const L = aiOverride?.lines || {};
-  const dispSpread         = L.spread   || game.spread;
+  const dispSpread         = game.spread || L.spread;
   const rawOu              = L.ou       || game.ou;
   const dispOu             = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
   const dispAwayOdds       = L.awayOdds || game.awayOdds;

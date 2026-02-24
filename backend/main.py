@@ -206,13 +206,20 @@ def _load_games_from_firestore(date_str: str) -> list[dict] | None:
             if games_map:
                 result = []
                 for key, game in games_map.items():
-                    # Skip stub entries created solely by analysis/pick dot-notation writes
-                    # (they have no away/home fields, just analysis or pick)
+                    game = dict(game)
+                    # Reconstruct basic metadata from key if missing
+                    # (can happen when only odds were written via dot-notation)
+                    parts = key.split("-")
                     if not game.get("away") or not game.get("home"):
-                        continue
-                    # Ensure id field is present (dot-notation writes may omit it)
+                        if len(parts) >= 2:
+                            game.setdefault("away", parts[0].upper())
+                            game.setdefault("home", parts[1].upper())
+                            game.setdefault("awayName", parts[0].upper())
+                            game.setdefault("homeName", parts[1].upper())
+                            game.setdefault("status", "upcoming")
+                        else:
+                            continue
                     if "id" not in game:
-                        game = dict(game)
                         game["id"] = key
                     result.append(game)
                 return result if result else None
@@ -615,6 +622,9 @@ async def fetch_team_rest_days(
     return rest
 
 
+_espn_fetch_locks: dict[str, asyncio.Lock] = {}
+
+
 async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = None) -> list[dict]:
     """Fetch NBA games from ESPN unofficial scoreboard API for a given date (YYYYMMDD)."""
     cache_key = f"espn_games_{date_str or 'today'}"
@@ -622,104 +632,114 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
     if cached is not None:
         return cached
 
-    params = {}
-    if date_str:
-        params["dates"] = date_str
+    # Prevent thundering herd: only one concurrent caller fetches from ESPN,
+    # the rest wait and then read from cache.
+    if cache_key not in _espn_fetch_locks:
+        _espn_fetch_locks[cache_key] = asyncio.Lock()
+    async with _espn_fetch_locks[cache_key]:
+        # Re-check cache — another caller may have filled it while we waited
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
 
-    try:
-        r = await client.get(ESPN_SCOREBOARD_URL, params=params, timeout=10)
-        data = r.json()
-    except Exception:
-        return []
+        params = {}
+        if date_str:
+            params["dates"] = date_str
 
-    games = []
-    for event in data.get("events", []):
         try:
-            comp = event["competitions"][0]
-            status = event["status"]
-            status_name = status["type"]["name"]
-            app_status = espn_status_to_app(status_name)
-
-            competitors = comp["competitors"]
-            home = next(c for c in competitors if c["homeAway"] == "home")
-            away = next(c for c in competitors if c["homeAway"] == "away")
-
-            home_abbr = norm_abbr(home["team"]["abbreviation"])
-            away_abbr = norm_abbr(away["team"]["abbreviation"])
-            game_id = f"{away_abbr.lower()}-{home_abbr.lower()}"
-            if date_str:
-                game_id = f"{game_id}-{date_str}"
-
-            g = {
-                "id": game_id,
-                "espn_id": event["id"],
-                "status": app_status,
-                "home": home_abbr,
-                "away": away_abbr,
-                "homeName": home["team"]["shortDisplayName"],
-                "awayName": away["team"]["shortDisplayName"],
-                "homeScore": int(home.get("score") or 0),
-                "awayScore": int(away.get("score") or 0),
-            }
-
-            # Extract team records from scoreboard (e.g. "42-13")
-            for side, prefix in [(home, "home"), (away, "away")]:
-                for rec in side.get("records", []):
-                    if rec.get("type") == "total":
-                        g[f"{prefix}_record"] = rec.get("summary", "")
-                        break
-
-            if app_status == "live":
-                period = status.get("period", 1)
-                clock  = status.get("displayClock", "")
-                halftime = status_name == "STATUS_HALFTIME"
-                g["quarter"] = period
-                g["clock"]   = "Halftime" if halftime else clock
-
-            if app_status == "upcoming":
-                g["time"] = event.get("date", "")  # raw ISO timestamp, frontend localizes
-
-            # Parse ESPN embedded odds (ESPN BET supplies spread/total/ML for upcoming games)
-            espn_odds_list = comp.get("odds", [])
-            espn_spread = espn_ou = espn_homeOdds = espn_awayOdds = None
-            if espn_odds_list and isinstance(espn_odds_list, list):
-                eo = espn_odds_list[0]
-                # Spread: "details" = away team's spread e.g. "MEM -5" or "-5"
-                details = eo.get("details", "")
-                if details and details.strip():
-                    parts = details.strip().split()
-                    try:
-                        away_val = float(parts[-1])
-                        if len(parts) >= 2:
-                            # "TEAM ±X" — check if named team is home or away
-                            tok = parts[0]
-                            tok_abbr = any_name_to_abbr(tok) if len(tok) > 2 else norm_abbr(tok)
-                            home_val = away_val if tok_abbr == home_abbr else -away_val
-                        else:
-                            home_val = -away_val  # bare number = away perspective
-                        espn_spread = f"{home_abbr} {_sign(home_val)}"
-                    except (ValueError, IndexError):
-                        pass
-                ou_raw = eo.get("overUnder")
-                espn_ou = str(ou_raw) if ou_raw is not None else None
-                hml = eo.get("homeTeamOdds", {}).get("moneyLine")
-                aml = eo.get("awayTeamOdds", {}).get("moneyLine")
-                espn_homeOdds = _fmt_american(hml) if hml else None
-                espn_awayOdds = _fmt_american(aml) if aml else None
-                if espn_homeOdds == "—": espn_homeOdds = None
-                if espn_awayOdds == "—": espn_awayOdds = None
-
-            g["espn_spread"]    = espn_spread
-            g["espn_ou"]        = espn_ou
-            g["espn_homeOdds"]  = espn_homeOdds
-            g["espn_awayOdds"]  = espn_awayOdds
-
-            games.append(g)
+            r = await client.get(ESPN_SCOREBOARD_URL, params=params, timeout=10)
+            data = r.json()
         except Exception:
-            continue
+            return []
 
-    cache_set(cache_key, games)
-    return games
+        games = []
+        for event in data.get("events", []):
+            try:
+                comp = event["competitions"][0]
+                status = event["status"]
+                status_name = status["type"]["name"]
+                app_status = espn_status_to_app(status_name)
+
+                competitors = comp["competitors"]
+                home = next(c for c in competitors if c["homeAway"] == "home")
+                away = next(c for c in competitors if c["homeAway"] == "away")
+
+                home_abbr = norm_abbr(home["team"]["abbreviation"])
+                away_abbr = norm_abbr(away["team"]["abbreviation"])
+                game_id = f"{away_abbr.lower()}-{home_abbr.lower()}"
+                if date_str:
+                    game_id = f"{game_id}-{date_str}"
+
+                g = {
+                    "id": game_id,
+                    "espn_id": event["id"],
+                    "status": app_status,
+                    "home": home_abbr,
+                    "away": away_abbr,
+                    "homeName": home["team"]["shortDisplayName"],
+                    "awayName": away["team"]["shortDisplayName"],
+                    "homeScore": int(home.get("score") or 0),
+                    "awayScore": int(away.get("score") or 0),
+                }
+
+                # Extract team records from scoreboard (e.g. "42-13")
+                for side, prefix in [(home, "home"), (away, "away")]:
+                    for rec in side.get("records", []):
+                        if rec.get("type") == "total":
+                            g[f"{prefix}_record"] = rec.get("summary", "")
+                            break
+
+                if app_status == "live":
+                    period = status.get("period", 1)
+                    clock  = status.get("displayClock", "")
+                    halftime = status_name == "STATUS_HALFTIME"
+                    g["quarter"] = period
+                    g["clock"]   = "Halftime" if halftime else clock
+
+                if app_status == "upcoming":
+                    g["time"] = event.get("date", "")  # raw ISO timestamp, frontend localizes
+
+                # Parse ESPN embedded odds (ESPN BET supplies spread/total/ML for upcoming games)
+                espn_odds_list = comp.get("odds", [])
+                espn_spread = espn_ou = espn_homeOdds = espn_awayOdds = None
+                if espn_odds_list and isinstance(espn_odds_list, list):
+                    eo = espn_odds_list[0]
+                    # Spread: "details" = away team's spread e.g. "MEM -5" or "-5"
+                    details = eo.get("details", "")
+                    if details and details.strip():
+                        parts = details.strip().split()
+                        try:
+                            away_val = float(parts[-1])
+                            if len(parts) >= 2:
+                                # "TEAM ±X" — check if named team is home or away
+                                tok = parts[0]
+                                tok_abbr = any_name_to_abbr(tok) if len(tok) > 2 else norm_abbr(tok)
+                                home_val = away_val if tok_abbr == home_abbr else -away_val
+                            else:
+                                home_val = -away_val  # bare number = away perspective
+                            espn_spread = f"{home_abbr} {_sign(home_val)}"
+                        except (ValueError, IndexError):
+                            pass
+                    ou_raw = eo.get("overUnder")
+                    espn_ou = str(ou_raw) if ou_raw is not None else None
+                    hml = eo.get("homeTeamOdds", {}).get("moneyLine")
+                    aml = eo.get("awayTeamOdds", {}).get("moneyLine")
+                    espn_homeOdds = _fmt_american(hml) if hml else None
+                    espn_awayOdds = _fmt_american(aml) if aml else None
+                    if espn_homeOdds == "—": espn_homeOdds = None
+                    if espn_awayOdds == "—": espn_awayOdds = None
+
+                g["espn_spread"]    = espn_spread
+                g["espn_ou"]        = espn_ou
+                g["espn_homeOdds"]  = espn_homeOdds
+                g["espn_awayOdds"]  = espn_awayOdds
+
+                games.append(g)
+            except Exception:
+                continue
+
+        cache_set(cache_key, games)
+        return games
 
 
 ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"

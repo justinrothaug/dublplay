@@ -721,7 +721,7 @@ async def fetch_espn_games(client: httpx.AsyncClient, date_str: str | None = Non
                                 home_val = away_val if tok_abbr == home_abbr else -away_val
                             else:
                                 home_val = -away_val  # bare number = away perspective
-                            espn_spread = f"{home_abbr} {_sign(home_val)}"
+                            espn_spread = _fmt_spread(home_abbr, away_abbr, home_val)
                         except (ValueError, IndexError):
                             pass
                     ou_raw = eo.get("overUnder")
@@ -823,14 +823,13 @@ async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[
             if open_aml:
                 g["espn_opening_awayOdds"] = str(open_aml)
 
-            # Opening spread — store in "HOME ±X" format (same as espn_spread).
-            # Prefer the home open line directly; fall back to flipping away's.
+            # Opening spread — store in "FAV -X" format (same as espn_spread).
             open_home_line = ps.get("home", {}).get("open", {}).get("line")
             open_away_line = ps.get("away", {}).get("open", {}).get("line")
             if open_home_line is not None:
-                g["espn_opening_spread"] = f"{home_abbr} {_sign(float(open_home_line))}"
+                g["espn_opening_spread"] = _fmt_spread(home_abbr, away_abbr, float(open_home_line))
             elif open_away_line is not None:
-                g["espn_opening_spread"] = f"{home_abbr} {_sign(-float(open_away_line))}"
+                g["espn_opening_spread"] = _fmt_spread(home_abbr, away_abbr, -float(open_away_line))
 
             # Opening total
             open_total = tot.get("over", {}).get("open", {}).get("line", "")
@@ -943,7 +942,7 @@ async def fetch_draftkings_game_lines(client: httpx.AsyncClient) -> dict:
                                     if abbr == home_abbr:
                                         ln = o.get("line", 0)
                                         if ln:
-                                            odds_data["spread"] = f"{home_abbr} {_sign(ln)}"
+                                            odds_data["spread"] = _fmt_spread(home_abbr, away_abbr, ln)
                                         sp_odds = _fmt_american(o.get("oddsAmerican"))
                                         if sp_odds != "—":
                                             odds_data["homeSpreadOdds"] = sp_odds
@@ -1052,7 +1051,7 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
         "Return ONLY a raw JSON array — no markdown, no explanation. "
         'Each element: {"away":"ABBR","home":"ABBR",'
         '"awayOdds":"+110","homeOdds":"-130",'
-        '"spread":"HOME -2.5","ou":"225.5"} '
+        '"spread":"FAV -2.5","ou":"225.5"} '
         "Use American odds format (e.g. -110, +240). "
         "Only include games where you found real pre-game lines."
     )
@@ -1224,6 +1223,18 @@ def _sign(val) -> str:
         return f"+{v}" if v > 0 else str(v)
     except Exception:
         return str(val)
+
+
+def _fmt_spread(home_abbr: str, away_abbr: str, home_val: float) -> str:
+    """Format spread as 'FAV -X' (industry standard: always show the favorite)."""
+    if home_val < 0:
+        # Home is favored
+        return f"{home_abbr} {home_val}"
+    elif home_val > 0:
+        # Away is favored
+        return f"{away_abbr} {-home_val}"
+    else:
+        return f"{home_abbr} 0"
 
 
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────

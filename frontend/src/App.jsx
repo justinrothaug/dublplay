@@ -202,15 +202,16 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
   );
 }
 
-function lineMovement(current, opening) {
+function lineMovement(current, opening, isSpread) {
   if (!current || !opening) return null;
   const numOf = (s) => { const m = String(s).match(/-?\d+\.?\d*/g); return m ? parseFloat(m[m.length - 1]) : null; };
   const c = numOf(current), o = numOf(opening);
   if (c === null || o === null || c === o) return null;
-  const diff = c - o;
+  // For spreads the values are negative (e.g. -6.5 → -10.5). A MORE negative
+  // number means the favorite is favored by MORE, so compare absolute magnitudes.
+  const diff = isSpread ? Math.abs(c) - Math.abs(o) : c - o;
   const arrow = diff > 0 ? "\u2191" : "\u2193";
   const color = diff > 0 ? "#4ade80" : "#f87171";
-  // For spreads: show opening value with same team as current (e.g. "DET -1.5" + opening "-2.5" → "opened -2.5")
   const openLabel = String(opening).replace(/^[A-Z]{2,4}\s*/, ""); // strip team abbr if any
   return { text: `${arrow} opened ${openLabel}`, color };
 }
@@ -367,7 +368,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         <div style={{ display:"flex", background:"#0f0d0a" }}>
           {dispSpread && (
             <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
-              movement={lineMovement(dispSpread, game.opening_spread)}
+              movement={lineMovement(dispSpread, game.opening_spread, true)}
               onClick={onPickOdds ? () => onPickOdds(dispHomeSpreadOdds || dispAwaySpreadOdds || "-110") : undefined} />
           )}
           {dispOu && (

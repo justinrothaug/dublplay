@@ -159,7 +159,7 @@ def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
             for g in games:
                 gid = re.sub(r'-\d{8}$', '', g["id"])
                 games_map[gid] = {k: v for k, v in g.items() if k not in ("analysis", "pick")}
-            doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP})
+            doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
     except Exception as e:
         logging.warning(f"Firestore games write failed: {e}")
 
@@ -189,7 +189,7 @@ def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) 
                 v = lines.get(k)
                 if v:
                     game_data[k] = v
-            doc_ref.set({"games": {game_id: game_data}, "updated_at": fb_firestore.SERVER_TIMESTAMP})
+            doc_ref.set({"games": {game_id: game_data}, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
     except Exception as e:
         logging.warning(f"Firestore analysis persist failed: {e}")
 
@@ -250,7 +250,7 @@ def _save_pick_to_firestore(date_str: str, pick_data: dict) -> None:
             doc_ref.set({
                 "games": {game_id: {"pick": pick_data}},
                 "updated_at": fb_firestore.SERVER_TIMESTAMP,
-            })
+            }, merge=True)
     except Exception as e:
         logging.warning(f"Firestore pick save failed: {e}")
 

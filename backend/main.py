@@ -1017,6 +1017,8 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
                 continue
             key = f"{away.lower()}-{home.lower()}"
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
+            if entry.get("spread"):
+                entry["spread"] = _normalize_spread(entry["spread"], home, away) or entry["spread"]
             if entry:
                 result[key] = entry
         if result:
@@ -1078,6 +1080,8 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
                 continue
             key = f"{away.lower()}-{home.lower()}"
             entry = {k: str(item[k]) for k in ("awayOdds", "homeOdds", "spread", "ou") if item.get(k)}
+            if entry.get("spread"):
+                entry["spread"] = _normalize_spread(entry["spread"], home, away) or entry["spread"]
             if entry:
                 result[key] = entry
         return result
@@ -1235,6 +1239,27 @@ def _fmt_spread(home_abbr: str, away_abbr: str, home_val: float) -> str:
         return f"{away_abbr} {-home_val}"
     else:
         return f"{home_abbr} 0"
+
+
+def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) -> str | None:
+    """Ensure any spread string is in 'FAV -X' format.
+
+    Handles strings from any source (Gemini, Firestore, sticky cache) that
+    might be in 'UNDERDOG +X' format and flips them to industry standard.
+    """
+    if not spread_str:
+        return spread_str
+    m = re.match(r'^([A-Z]{2,4})\s*([-+]?\d+\.?\d*)$', spread_str.strip())
+    if not m:
+        return spread_str
+    team = m.group(1)
+    val = float(m.group(2))
+    if val > 0:
+        # Underdog perspective — flip to favorite
+        other = away_abbr if team == home_abbr else home_abbr
+        return f"{other} {-val}"
+    # Already favorite perspective (negative or zero)
+    return spread_str
 
 
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────
@@ -1447,7 +1472,12 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         o = odds_map.get(base_id) or odds_map.get(gid) or {}
         sticky = _get_sticky(ds, base_id) or _get_sticky(ds, gid)
 
-        spread          = g.get("espn_spread")   or o.get("spread")          or sticky.get("spread")
+        home_abbr = g.get("home", "")
+        away_abbr = g.get("away", "")
+        spread          = _normalize_spread(
+            g.get("espn_spread") or o.get("spread") or sticky.get("spread"),
+            home_abbr, away_abbr,
+        )
         ou              = g.get("espn_ou")        or o.get("ou")              or sticky.get("ou")
         homeOdds        = g.get("espn_homeOdds")  or o.get("homeOdds")        or sticky.get("homeOdds")
         awayOdds        = g.get("espn_awayOdds")  or o.get("awayOdds")        or sticky.get("awayOdds")
@@ -1487,6 +1517,9 @@ def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = N
         for f in _OPENING_FIELDS:
             val = g.get(f"espn_opening_{f}") or sticky.get(f"opening_{f}")
             if val:
+                # Normalize opening spread to FAV -X format too
+                if f == "spread":
+                    val = _normalize_spread(val, home_abbr, away_abbr) or val
                 opening[f"opening_{f}"] = val
 
         result.append({
@@ -1974,14 +2007,23 @@ async def analyze_game(req: AnalyzeRequest):
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
     analysis = parse_gemini_analysis(text)
 
+    # Normalize Gemini's spread to FAV -X before persisting anywhere
+    lines = analysis.get("lines") or {}
+    if lines.get("spread"):
+        lines["spread"] = _normalize_spread(
+            lines["spread"], game.get("home", ""), game.get("away", ""),
+        ) or lines["spread"]
+
     # Persist lines + analysis to Firestore so next page load is instant
     date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else (req.date or datetime.now().strftime("%Y%m%d"))
-    lines = analysis.get("lines") or {}
     if not is_live and any(v for v in lines.values() if v):
+        gemini_spread = _normalize_spread(
+            lines.get("spread"), game.get("home", ""), game.get("away", ""),
+        )
         entry = {k: v for k, v in {
             "awayOdds": lines.get("awayOdds"),
             "homeOdds": lines.get("homeOdds"),
-            "spread":   lines.get("spread"),
+            "spread":   gemini_spread,
             "ou":       lines.get("ou"),
         }.items() if v}
         existing = _get_sticky(date_str, base_game_id)

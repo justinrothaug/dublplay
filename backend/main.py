@@ -823,18 +823,14 @@ async def enrich_games_from_espn_summary(client: httpx.AsyncClient, games: list[
             if open_aml:
                 g["espn_opening_awayOdds"] = str(open_aml)
 
-            # Opening spread — store in same "TEAM ±X" format as espn_spread
-            # Use the away open line to match the current spread's perspective,
-            # which is built from the away team's line (see details parsing above).
-            open_away_line = ps.get("away", {}).get("open", {}).get("line")
+            # Opening spread — store in "HOME ±X" format (same as espn_spread).
+            # Prefer the home open line directly; fall back to flipping away's.
             open_home_line = ps.get("home", {}).get("open", {}).get("line")
-            if open_away_line is not None:
-                # Away open line is from away's perspective (e.g. -6.5 for fav).
-                # Current espn_spread = "HOME ±X" where X is home's perspective.
-                home_open_val = -float(open_away_line)
-                g["espn_opening_spread"] = f"{home_abbr} {_sign(home_open_val)}"
-            elif open_home_line is not None:
+            open_away_line = ps.get("away", {}).get("open", {}).get("line")
+            if open_home_line is not None:
                 g["espn_opening_spread"] = f"{home_abbr} {_sign(float(open_home_line))}"
+            elif open_away_line is not None:
+                g["espn_opening_spread"] = f"{home_abbr} {_sign(-float(open_away_line))}"
 
             # Opening total
             open_total = tot.get("over", {}).get("open", {}).get("line", "")

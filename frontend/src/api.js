@@ -6,7 +6,13 @@ async function req(path, options = {}) {
     ...options,
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+  if (!res.ok) {
+    const detail = data.detail;
+    const msg = Array.isArray(detail)
+      ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
+      : (typeof detail === "string" ? detail : "Request failed");
+    throw new Error(msg);
+  }
   return data;
 }
 

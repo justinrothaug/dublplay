@@ -1880,6 +1880,7 @@ export default function App() {
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
+  const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -1913,6 +1914,7 @@ export default function App() {
     setDataLoaded(false);
     setGames([]);
     setAiOverrides({});
+    analyzedPreGameRef.current.clear();
     Promise.all([api.getGames(selectedDate), api.getProps()])
       .then(([g, p]) => {
         setGames(g.games);
@@ -1936,17 +1938,21 @@ export default function App() {
   }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 4) Auto-analyze non-final games once data loads
-  //    Skip games that already have cached analysis from Firestore
+  //    Skip games that already have cached analysis from Firestore, or were already
+  //    attempted this session (so Gemini doesn't re-run on every page load / date change).
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
-        // If Firestore already has analysis, load it into overrides and skip the API call
+        // Already have valid cached analysis — load it and skip
         if (g.analysis && g.analysis.best_bet) {
           setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
           return;
         }
+        // Already attempted this session — don't call Gemini again
+        if (analyzedPreGameRef.current.has(g.id)) return;
+        analyzedPreGameRef.current.add(g.id);
         setLoadingIds(prev => new Set([...prev, g.id]));
         api.analyze(g.id, apiKey, selectedDate)
           .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))

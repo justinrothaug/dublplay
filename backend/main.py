@@ -1798,7 +1798,9 @@ async def analyze_game(req: AnalyzeRequest):
             await enrich_games_from_espn_summary(client, espn_games)
 
     games_to_search = espn_games if espn_games else MOCK_GAMES
-    game = next((g for g in games_to_search if g["id"] == req.game_id), None)
+    # Strip date suffix for lookup in case frontend ID has suffix but ESPN returned without
+    req_base_id = re.sub(r'-\d{8}$', '', req.game_id)
+    game = next((g for g in games_to_search if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
@@ -1900,8 +1902,10 @@ async def analyze_game(req: AnalyzeRequest):
         existing = _get_sticky(date_str, base_game_id)
         _set_sticky(date_str, base_game_id, {**existing, **entry})
 
-    # Update the cached game list in Firestore with analysis results
-    _persist_analysis_to_firestore(date_str, base_game_id, analysis)
+    # Only persist to Firestore when we got a real analysis (non-null best_bet).
+    # Persisting a null analysis would cause every page load to re-trigger Gemini.
+    if analysis.get("best_bet"):
+        _persist_analysis_to_firestore(date_str, base_game_id, analysis)
 
     # Save pick snapshot for pre-game analysis (not live re-analysis)
     if not is_live and analysis.get("best_bet"):

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "./api.js";
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
@@ -1890,7 +1890,9 @@ export default function App() {
     return `${y}${m}${day}`;
   };
 
-  const todayStr = fmtLocal(new Date());
+  // Stabilized: computed once on mount so midnight rollovers don't silently
+  // swap the game list mid-session. Refresh the page to get the next day.
+  const todayStr = useMemo(() => fmtLocal(new Date()), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -1930,7 +1932,7 @@ export default function App() {
     const hasLive = games.some(g => g.status === "live");
     if (!hasLive || apiKey === null) return;
     const interval = setInterval(() => {
-      api.getGames(selectedDate)
+      api.getGames(selectedDate || todayStr)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
     }, 30000);

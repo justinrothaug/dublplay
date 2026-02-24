@@ -1499,20 +1499,24 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
 @app.get("/api/games")
 async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
-    date_str = date or datetime.now().strftime("%Y%m%d")
+    date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # ── 1. Try serving from Firestore cache (instant, survives container restarts)
-    cached_games = _load_games_from_firestore(date_str)
-    if cached_games:
-        # Serve cached immediately, refresh in background
-        asyncio.create_task(_full_espn_refresh(date_str, date))
-        return {
-            "games": cached_games,
-            "source": "live",
-            "odds_updated_at": _odds_updated_at.get(date_str),
-        }
+    # Only use Firestore cache for dates clearly in the past (>= 2 days old from
+    # server UTC). For today / yesterday / tomorrow the cache may hold data written
+    # under a mismatched UTC date, so always do a fresh ESPN fetch for recent dates.
+    stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y%m%d")
+    if date_str < stale_cutoff:
+        # ── 1. Past date — safe to serve from Firestore cache instantly
+        cached_games = _load_games_from_firestore(date_str)
+        if cached_games:
+            asyncio.create_task(_full_espn_refresh(date_str, date))
+            return {
+                "games": cached_games,
+                "source": "live",
+                "odds_updated_at": _odds_updated_at.get(date_str),
+            }
 
-    # ── 2. No Firestore cache — first load of the day, fetch everything
+    # ── 2. Recent date or cache miss — always fetch fresh from ESPN
     merged = await _full_espn_refresh(date_str, date)
 
     if not merged:

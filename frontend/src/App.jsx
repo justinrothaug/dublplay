@@ -1881,14 +1881,20 @@ export default function App() {
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
 
-  const todayStr = (() => {
-    return new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  })();
+  // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
+  const fmtLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+
+  const todayStr = fmtLocal(new Date());
 
   const tomorrowStr = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10).replace(/-/g, "");
+    return fmtLocal(d);
   })();
 
   // 1) Check server key
@@ -1986,7 +1992,7 @@ export default function App() {
     for (let i = 1; i <= 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      pastDays.push(d.toISOString().slice(0, 10).replace(/-/g, ""));
+      pastDays.push(fmtLocal(d));
     }
     Promise.all(pastDays.map(d => api.getPicks(d).catch(() => null)))
       .then(results => {
@@ -2048,7 +2054,7 @@ export default function App() {
     for (let i = 7; i >= 1; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const val = d.toISOString().slice(0, 10).replace(/-/g, "");
+      const val = fmtLocal(d);
       opts.push({ label: `${d.getMonth()+1}/${d.getDate()}`, val });
     }
     opts.push({ label: "TODAY", val: null });

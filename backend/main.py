@@ -1245,21 +1245,30 @@ def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) ->
     """Ensure any spread string is in 'FAV -X' format.
 
     Handles strings from any source (Gemini, Firestore, sticky cache) that
-    might be in 'UNDERDOG +X' format and flips them to industry standard.
+    might use full team names (e.g. "Wizards +13.5") or abbreviations
+    ("WAS +13.5") in underdog perspective, and flips to industry standard.
     """
     if not spread_str:
         return spread_str
-    m = re.match(r'^([A-Z]{2,4})\s*([-+]?\d+\.?\d*)$', spread_str.strip())
+    # Match "TEAM +/-X" where TEAM can be abbreviation or full name
+    m = re.match(r'^(.+?)\s+([-+]?\d+\.?\d*)$', spread_str.strip())
     if not m:
         return spread_str
-    team = m.group(1)
+    team_tok = m.group(1).strip()
     val = float(m.group(2))
+    # Resolve team token to abbreviation (handles "Wizards", "WAS", "Hawks", etc.)
+    team_abbr = any_name_to_abbr(team_tok) if len(team_tok) > 3 else norm_abbr(team_tok)
+    if not team_abbr:
+        return spread_str
     if val > 0:
         # Underdog perspective — flip to favorite
-        other = away_abbr if team == home_abbr else home_abbr
-        return f"{other} {-val}"
-    # Already favorite perspective (negative or zero)
-    return spread_str
+        fav = away_abbr if team_abbr == home_abbr else home_abbr
+        return f"{fav} {-val}"
+    elif val < 0:
+        # Already favorite — just ensure we use the abbreviation
+        return f"{team_abbr} {val}"
+    else:
+        return f"{home_abbr} 0"
 
 
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────

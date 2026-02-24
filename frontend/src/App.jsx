@@ -238,7 +238,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const staticAnalysis = game.analysis;
   const displayAnalysis = aiOverride || staticAnalysis;
   const L = aiOverride?.lines || {};
-  const dispSpread         = L.spread   || game.spread;
+  const dispSpread         = game.spread || L.spread;
   const rawOu              = L.ou       || game.ou;
   const dispOu             = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
   const dispAwayOdds       = L.awayOdds || game.awayOdds;
@@ -1929,9 +1929,11 @@ export default function App() {
   }, []);
 
   // 2) Load games whenever apiKey or selectedDate changes
+  const initialLoadDone = useRef(false);
   useEffect(() => {
     if (apiKey === null) return;
-    setDataLoaded(false);
+    // Only show full-screen loader on first load; date switches just swap in-place
+    if (!initialLoadDone.current) setDataLoaded(false);
     setGames([]);
     setAiOverrides({});
     analyzedPreGameRef.current.clear();
@@ -1940,6 +1942,7 @@ export default function App() {
         setGames(g.games);
         setProps(p.props);
         setDataLoaded(true);
+        initialLoadDone.current = true;
         setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date());
       })
       .catch(console.error);
@@ -2080,7 +2083,7 @@ export default function App() {
 
   const TABS = [
     { id:"games", label:"🏀 GAMES" },
-    { id:"props", label:"🎯 PROPS" },
+    // { id:"props", label:"🎯 PROPS" },
     { id:"chat",  label:"💬 CHAT"  },
   ];
 

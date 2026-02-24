@@ -147,7 +147,10 @@ def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
             ex = existing.get(gid, {})
             if ex.get("pick"):
                 new_game["pick"] = ex["pick"]
-            if ex.get("analysis") and not new_game.get("analysis"):
+            # Preserve stored analysis when fresh ESPN data has no real content.
+            # ESPN games are initialised with {"best_bet": None, ...} which is
+            # truthy, so check best_bet explicitly rather than the dict itself.
+            if ex.get("analysis", {}).get("best_bet") and not new_game.get("analysis", {}).get("best_bet"):
                 new_game["analysis"] = ex["analysis"]
             games_map[gid] = new_game
 

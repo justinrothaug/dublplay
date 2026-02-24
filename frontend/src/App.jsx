@@ -2105,7 +2105,7 @@ export default function App() {
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
           </div>
           {/* Date strip — scrollable, fills remaining width */}
-          <div className="date-strip" ref={el => { if (el && !el.dataset.scrolled) { el.dataset.scrolled = "1"; el.scrollLeft = el.scrollWidth; } }} style={{
+          <div className="date-strip" style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
             display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
           }}>

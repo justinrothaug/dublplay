@@ -224,11 +224,19 @@ def _save_pick_to_firestore(date_str: str, pick_data: dict) -> None:
             for field in ("result_bet", "result_ou", "final_away", "final_home", "scored_at"):
                 if field in ex_pick and field not in pick_data:
                     pick_data[field] = ex_pick[field]
-        doc_ref.set({"games": {}}, merge=True)   # ensure doc exists
-        doc_ref.update({
-            f"games.{game_id}.pick": pick_data,
-            "updated_at": fb_firestore.SERVER_TIMESTAMP,
-        })
+        # Use update() directly; if the document doesn't exist yet, create it
+        # with just this pick.  NEVER use set({"games": {}}, merge=True) here —
+        # that replaces the entire games map with {} and wipes all other games.
+        try:
+            doc_ref.update({
+                f"games.{game_id}.pick": pick_data,
+                "updated_at": fb_firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            doc_ref.set({
+                "games": {game_id: {"pick": pick_data}},
+                "updated_at": fb_firestore.SERVER_TIMESTAMP,
+            })
     except Exception as e:
         logging.warning(f"Firestore pick save failed: {e}")
 
@@ -1815,7 +1823,13 @@ async def analyze_game(req: AnalyzeRequest):
         if espn_games:
             await enrich_games_from_espn_summary(client, espn_games)
 
-    games_to_search = espn_games if espn_games else MOCK_GAMES
+    # If ESPN failed (timeout / rate-limit / concurrent stampede), fall back to
+    # the Firestore game list rather than mock data so real games can be found.
+    if not espn_games:
+        fs_games = _load_games_from_firestore(today_date)
+        games_to_search = fs_games if fs_games else MOCK_GAMES
+    else:
+        games_to_search = espn_games
     # Strip date suffix for lookup in case frontend ID has suffix but ESPN returned without
     req_base_id = re.sub(r'-\d{8}$', '', req.game_id)
     game = next((g for g in games_to_search if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)

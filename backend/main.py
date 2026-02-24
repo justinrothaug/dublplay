@@ -180,7 +180,16 @@ def _persist_analysis_to_firestore(date_str: str, game_id: str, analysis: dict) 
             v = lines.get(k)
             if v:
                 updates[f"games.{game_id}.{k}"] = v
-        doc_ref.update(updates)
+        try:
+            doc_ref.update(updates)
+        except Exception:
+            # Document doesn't exist yet (e.g. tomorrow's date) — create it.
+            game_data = {"analysis": analysis}
+            for k in ("homeOdds", "awayOdds", "spread", "ou"):
+                v = lines.get(k)
+                if v:
+                    game_data[k] = v
+            doc_ref.set({"games": {game_id: game_data}, "updated_at": fb_firestore.SERVER_TIMESTAMP})
     except Exception as e:
         logging.warning(f"Firestore analysis persist failed: {e}")
 
@@ -1927,9 +1936,9 @@ async def analyze_game(req: AnalyzeRequest):
     analysis = parse_gemini_analysis(text)
 
     # Persist lines + analysis to Firestore so next page load is instant
-    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else datetime.now().strftime("%Y%m%d")
+    date_str = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else (req.date or datetime.now().strftime("%Y%m%d"))
     lines = analysis.get("lines") or {}
-    if any(v for v in lines.values() if v):
+    if not is_live and any(v for v in lines.values() if v):
         entry = {k: v for k, v in {
             "awayOdds": lines.get("awayOdds"),
             "homeOdds": lines.get("homeOdds"),
@@ -1945,9 +1954,9 @@ async def analyze_game(req: AnalyzeRequest):
         analysis["_snap"] = {"spread": spread_ln, "ou": ou_line,
                               "homeOdds": home_ml, "awayOdds": away_ml}
 
-    # Only persist to Firestore when we got a real analysis (non-null best_bet).
-    # Persisting a null analysis would cause every page load to re-trigger Gemini.
-    if analysis.get("best_bet"):
+    # Only persist to Firestore when we got a real analysis (non-null best_bet)
+    # and the game hasn't tipped off yet (freeze pre-game data once live).
+    if not is_live and analysis.get("best_bet"):
         _persist_analysis_to_firestore(date_str, base_game_id, analysis)
 
     # Save pick snapshot for pre-game analysis (not live re-analysis)

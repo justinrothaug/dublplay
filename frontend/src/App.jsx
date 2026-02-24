@@ -1915,7 +1915,7 @@ export default function App() {
     setGames([]);
     setAiOverrides({});
     analyzedPreGameRef.current.clear();
-    Promise.all([api.getGames(selectedDate), api.getProps()])
+    Promise.all([api.getGames(selectedDate || todayStr), api.getProps()])
       .then(([g, p]) => {
         setGames(g.games);
         setProps(p.props);
@@ -1954,7 +1954,7 @@ export default function App() {
         if (analyzedPreGameRef.current.has(g.id)) return;
         analyzedPreGameRef.current.add(g.id);
         setLoadingIds(prev => new Set([...prev, g.id]));
-        api.analyze(g.id, apiKey, selectedDate)
+        api.analyze(g.id, apiKey, selectedDate || todayStr)
           .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
           .catch(console.error)
           .finally(() => setLoadingIds(prev => {
@@ -1973,7 +1973,7 @@ export default function App() {
     newlyLive.forEach(g => {
       analyzedLiveRef.current.add(g.id);
       setLoadingIds(prev => new Set([...prev, g.id]));
-      api.analyze(g.id, apiKey, selectedDate)
+      api.analyze(g.id, apiKey, selectedDate || todayStr)
         .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
         .catch(console.error)
         .finally(() => setLoadingIds(prev => {
@@ -2029,7 +2029,7 @@ export default function App() {
   const handleRefresh = async (gameId) => {
     setLoadingIds(prev => new Set([...prev, gameId]));
     try {
-      const d = await api.analyze(gameId, apiKey, selectedDate);
+      const d = await api.analyze(gameId, apiKey, selectedDate || todayStr);
       setAiOverrides(prev => ({ ...prev, [gameId]: d.analysis }));
     } catch(e) {
       console.error(e);

@@ -187,7 +187,18 @@ def _load_games_from_firestore(date_str: str) -> list[dict] | None:
         if doc.exists:
             games_map = doc.to_dict().get("games", {})
             if games_map:
-                return list(games_map.values())
+                result = []
+                for key, game in games_map.items():
+                    # Skip stub entries created solely by analysis/pick dot-notation writes
+                    # (they have no away/home fields, just analysis or pick)
+                    if not game.get("away") or not game.get("home"):
+                        continue
+                    # Ensure id field is present (dot-notation writes may omit it)
+                    if "id" not in game:
+                        game = dict(game)
+                        game["id"] = key
+                    result.append(game)
+                return result if result else None
     except Exception as e:
         logging.warning(f"Firestore games read failed: {e}")
     return None

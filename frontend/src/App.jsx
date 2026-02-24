@@ -1172,12 +1172,18 @@ function TopPicksSection({ games, aiOverrides, onPickOdds, favs, onRemoveFav }) 
   }
   const top = picks.sort((a,b) => b.score - a.score).slice(0,3);
 
-  // User-saved picks enriched with live game data
-  const myPicks = (favs || []).map(p => {
-    const liveGame = games.find(g => g.id === p.gameId);
-    const game = liveGame || { ...p.gameSnapshot, status:"upcoming", awayScore:0, homeScore:0, quarter:null, clock:null };
-    return { ...p, game };
-  });
+  // User-saved picks — only show ones whose game is in the current date's list.
+  // Match on exact id or base id (strips date suffix) so format differences don't matter.
+  const myPicks = (favs || [])
+    .map(p => {
+      const basePickId = p.gameId.replace(/-\d{8}$/, "");
+      const game = games.find(g =>
+        g.id === p.gameId || g.id.replace(/-\d{8}$/, "") === basePickId
+      );
+      if (!game) return null;
+      return { ...p, game };
+    })
+    .filter(Boolean);
 
   if (top.length === 0 && myPicks.length === 0) return null;
 

@@ -1832,55 +1832,7 @@ function parseGameProp(text, game) {
   };
 }
 
-// ── HIT STATS BANNER ──────────────────────────────────────────────────────────
-function HitStatsBanner({ overallStats, picksData }) {
-  if (!overallStats && !picksData) return null;
-  const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
-  const hasRolling = totalBet > 0 || totalOu > 0;
-  const hasToday = picksData?.hit_pct_bet != null || picksData?.hit_pct_ou != null;
-  if (!hasRolling && !hasToday) return null;
 
-  const betPct  = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
-  const ouPct   = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
-  const statColor = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
-
-  return (
-    <div style={{ maxWidth:960, margin:"0 auto", padding:"10px 20px 0" }}>
-      <div style={{
-        background:T.card, border:`1px solid ${T.border}`, borderRadius:10,
-        padding:"9px 16px", display:"flex", alignItems:"center", gap:14, flexWrap:"wrap",
-      }}>
-        <span style={{ fontSize:9, color:T.text3, letterSpacing:"0.12em", fontWeight:700, flexShrink:0 }}>7-DAY RECORD</span>
-        {betPct !== null && (
-          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-            <span style={{ fontSize:9, color:T.text2, fontWeight:600, letterSpacing:"0.05em" }}>BEST BET</span>
-            <span style={{ fontSize:13, fontWeight:800, color:statColor(betPct) }}>
-              {hitsBet}-{totalBet - hitsBet}
-            </span>
-            <span style={{ fontSize:10, color:statColor(betPct), fontWeight:700 }}>({betPct}%)</span>
-          </div>
-        )}
-        {betPct !== null && ouPct !== null && (
-          <span style={{ color:T.text3, fontSize:12 }}>|</span>
-        )}
-        {ouPct !== null && (
-          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-            <span style={{ fontSize:9, color:T.text2, fontWeight:600, letterSpacing:"0.05em" }}>O/U</span>
-            <span style={{ fontSize:13, fontWeight:800, color:statColor(ouPct) }}>
-              {hitsOu}-{totalOu - hitsOu}
-            </span>
-            <span style={{ fontSize:10, color:statColor(ouPct), fontWeight:700 }}>({ouPct}%)</span>
-          </div>
-        )}
-        {picksData?.hit_pct_bet != null && (
-          <span style={{ marginLeft:"auto", fontSize:9, color:T.text3 }}>
-            Today: {picksData.hit_pct_bet}% bet · {picksData.hit_pct_ou ?? "—"}% O/U
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
@@ -2149,7 +2101,7 @@ export default function App() {
 
       {/* ── Tab bar ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
-        <div style={{ maxWidth:960, margin:"0 auto", padding:"0 16px", display:"flex" }}>
+        <div style={{ maxWidth:960, margin:"0 auto", padding:"0 16px", display:"flex", alignItems:"center" }}>
           {TABS.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
               background:"transparent", border:"none",
@@ -2159,13 +2111,32 @@ export default function App() {
               whiteSpace:"nowrap", transition:"color 0.15s",
             }}>{t.label}</button>
           ))}
+          {(() => {
+            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
+            if (totalBet === 0 && totalOu === 0) return null;
+            const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
+            const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
+            const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
+            return (
+              <span style={{ marginLeft:"auto", fontSize:9, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
+                {betPct !== null && (
+                  <span style={{ color:c(betPct) }}>ML/SPREAD {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
+                )}
+                {betPct !== null && ouPct !== null && (
+                  <span style={{ color:T.text3 }}>|</span>
+                )}
+                {ouPct !== null && (
+                  <span style={{ color:c(ouPct) }}>O/U {hitsOu}-{totalOu - hitsOu} ({ouPct}%)</span>
+                )}
+              </span>
+            );
+          })()}
         </div>
       </div>
 
       {/* ── Tab content ── */}
       {tab === "games" && (
         <>
-          <HitStatsBanner overallStats={overallStats} picksData={picksData} />
           <GamesScroll
             games={games}
             onRefresh={handleRefresh}

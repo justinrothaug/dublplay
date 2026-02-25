@@ -451,32 +451,58 @@ function TeamBadge({ abbr, size = 40 }) {
   );
 }
 
-function ScorePip({ score, reasoning }) {
+function ScorePip({ score, reasoning, accuribet }) {
   const [open, setOpen] = useState(false);
   if (score == null) return null;
   const c = edgeColor(score);
+  const hasPopover = reasoning || (accuribet && accuribet.ml);
   return (
     <div style={{ position:"relative", flexShrink:0, marginLeft:6 }}>
       <span
-        onClick={e => { e.stopPropagation(); if (reasoning) setOpen(o => !o); }}
+        onClick={e => { e.stopPropagation(); if (hasPopover) setOpen(o => !o); }}
         style={{
           display:"inline-flex", alignItems:"center", justifyContent:"center",
           width:28, height:28, borderRadius:"50%",
           border:`2px solid ${c}`, background:`${c}18`,
           fontSize:10, fontWeight:800, color:c,
-          cursor: reasoning ? "pointer" : "default",
+          cursor: hasPopover ? "pointer" : "default",
         }}
       >{score}</span>
-      {open && reasoning && (
+      {open && hasPopover && (
         <div style={{
           position:"absolute", right:0, top:34, zIndex:200,
           background:T.card, border:`1px solid ${c}44`,
           borderRadius:10, padding:"10px 12px",
           fontSize:10, color:T.text2, lineHeight:1.6,
-          width:210, boxShadow:"0 8px 24px rgba(0,0,0,0.55)",
+          width:230, boxShadow:"0 8px 24px rgba(0,0,0,0.55)",
         }}>
           <div style={{ fontSize:8, color:c, letterSpacing:"0.1em", fontWeight:700, marginBottom:5 }}>DUBL SCORE · {score}/5</div>
-          {reasoning}
+          {reasoning && <div style={{ marginBottom: (accuribet && accuribet.ml) ? 8 : 0 }}>{reasoning}</div>}
+          {accuribet && accuribet.ml && (
+            <div style={{ borderTop: reasoning ? `1px solid ${T.border}` : "none", paddingTop: reasoning ? 8 : 0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
+                <span style={{ color:"#5b9bd5", fontSize:9 }}>⚡</span>
+                <span style={{ fontSize:8, fontWeight:700, color:"#5b9bd5", letterSpacing:"0.06em" }}>ACCURIBET ML</span>
+              </div>
+              <div style={{ fontSize:10, color:T.text2, lineHeight:1.5 }}>
+                Picks <b style={{ color:T.text1 }}>{accuribet.ml}</b>
+                {accuribet.confidence != null && (
+                  <span style={{
+                    fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                    color: accuribet.confidence >= 70 ? "#2e7d32" : "#5b9bd5",
+                    background: accuribet.confidence >= 70 ? "rgba(83,211,55,0.12)" : "rgba(91,155,213,0.12)",
+                    border: `1px solid ${accuribet.confidence >= 70 ? "rgba(83,211,55,0.28)" : "rgba(91,155,213,0.25)"}`,
+                    borderRadius:4, padding:"1px 5px", marginLeft:5,
+                  }}>{accuribet.confidence}%</span>
+                )}
+              </div>
+              {accuribet.ou != null && (
+                <div style={{ fontSize:10, color:T.text3, marginTop:2 }}>
+                  Projected total: <b style={{ color:T.text2 }}>{accuribet.ou}</b>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -513,10 +539,11 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
     betMargin = ourScore - oppScore;
   }
 
+  const ab = (analysis.accuribet_ml || analysis.accuribet_ou) ? { ml: analysis.accuribet_ml, confidence: analysis.accuribet_confidence, ou: analysis.accuribet_ou } : null;
   const items = [
-    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
-    { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, isOu: true },
-    { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, isProp: true },
+    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, accuribet: ab, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
+    { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, accuribet: ab && ab.ou ? { ml: null, confidence: null, ou: ab.ou } : null, isOu: true },
+    { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, accuribet: null, isProp: true },
   ].filter(i => i.text);
 
   // If live game has no analysis yet, show computed O/U status from scores alone
@@ -586,7 +613,7 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
               </div>
               <span style={{ fontSize:11, color:"#4a3a2e", lineHeight:1.6 }}>{item.text}</span>
             </div>
-            <ScorePip score={item.score} reasoning={item.reasoning} />
+            <ScorePip score={item.score} reasoning={item.reasoning} accuribet={item.accuribet} />
             {pickId && onFavorite && (
               <BookmarkBtn light active={isFav} onClick={() => isFav
                 ? onFavorite.remove(pickId)
@@ -610,6 +637,35 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
           </div>
           );
         })}
+        {/* Accuribet ML model prediction badge */}
+        {analysis.accuribet_ml && (
+          <div style={{
+            display:"flex", gap:8, alignItems:"center",
+            paddingTop: items.length > 0 ? 10 : 0,
+            marginTop: items.length > 0 ? 10 : 0,
+            borderTop: items.length > 0 ? "1px solid rgba(0,0,0,0.07)" : "none",
+          }}>
+            <span style={{ color:"#5b9bd5", fontSize:10, flexShrink:0 }}>⚡</span>
+            <span style={{ fontSize:9, fontWeight:700, color:"#5b9bd5", letterSpacing:"0.06em", flexShrink:0 }}>ACCURIBET</span>
+            <span style={{ fontSize:10, color:"#4a3a2e" }}>
+              ML picks <b>{analysis.accuribet_ml}</b>
+              {analysis.accuribet_confidence != null && (
+                <span style={{
+                  fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                  color: analysis.accuribet_confidence >= 70 ? "#2e7d32" : "#5b9bd5",
+                  background: analysis.accuribet_confidence >= 70 ? "rgba(83,211,55,0.12)" : "rgba(91,155,213,0.12)",
+                  border: `1px solid ${analysis.accuribet_confidence >= 70 ? "rgba(83,211,55,0.28)" : "rgba(91,155,213,0.25)"}`,
+                  borderRadius:4, padding:"1px 5px", marginLeft:5,
+                }}>{analysis.accuribet_confidence}%</span>
+              )}
+            </span>
+            {analysis.accuribet_ou != null && (
+              <span style={{ fontSize:10, color:"#8a7a6a", marginLeft:"auto", flexShrink:0 }}>
+                OU {analysis.accuribet_ou}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -761,30 +817,38 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
             <div style={{ fontSize:9, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>
               PRE-GAME PICKS
             </div>
-            {[
-              { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit },
-              { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit      },
-              { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null       },
-            ].filter(i => i.text).map((item, i) => (
-              <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
-                <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:2 }}>
-                    <span style={{ fontSize:8, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
-                    {item.hit !== null && (
-                      <span style={{
-                        fontSize:8, fontWeight:800, letterSpacing:"0.06em",
-                        color: hitColor(item.hit),
-                        background: item.hit === "push" ? "rgba(245,166,35,0.12)" : item.hit ? T.greenDim : T.redDim,
-                        border:`1px solid ${item.hit === "push" ? "rgba(245,166,35,0.3)" : item.hit ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
-                        borderRadius:3, padding:"1px 5px",
-                      }}>{hitLabel(item.hit)}</span>
-                    )}
+            {(() => {
+              const abMl = pickRecord?.accuribet_ml || analysis?.accuribet_ml;
+              const abConf = pickRecord?.accuribet_confidence ?? analysis?.accuribet_confidence;
+              const abOu = pickRecord?.accuribet_ou ?? analysis?.accuribet_ou;
+              const abBet = abMl ? { ml: abMl, confidence: abConf, ou: abOu } : null;
+              const abOuOnly = abOu != null ? { ml: null, confidence: null, ou: abOu } : null;
+              return [
+                { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit, score: pickRecord?.dubl_score_bet ?? analysis?.dubl_score_bet, reasoning: analysis?.dubl_reasoning_bet, accuribet: abBet },
+                { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit,      score: pickRecord?.dubl_score_ou  ?? analysis?.dubl_score_ou,  reasoning: analysis?.dubl_reasoning_ou,  accuribet: abOuOnly },
+                { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null,       score: null, accuribet: null },
+              ].filter(i => i.text).map((item, i) => (
+                <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
+                  <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:2 }}>
+                      <span style={{ fontSize:8, fontWeight:700, color:item.color, letterSpacing:"0.06em" }}>{item.label}</span>
+                      {item.hit !== null && (
+                        <span style={{
+                          fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                          color: hitColor(item.hit),
+                          background: item.hit === "push" ? "rgba(245,166,35,0.12)" : item.hit ? T.greenDim : T.redDim,
+                          border:`1px solid ${item.hit === "push" ? "rgba(245,166,35,0.3)" : item.hit ? T.greenBdr : "rgba(248,70,70,0.3)"}`,
+                          borderRadius:3, padding:"1px 5px",
+                        }}>{hitLabel(item.hit)}</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize:10, color:T.text3, lineHeight:1.5 }}>{item.text}</span>
                   </div>
-                  <span style={{ fontSize:10, color:T.text3, lineHeight:1.5 }}>{item.text}</span>
+                  <ScorePip score={item.score} reasoning={item.reasoning} accuribet={item.accuribet} />
                 </div>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         )}
 
@@ -2120,7 +2184,7 @@ export default function App() {
             return (
               <span style={{ marginLeft:"auto", fontSize:9, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
                 {betPct !== null && (
-                  <span style={{ color:c(betPct) }}>ML/SPREAD {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
+                  <span style={{ color:c(betPct) }}>ODDS {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
                 )}
                 {betPct !== null && ouPct !== null && (
                   <span style={{ color:T.text3 }}>|</span>

@@ -1271,12 +1271,108 @@ def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) ->
         return f"{home_abbr} 0"
 
 
+# ── ACCURIBET (external ML model) ────────────────────────────────────────────
+ACCURIBET_BASE = "https://api.accuribet.win"
+
+async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
+    """Fetch ML V2 win predictions and OU score predictions from Accuribet.
+
+    Returns a dict keyed by team abbreviation pair (frozenset) →
+    { "ml_team": str, "ml_confidence": float, "ou_total": int|None }
+    so the caller can match predictions to games by away/home abbreviation.
+    Results are cached for 10 minutes.
+    """
+    cached = cache_get("accuribet_preds")
+    if cached is not None:
+        return cached
+
+    result: dict = {}
+    try:
+        v2_resp, ou_resp = await asyncio.gather(
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=8),
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=8),
+        )
+
+        # Also fetch today's games from Accuribet to map game_id → team names
+        games_resp = await client.get(f"{ACCURIBET_BASE}/sports/games", timeout=8)
+        ab_games = {}  # game_id → { home_abbr, away_abbr }
+        if games_resp.status_code == 200:
+            for g in games_resp.json():
+                gid = g.get("game_id") or g.get("id", "")
+                home_name = g.get("home_team") or g.get("home_team_name", "")
+                away_name = g.get("away_team") or g.get("away_team_name", "")
+                home_abbr = any_name_to_abbr(home_name) if home_name else ""
+                away_abbr = any_name_to_abbr(away_name) if away_name else ""
+                if home_abbr and away_abbr:
+                    ab_games[gid] = {"home": home_abbr, "away": away_abbr}
+
+        # Parse V2 (moneyline) predictions
+        v2_by_gid: dict[str, dict] = {}
+        if v2_resp.status_code == 200:
+            for p in v2_resp.json():
+                gid = p.get("game_id", "")
+                team_name = p.get("prediction", "")
+                confidence = p.get("confidence")
+                abbr = any_name_to_abbr(team_name)
+                v2_by_gid[gid] = {"team": abbr, "confidence": confidence}
+
+        # Parse OU (score) predictions
+        ou_by_gid: dict[str, int | None] = {}
+        if ou_resp.status_code == 200:
+            for p in ou_resp.json():
+                gid = p.get("game_id", "")
+                try:
+                    ou_by_gid[gid] = int(p.get("prediction", 0))
+                except (ValueError, TypeError):
+                    ou_by_gid[gid] = None
+
+        # Merge by game_id → keyed by frozenset of abbreviations for easy lookup
+        for gid, teams in ab_games.items():
+            key = frozenset([teams["home"], teams["away"]])
+            entry: dict = {}
+            if gid in v2_by_gid:
+                entry["ml_team"] = v2_by_gid[gid]["team"]
+                entry["ml_confidence"] = v2_by_gid[gid]["confidence"]
+            if gid in ou_by_gid:
+                entry["ou_total"] = ou_by_gid[gid]
+            if entry:
+                result[key] = entry
+
+        cache_set("accuribet_preds", result, ttl=600)  # 10 min cache
+    except Exception as e:
+        logging.warning(f"Accuribet fetch failed (non-fatal): {e}")
+        cache_set("accuribet_preds", result, ttl=120)  # cache empty for 2 min on error
+
+    return result
+
+
+async def fetch_accuribet_accuracy(client: httpx.AsyncClient) -> float | None:
+    """Fetch Accuribet V2 model overall accuracy (hit rate %).  Cached 30 min."""
+    cached = cache_get("accuribet_accuracy")
+    if cached is not None:
+        return cached
+    try:
+        resp = await client.get(
+            f"{ACCURIBET_BASE}/sports/model/accuracy",
+            params={"model_name": "v2"}, timeout=8,
+        )
+        if resp.status_code == 200:
+            val = resp.json()
+            pct = float(val) if not isinstance(val, dict) else float(val.get("accuracy", 0))
+            cache_set("accuribet_accuracy", pct, ttl=1800)
+            return pct
+    except Exception as e:
+        logging.warning(f"Accuribet accuracy fetch failed: {e}")
+    return None
+
+
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────
 def build_system_prompt(
     games: list,
     injuries: set,
     team_stats: dict | None = None,
     rest_days: dict | None = None,
+    accuribet: dict | None = None,
 ) -> str:
     injury_note = ""
     if injuries:
@@ -1332,6 +1428,26 @@ def build_system_prompt(
         if rows:
             team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
+    # Build Accuribet ML model context
+    ab_ctx = ""
+    if accuribet:
+        ab_rows = []
+        for g in games:
+            key = frozenset([g["home"], g["away"]])
+            ab = accuribet.get(key)
+            if not ab:
+                continue
+            parts = []
+            if ab.get("ml_team") and ab.get("ml_confidence") is not None:
+                pct = round(ab["ml_confidence"] * 100, 1)
+                parts.append(f"ML model picks {ab['ml_team']} ({pct}% confidence)")
+            if ab.get("ou_total") is not None:
+                parts.append(f"OU model predicts {ab['ou_total']} total pts")
+            if parts:
+                ab_rows.append(f"  {g['away']}@{g['home']}: {'; '.join(parts)}")
+        if ab_rows:
+            ab_ctx = "\nACCURIBET ML MODEL (TensorFlow, ~58% historical accuracy):\n" + "\n".join(ab_rows)
+
     return (
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
         "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
@@ -1340,7 +1456,8 @@ def build_system_prompt(
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}"
-        f"{team_ctx}\n"
+        f"{team_ctx}"
+        f"{ab_ctx}\n"
         "Respond with EXACTLY the three labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
@@ -1909,25 +2026,40 @@ async def analyze_game(req: AnalyzeRequest):
     today_date = req.date or datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient() as client:
-        espn_games, injuries, team_stats = await asyncio.gather(
+        espn_games, injuries, team_stats, accuribet_preds = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
             fetch_espn_standings(client),
+            fetch_accuribet_predictions(client),
         )
         # Enrich with summary data (moneylines + BPI win prob) for the analysis prompt
         if espn_games:
             await enrich_games_from_espn_summary(client, espn_games)
 
-    # If ESPN failed (timeout / rate-limit / concurrent stampede), fall back to
-    # the Firestore game list rather than mock data so real games can be found.
-    if not espn_games:
-        fs_games = _load_games_from_firestore(today_date)
-        games_to_search = fs_games if fs_games else MOCK_GAMES
-    else:
-        games_to_search = espn_games
     # Strip date suffix for lookup in case frontend ID has suffix but ESPN returned without
     req_base_id = re.sub(r'-\d{8}$', '', req.game_id)
-    game = next((g for g in games_to_search if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
+
+    def _find_game(game_list):
+        return next((g for g in game_list if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
+
+    # Try ESPN first, then Firestore fallback, then team-abbr fuzzy match
+    games_to_search = espn_games or []
+    game = _find_game(games_to_search) if games_to_search else None
+
+    if not game:
+        fs_games = _load_games_from_firestore(today_date) or []
+        if fs_games:
+            game = _find_game(fs_games)
+            if game:
+                games_to_search = fs_games
+
+    # Last resort: match by team abbreviations extracted from the game_id
+    if not game and games_to_search:
+        parts = req_base_id.split("-")
+        if len(parts) >= 2:
+            away_t, home_t = parts[0].upper(), parts[1].upper()
+            game = next((g for g in games_to_search if g.get("away") == away_t and g.get("home") == home_t), None)
+
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
@@ -1935,7 +2067,7 @@ async def analyze_game(req: AnalyzeRequest):
     async with httpx.AsyncClient() as client:
         rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
 
-    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days)
+    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days, accuribet_preds)
     is_live  = game["status"] == "live"
     is_final = game["status"] == "final"
 
@@ -2074,7 +2206,26 @@ async def analyze_game(req: AnalyzeRequest):
             "dubl_score_ou":  analysis.get("dubl_score_ou"),
             "saved_at":     datetime.now(timezone.utc).isoformat(),
         }
+
+        # Attach Accuribet predictions to pick before saving
+        ab_key = frozenset([game["home"], game["away"]])
+        ab_pred = accuribet_preds.get(ab_key)
+        if ab_pred:
+            pick_data["accuribet_ml"] = ab_pred.get("ml_team")
+            ab_conf = ab_pred.get("ml_confidence")
+            pick_data["accuribet_confidence"] = round(ab_conf * 100, 1) if ab_conf is not None else None
+            pick_data["accuribet_ou"] = ab_pred.get("ou_total")
+
         _save_pick_to_firestore(date_str, pick_data)
+
+    # Attach Accuribet ML model prediction for this specific game
+    ab_key = frozenset([game["home"], game["away"]])
+    ab_pred = accuribet_preds.get(ab_key)
+    if ab_pred:
+        analysis["accuribet_ml"] = ab_pred.get("ml_team")
+        conf = ab_pred.get("ml_confidence")
+        analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
+        analysis["accuribet_ou"] = ab_pred.get("ou_total")
 
     return {"analysis": analysis}
 

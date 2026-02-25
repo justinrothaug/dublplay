@@ -544,7 +544,7 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 
   const ab = (analysis.accuribet_ml || analysis.accuribet_ou) ? { ml: analysis.accuribet_ml, confidence: analysis.accuribet_confidence, ou: analysis.accuribet_ou } : null;
   const items = [
-    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, accuribet: ab, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
+    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, accuribet: ab && ab.ml ? { ml: ab.ml, confidence: ab.confidence, ou: null } : null, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
     { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, accuribet: ab && ab.ou ? { ml: null, confidence: null, ou: ab.ou } : null, isOu: true },
     { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, accuribet: null, isProp: true },
   ].filter(i => i.text);

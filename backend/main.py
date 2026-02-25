@@ -2036,16 +2036,30 @@ async def analyze_game(req: AnalyzeRequest):
         if espn_games:
             await enrich_games_from_espn_summary(client, espn_games)
 
-    # If ESPN failed (timeout / rate-limit / concurrent stampede), fall back to
-    # the Firestore game list rather than mock data so real games can be found.
-    if not espn_games:
-        fs_games = _load_games_from_firestore(today_date)
-        games_to_search = fs_games if fs_games else MOCK_GAMES
-    else:
-        games_to_search = espn_games
     # Strip date suffix for lookup in case frontend ID has suffix but ESPN returned without
     req_base_id = re.sub(r'-\d{8}$', '', req.game_id)
-    game = next((g for g in games_to_search if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
+
+    def _find_game(game_list):
+        return next((g for g in game_list if g["id"] == req.game_id or re.sub(r'-\d{8}$', '', g["id"]) == req_base_id), None)
+
+    # Try ESPN first, then Firestore fallback, then team-abbr fuzzy match
+    games_to_search = espn_games or []
+    game = _find_game(games_to_search) if games_to_search else None
+
+    if not game:
+        fs_games = _load_games_from_firestore(today_date) or []
+        if fs_games:
+            game = _find_game(fs_games)
+            if game:
+                games_to_search = fs_games
+
+    # Last resort: match by team abbreviations extracted from the game_id
+    if not game and games_to_search:
+        parts = req_base_id.split("-")
+        if len(parts) >= 2:
+            away_t, home_t = parts[0].upper(), parts[1].upper()
+            game = next((g for g in games_to_search if g.get("away") == away_t and g.get("home") == home_t), None)
+
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
@@ -2192,6 +2206,16 @@ async def analyze_game(req: AnalyzeRequest):
             "dubl_score_ou":  analysis.get("dubl_score_ou"),
             "saved_at":     datetime.now(timezone.utc).isoformat(),
         }
+
+        # Attach Accuribet predictions to pick before saving
+        ab_key = frozenset([game["home"], game["away"]])
+        ab_pred = accuribet_preds.get(ab_key)
+        if ab_pred:
+            pick_data["accuribet_ml"] = ab_pred.get("ml_team")
+            ab_conf = ab_pred.get("ml_confidence")
+            pick_data["accuribet_confidence"] = round(ab_conf * 100, 1) if ab_conf is not None else None
+            pick_data["accuribet_ou"] = ab_pred.get("ou_total")
+
         _save_pick_to_firestore(date_str, pick_data)
 
     # Attach Accuribet ML model prediction for this specific game

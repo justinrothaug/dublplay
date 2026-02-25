@@ -1273,6 +1273,12 @@ def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) ->
 
 # ── ACCURIBET (external ML model) ────────────────────────────────────────────
 ACCURIBET_BASE = "https://api.accuribet.win"
+_ACCURIBET_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://accuribet.win/",
+    "Origin": "https://accuribet.win",
+}
 
 async def fetch_accuribet_predictions(client: httpx.AsyncClient | None = None) -> dict:
     """Fetch ML V2 win predictions and OU score predictions from Accuribet.
@@ -1290,11 +1296,11 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient | None = None) -
     own_client = client is None
     try:
         if own_client:
-            client = httpx.AsyncClient(timeout=15)
+            client = httpx.AsyncClient(timeout=15, headers=_ACCURIBET_HEADERS)
         v2_resp, ou_resp, games_resp = await asyncio.gather(
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=15),
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=15),
-            client.get(f"{ACCURIBET_BASE}/sports/games", timeout=15),
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=15, headers=_ACCURIBET_HEADERS),
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=15, headers=_ACCURIBET_HEADERS),
+            client.get(f"{ACCURIBET_BASE}/sports/games", timeout=15, headers=_ACCURIBET_HEADERS),
         )
 
         # Map game_id → team abbreviations
@@ -1367,7 +1373,8 @@ async def fetch_accuribet_accuracy(client: httpx.AsyncClient) -> float | None:
     try:
         resp = await client.get(
             f"{ACCURIBET_BASE}/sports/model/accuracy",
-            params={"model_name": "v2"}, timeout=8,
+            params={"model_name": "v2"}, timeout=15,
+            headers=_ACCURIBET_HEADERS,
         )
         if resp.status_code == 200:
             val = resp.json()

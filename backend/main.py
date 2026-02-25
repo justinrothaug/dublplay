@@ -1719,10 +1719,34 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     return merged
 
 
+def _enrich_games_with_accuribet(games: list[dict], accuribet_preds: dict) -> None:
+    """Inject ACCURIBET predictions into each game's analysis dict (in-place)."""
+    if not accuribet_preds:
+        return
+    for g in games:
+        analysis = g.get("analysis")
+        if not analysis or not isinstance(analysis, dict):
+            continue
+        # Skip if already has accuribet data
+        if analysis.get("accuribet_ml"):
+            continue
+        ab_key = frozenset([g.get("home", ""), g.get("away", "")])
+        ab_pred = accuribet_preds.get(ab_key)
+        if ab_pred:
+            analysis["accuribet_ml"] = ab_pred.get("ml_team")
+            conf = ab_pred.get("ml_confidence")
+            analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
+            analysis["accuribet_ou"] = ab_pred.get("ou_total")
+
+
 @app.get("/api/games")
 async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    # Fetch ACCURIBET predictions so we can enrich cached analyses
+    async with httpx.AsyncClient() as client:
+        accuribet_preds = await fetch_accuribet_predictions(client)
 
     # Only use Firestore cache for dates clearly in the past (>= 2 days old from
     # server UTC). For today / yesterday / tomorrow the cache may hold data written
@@ -1732,6 +1756,7 @@ async def get_games(date: Optional[str] = None):
         # ── 1. Past date — safe to serve from Firestore cache instantly
         cached_games = _load_games_from_firestore(date_str)
         if cached_games:
+            _enrich_games_with_accuribet(cached_games, accuribet_preds)
             asyncio.create_task(_full_espn_refresh(date_str, date))
             return {
                 "games": cached_games,
@@ -1749,6 +1774,7 @@ async def get_games(date: Optional[str] = None):
             return {"games": [], "source": "empty"}
         return {"games": MOCK_GAMES, "source": "mock"}
 
+    _enrich_games_with_accuribet(merged, accuribet_preds)
     return {
         "games": merged,
         "source": "live",
@@ -2176,6 +2202,16 @@ async def analyze_game(req: AnalyzeRequest):
         analysis["_snap"] = {"spread": spread_ln, "ou": ou_line,
                               "homeOdds": home_ml, "awayOdds": away_ml}
 
+    # Attach Accuribet ML model prediction BEFORE persisting to Firestore
+    # so cached analysis includes ACCURIBET data on subsequent loads.
+    ab_key = frozenset([game["home"], game["away"]])
+    ab_pred = accuribet_preds.get(ab_key)
+    if ab_pred:
+        analysis["accuribet_ml"] = ab_pred.get("ml_team")
+        conf = ab_pred.get("ml_confidence")
+        analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
+        analysis["accuribet_ou"] = ab_pred.get("ou_total")
+
     # Only persist to Firestore when we got a real analysis (non-null best_bet)
     # and the game hasn't tipped off yet (freeze pre-game data once live).
     if not is_live and analysis.get("best_bet"):
@@ -2207,9 +2243,7 @@ async def analyze_game(req: AnalyzeRequest):
             "saved_at":     datetime.now(timezone.utc).isoformat(),
         }
 
-        # Attach Accuribet predictions to pick before saving
-        ab_key = frozenset([game["home"], game["away"]])
-        ab_pred = accuribet_preds.get(ab_key)
+        # Include Accuribet predictions in pick record
         if ab_pred:
             pick_data["accuribet_ml"] = ab_pred.get("ml_team")
             ab_conf = ab_pred.get("ml_confidence")
@@ -2217,15 +2251,6 @@ async def analyze_game(req: AnalyzeRequest):
             pick_data["accuribet_ou"] = ab_pred.get("ou_total")
 
         _save_pick_to_firestore(date_str, pick_data)
-
-    # Attach Accuribet ML model prediction for this specific game
-    ab_key = frozenset([game["home"], game["away"]])
-    ab_pred = accuribet_preds.get(ab_key)
-    if ab_pred:
-        analysis["accuribet_ml"] = ab_pred.get("ml_team")
-        conf = ab_pred.get("ml_confidence")
-        analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
-        analysis["accuribet_ou"] = ab_pred.get("ou_total")
 
     return {"analysis": analysis}
 

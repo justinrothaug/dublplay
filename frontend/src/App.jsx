@@ -640,35 +640,6 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
           </div>
           );
         })}
-        {/* Accuribet ML model prediction badge */}
-        {analysis.accuribet_ml && (
-          <div style={{
-            display:"flex", gap:8, alignItems:"center",
-            paddingTop: items.length > 0 ? 10 : 0,
-            marginTop: items.length > 0 ? 10 : 0,
-            borderTop: items.length > 0 ? "1px solid rgba(0,0,0,0.07)" : "none",
-          }}>
-            <span style={{ color:"#5b9bd5", fontSize:10, flexShrink:0 }}>⚡</span>
-            <span style={{ fontSize:9, fontWeight:700, color:"#5b9bd5", letterSpacing:"0.06em", flexShrink:0 }}>ACCURIBET</span>
-            <span style={{ fontSize:10, color:"#4a3a2e" }}>
-              ML picks <b>{analysis.accuribet_ml}</b>
-              {analysis.accuribet_confidence != null && (
-                <span style={{
-                  fontSize:8, fontWeight:800, letterSpacing:"0.06em",
-                  color: analysis.accuribet_confidence >= 70 ? "#2e7d32" : "#5b9bd5",
-                  background: analysis.accuribet_confidence >= 70 ? "rgba(83,211,55,0.12)" : "rgba(91,155,213,0.12)",
-                  border: `1px solid ${analysis.accuribet_confidence >= 70 ? "rgba(83,211,55,0.28)" : "rgba(91,155,213,0.25)"}`,
-                  borderRadius:4, padding:"1px 5px", marginLeft:5,
-                }}>{analysis.accuribet_confidence}%</span>
-              )}
-            </span>
-            {analysis.accuribet_ou != null && (
-              <span style={{ fontSize:10, color:"#8a7a6a", marginLeft:"auto", flexShrink:0 }}>
-                OU {analysis.accuribet_ou}
-              </span>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

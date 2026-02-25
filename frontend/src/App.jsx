@@ -455,7 +455,8 @@ function ScorePip({ score, reasoning, accuribet }) {
   const [open, setOpen] = useState(false);
   if (score == null) return null;
   const c = edgeColor(score);
-  const hasPopover = reasoning || (accuribet && accuribet.ml);
+  const hasAb = accuribet && (accuribet.ml || accuribet.ou != null);
+  const hasPopover = reasoning || hasAb;
   return (
     <div style={{ position:"relative", flexShrink:0, marginLeft:6 }}>
       <span
@@ -477,27 +478,29 @@ function ScorePip({ score, reasoning, accuribet }) {
           width:230, boxShadow:"0 8px 24px rgba(0,0,0,0.55)",
         }}>
           <div style={{ fontSize:8, color:c, letterSpacing:"0.1em", fontWeight:700, marginBottom:5 }}>DUBL SCORE · {score}/5</div>
-          {reasoning && <div style={{ marginBottom: (accuribet && accuribet.ml) ? 8 : 0 }}>{reasoning}</div>}
-          {accuribet && accuribet.ml && (
+          {reasoning && <div style={{ marginBottom: hasAb ? 8 : 0 }}>{reasoning}</div>}
+          {hasAb && (
             <div style={{ borderTop: reasoning ? `1px solid ${T.border}` : "none", paddingTop: reasoning ? 8 : 0 }}>
               <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
                 <span style={{ color:"#5b9bd5", fontSize:9 }}>⚡</span>
                 <span style={{ fontSize:8, fontWeight:700, color:"#5b9bd5", letterSpacing:"0.06em" }}>ACCURIBET ML</span>
               </div>
-              <div style={{ fontSize:10, color:T.text2, lineHeight:1.5 }}>
-                Picks <b style={{ color:T.text1 }}>{accuribet.ml}</b>
-                {accuribet.confidence != null && (
-                  <span style={{
-                    fontSize:8, fontWeight:800, letterSpacing:"0.06em",
-                    color: accuribet.confidence >= 70 ? "#2e7d32" : "#5b9bd5",
-                    background: accuribet.confidence >= 70 ? "rgba(83,211,55,0.12)" : "rgba(91,155,213,0.12)",
-                    border: `1px solid ${accuribet.confidence >= 70 ? "rgba(83,211,55,0.28)" : "rgba(91,155,213,0.25)"}`,
-                    borderRadius:4, padding:"1px 5px", marginLeft:5,
-                  }}>{accuribet.confidence}%</span>
-                )}
-              </div>
+              {accuribet.ml && (
+                <div style={{ fontSize:10, color:T.text2, lineHeight:1.5 }}>
+                  Picks <b style={{ color:T.text1 }}>{accuribet.ml}</b>
+                  {accuribet.confidence != null && (
+                    <span style={{
+                      fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                      color: accuribet.confidence >= 70 ? "#2e7d32" : "#5b9bd5",
+                      background: accuribet.confidence >= 70 ? "rgba(83,211,55,0.12)" : "rgba(91,155,213,0.12)",
+                      border: `1px solid ${accuribet.confidence >= 70 ? "rgba(83,211,55,0.28)" : "rgba(91,155,213,0.25)"}`,
+                      borderRadius:4, padding:"1px 5px", marginLeft:5,
+                    }}>{accuribet.confidence}%</span>
+                  )}
+                </div>
+              )}
               {accuribet.ou != null && (
-                <div style={{ fontSize:10, color:T.text3, marginTop:2 }}>
+                <div style={{ fontSize:10, color:T.text3, marginTop: accuribet.ml ? 2 : 0 }}>
                   Projected total: <b style={{ color:T.text2 }}>{accuribet.ou}</b>
                 </div>
               )}

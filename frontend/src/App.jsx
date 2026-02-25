@@ -791,9 +791,9 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
               PRE-GAME PICKS
             </div>
             {[
-              { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit },
-              { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit      },
-              { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null       },
+              { icon:"✦", label:"BEST BET",    text:displayBestBet, color:T.green,   hit:bestBetHit, score: pickRecord?.dubl_score_bet ?? analysis?.dubl_score_bet, reasoning: analysis?.dubl_reasoning_bet },
+              { icon:"◉", label:"O/U LEAN",    text:displayOu,      color:T.gold,    hit:ouHit,      score: pickRecord?.dubl_score_ou  ?? analysis?.dubl_score_ou,  reasoning: analysis?.dubl_reasoning_ou  },
+              { icon:"▸", label:"PLAYER PROP", text:displayProps,   color:"#a78bfa", hit:null,       score: null },
             ].filter(i => i.text).map((item, i) => (
               <div key={i} style={{ display:"flex", gap:6, alignItems:"flex-start", marginBottom:5 }}>
                 <span style={{ color:item.color, fontSize:9, marginTop:2, flexShrink:0 }}>{item.icon}</span>
@@ -812,6 +812,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
                   </div>
                   <span style={{ fontSize:10, color:T.text3, lineHeight:1.5 }}>{item.text}</span>
                 </div>
+                <ScorePip score={item.score} reasoning={item.reasoning} />
               </div>
             ))}
           </div>
@@ -2149,7 +2150,7 @@ export default function App() {
             return (
               <span style={{ marginLeft:"auto", fontSize:9, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
                 {betPct !== null && (
-                  <span style={{ color:c(betPct) }}>ML/SPREAD {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
+                  <span style={{ color:c(betPct) }}>ODDS {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
                 )}
                 {betPct !== null && ouPct !== null && (
                   <span style={{ color:T.text3 }}>|</span>

@@ -1836,7 +1836,9 @@ function parseGameProp(text, game) {
 function HitStatsBanner({ overallStats, picksData }) {
   if (!overallStats && !picksData) return null;
   const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
-  if (totalBet === 0 && totalOu === 0) return null;
+  const hasRolling = totalBet > 0 || totalOu > 0;
+  const hasToday = picksData?.hit_pct_bet != null || picksData?.hit_pct_ou != null;
+  if (!hasRolling && !hasToday) return null;
 
   const betPct  = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
   const ouPct   = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
@@ -2017,18 +2019,20 @@ export default function App() {
     });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 6) Load picks for the currently selected date (for HIT/MISS display on game cards)
+  // 6) Load picks for the currently selected date (for HIT/MISS display on game cards).
+  //    Re-runs when games change so hit stats update as games go final.
   useEffect(() => {
     const dateKey = selectedDate || todayStr;
     api.getPicks(dateKey)
       .then(d => setPicksData(d))
       .catch(() => setPicksData(null));
-  }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedDate, games]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 7) On mount: load past 7 days to compute overall rolling hit stats
+  // 7) Load past 7 days + today to compute overall rolling hit stats.
+  //    Re-runs when games change (e.g. a game goes final and picks get scored).
   useEffect(() => {
     const pastDays = [];
-    for (let i = 1; i <= 7; i++) {
+    for (let i = 0; i <= 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       pastDays.push(fmtLocal(d));
@@ -2049,7 +2053,7 @@ export default function App() {
           setOverallStats({ hitsBet, totalBet, hitsOu, totalOu });
         }
       });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (apiKey === null || apiKey === "__no_server__") {
     if (!serverHasKey && apiKey === "__no_server__") {

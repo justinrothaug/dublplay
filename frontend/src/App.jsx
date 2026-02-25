@@ -1898,6 +1898,97 @@ function parseGameProp(text, game) {
 
 
 
+// ── ACCURIBET CLIENT-SIDE FETCH ───────────────────────────────────────────────
+// Fetched from the browser to bypass Cloudflare blocking cloud-provider IPs.
+const AB_BASE = "https://api.accuribet.win";
+const _NICKNAME_TO_ABBR = {
+  Hawks:"ATL",Celtics:"BOS",Nets:"BKN",Hornets:"CHA",Bulls:"CHI",Cavaliers:"CLE",
+  Mavericks:"DAL",Nuggets:"DEN",Pistons:"DET",Warriors:"GSW",Rockets:"HOU",Pacers:"IND",
+  Clippers:"LAC",Lakers:"LAL",Grizzlies:"MEM",Heat:"MIA",Bucks:"MIL",Timberwolves:"MIN",
+  Pelicans:"NOP",Knicks:"NYK",Thunder:"OKC",Magic:"ORL","76ers":"PHI",Sixers:"PHI",
+  Suns:"PHX","Trail Blazers":"POR",Blazers:"POR",Kings:"SAC",Spurs:"SAS",Raptors:"TOR",
+  Jazz:"UTA",Wizards:"WAS",
+};
+function _nameToAbbr(name) {
+  if (!name) return "";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    const two = parts.slice(-2).join(" ");
+    if (_NICKNAME_TO_ABBR[two]) return _NICKNAME_TO_ABBR[two];
+  }
+  const last = parts[parts.length - 1];
+  if (_NICKNAME_TO_ABBR[last]) return _NICKNAME_TO_ABBR[last];
+  return name.length <= 3 ? name.toUpperCase() : name.slice(0, 3).toUpperCase();
+}
+
+let _abCache = null;
+let _abCacheTime = 0;
+async function fetchAccuribetPredictions() {
+  // Cache for 10 minutes
+  if (_abCache && Date.now() - _abCacheTime < 600000) return _abCache;
+  try {
+    const [gamesRes, v2Res, ouRes] = await Promise.all([
+      fetch(`${AB_BASE}/sports/games`),
+      fetch(`${AB_BASE}/sports/predict/all?model_name=v2`),
+      fetch(`${AB_BASE}/sports/predict/all?model_name=ou`),
+    ]);
+    if (!gamesRes.ok || !v2Res.ok || !ouRes.ok) {
+      console.warn("Accuribet API error:", gamesRes.status, v2Res.status, ouRes.status);
+      return {};
+    }
+    const [abGames, v2Preds, ouPreds] = await Promise.all([
+      gamesRes.json(), v2Res.json(), ouRes.json(),
+    ]);
+    // Map game_id → team abbreviations
+    const gameMap = {};
+    for (const g of abGames) {
+      const gid = g.game_id || g.id || "";
+      const home = _nameToAbbr(g.home_team || g.home_team_name || "");
+      const away = _nameToAbbr(g.away_team || g.away_team_name || "");
+      if (home && away) gameMap[gid] = { home, away };
+    }
+    // Index predictions by game_id
+    const v2Map = {};
+    for (const p of v2Preds) {
+      v2Map[p.game_id || ""] = { team: _nameToAbbr(p.prediction || ""), confidence: p.confidence };
+    }
+    const ouMap = {};
+    for (const p of ouPreds) {
+      try { ouMap[p.game_id || ""] = parseInt(p.prediction, 10); } catch { /* skip */ }
+    }
+    // Merge → keyed by "AWAY-HOME" for easy lookup
+    const result = {};
+    for (const [gid, teams] of Object.entries(gameMap)) {
+      const key = [teams.away, teams.home].sort().join("-");
+      const entry = {};
+      if (v2Map[gid]) { entry.ml_team = v2Map[gid].team; entry.ml_confidence = v2Map[gid].confidence; }
+      if (ouMap[gid] != null) entry.ou_total = ouMap[gid];
+      if (Object.keys(entry).length) result[key] = entry;
+    }
+    _abCache = result;
+    _abCacheTime = Date.now();
+    console.log("Accuribet: fetched", Object.keys(result).length, "predictions");
+    return result;
+  } catch (e) {
+    console.warn("Accuribet fetch failed:", e);
+    return {};
+  }
+}
+
+function mergeAccuribet(analysis, game, abData) {
+  if (!analysis || !game || !abData) return analysis;
+  if (analysis.accuribet_ml) return analysis; // already has it
+  const key = [game.away, game.home].sort().join("-");
+  const pred = abData[key];
+  if (!pred) return analysis;
+  return {
+    ...analysis,
+    accuribet_ml: pred.ml_team || null,
+    accuribet_confidence: pred.ml_confidence != null ? Math.round(pred.ml_confidence * 100 * 10) / 10 : null,
+    accuribet_ou: pred.ou_total != null ? String(pred.ou_total) : null,
+  };
+}
+
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [apiKey, setApiKey] = useState(null);
@@ -1917,6 +2008,7 @@ export default function App() {
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
+  const accuribetRef = useRef({}); // client-side ACCURIBET predictions (bypasses Cloudflare)
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -1955,8 +2047,9 @@ export default function App() {
     setGames([]);
     setAiOverrides({});
     analyzedPreGameRef.current.clear();
-    Promise.all([api.getGames(selectedDate || todayStr), api.getProps()])
-      .then(([g, p]) => {
+    Promise.all([api.getGames(selectedDate || todayStr), api.getProps(), fetchAccuribetPredictions()])
+      .then(([g, p, ab]) => {
+        accuribetRef.current = ab || {};
         setGames(g.games);
         setProps(p.props);
         setDataLoaded(true);
@@ -1996,7 +2089,7 @@ export default function App() {
             (g.ou     && snap.ou     !== "N/A" && snap.ou     !== g.ou)
           );
           if (!oddsStale) {
-            setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: g.analysis });
+            setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: mergeAccuribet(g.analysis, g, accuribetRef.current) });
             return;
           }
           // Odds moved — fall through and re-run Gemini with fresh lines
@@ -2006,7 +2099,7 @@ export default function App() {
         analyzedPreGameRef.current.add(g.id);
         setLoadingIds(prev => new Set([...prev, g.id]));
         api.analyze(g.id, apiKey, selectedDate || todayStr)
-          .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
+          .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: mergeAccuribet(d.analysis, g, accuribetRef.current) })))
           .catch(console.error)
           .finally(() => setLoadingIds(prev => {
             const next = new Set(prev);
@@ -2025,7 +2118,7 @@ export default function App() {
       analyzedLiveRef.current.add(g.id);
       setLoadingIds(prev => new Set([...prev, g.id]));
       api.analyze(g.id, apiKey, selectedDate || todayStr)
-        .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: d.analysis })))
+        .then(d => setAiOverrides(prev => ({ ...prev, [g.id]: mergeAccuribet(d.analysis, g, accuribetRef.current) })))
         .catch(console.error)
         .finally(() => setLoadingIds(prev => {
           const next = new Set(prev);

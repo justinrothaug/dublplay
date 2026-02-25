@@ -1273,8 +1273,14 @@ def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) ->
 
 # ── ACCURIBET (external ML model) ────────────────────────────────────────────
 ACCURIBET_BASE = "https://api.accuribet.win"
+_ACCURIBET_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://accuribet.win/",
+    "Origin": "https://accuribet.win",
+}
 
-async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
+async def fetch_accuribet_predictions(client: httpx.AsyncClient | None = None) -> dict:
     """Fetch ML V2 win predictions and OU score predictions from Accuribet.
 
     Returns a dict keyed by team abbreviation pair (frozenset) →
@@ -1287,14 +1293,17 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
         return cached
 
     result: dict = {}
+    own_client = client is None
     try:
-        v2_resp, ou_resp = await asyncio.gather(
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=8),
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=8),
+        if own_client:
+            client = httpx.AsyncClient(timeout=15, headers=_ACCURIBET_HEADERS)
+        v2_resp, ou_resp, games_resp = await asyncio.gather(
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=15, headers=_ACCURIBET_HEADERS),
+            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=15, headers=_ACCURIBET_HEADERS),
+            client.get(f"{ACCURIBET_BASE}/sports/games", timeout=15, headers=_ACCURIBET_HEADERS),
         )
 
-        # Also fetch today's games from Accuribet to map game_id → team names
-        games_resp = await client.get(f"{ACCURIBET_BASE}/sports/games", timeout=8)
+        # Map game_id → team abbreviations
         ab_games = {}  # game_id → { home_abbr, away_abbr }
         if games_resp.status_code == 200:
             for g in games_resp.json():
@@ -1305,6 +1314,8 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
                 away_abbr = any_name_to_abbr(away_name) if away_name else ""
                 if home_abbr and away_abbr:
                     ab_games[gid] = {"home": home_abbr, "away": away_abbr}
+        else:
+            logging.warning(f"Accuribet /sports/games returned {games_resp.status_code}")
 
         # Parse V2 (moneyline) predictions
         v2_by_gid: dict[str, dict] = {}
@@ -1315,6 +1326,8 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
                 confidence = p.get("confidence")
                 abbr = any_name_to_abbr(team_name)
                 v2_by_gid[gid] = {"team": abbr, "confidence": confidence}
+        else:
+            logging.warning(f"Accuribet v2 predict returned {v2_resp.status_code}")
 
         # Parse OU (score) predictions
         ou_by_gid: dict[str, int | None] = {}
@@ -1325,6 +1338,8 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
                     ou_by_gid[gid] = int(p.get("prediction", 0))
                 except (ValueError, TypeError):
                     ou_by_gid[gid] = None
+        else:
+            logging.warning(f"Accuribet ou predict returned {ou_resp.status_code}")
 
         # Merge by game_id → keyed by frozenset of abbreviations for easy lookup
         for gid, teams in ab_games.items():
@@ -1338,10 +1353,14 @@ async def fetch_accuribet_predictions(client: httpx.AsyncClient) -> dict:
             if entry:
                 result[key] = entry
 
+        logging.info(f"Accuribet: fetched {len(result)} game predictions")
         cache_set("accuribet_preds", result, ttl=600)  # 10 min cache
     except Exception as e:
-        logging.warning(f"Accuribet fetch failed (non-fatal): {e}")
-        cache_set("accuribet_preds", result, ttl=120)  # cache empty for 2 min on error
+        logging.warning(f"Accuribet fetch failed (non-fatal): {type(e).__name__}: {e!r}")
+        cache_set("accuribet_preds", result, ttl=60)  # cache empty for 1 min on error (retry sooner)
+    finally:
+        if own_client and client:
+            await client.aclose()
 
     return result
 
@@ -1354,7 +1373,8 @@ async def fetch_accuribet_accuracy(client: httpx.AsyncClient) -> float | None:
     try:
         resp = await client.get(
             f"{ACCURIBET_BASE}/sports/model/accuracy",
-            params={"model_name": "v2"}, timeout=8,
+            params={"model_name": "v2"}, timeout=15,
+            headers=_ACCURIBET_HEADERS,
         )
         if resp.status_code == 200:
             val = resp.json()
@@ -1745,8 +1765,7 @@ async def get_games(date: Optional[str] = None):
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
     # Fetch ACCURIBET predictions so we can enrich cached analyses
-    async with httpx.AsyncClient() as client:
-        accuribet_preds = await fetch_accuribet_predictions(client)
+    accuribet_preds = await fetch_accuribet_predictions()
 
     # Only use Firestore cache for dates clearly in the past (>= 2 days old from
     # server UTC). For today / yesterday / tomorrow the cache may hold data written
@@ -2051,7 +2070,7 @@ async def analyze_game(req: AnalyzeRequest):
 
     today_date = req.date or datetime.now().strftime("%Y%m%d")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20) as client:
         espn_games, injuries, team_stats, accuribet_preds = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),

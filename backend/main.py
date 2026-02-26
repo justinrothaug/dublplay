@@ -1272,118 +1272,9 @@ def _normalize_spread(spread_str: str | None, home_abbr: str, away_abbr: str) ->
 
 
 # ── ACCURIBET (external ML model) ────────────────────────────────────────────
-ACCURIBET_BASE = "https://api.accuribet.win"
-_ACCURIBET_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Referer": "https://accuribet.win/",
-    "Origin": "https://accuribet.win",
-}
-
-async def fetch_accuribet_predictions(client: httpx.AsyncClient | None = None) -> dict:
-    """Fetch ML V2 win predictions and OU score predictions from Accuribet.
-
-    Returns a dict keyed by team abbreviation pair (frozenset) →
-    { "ml_team": str, "ml_confidence": float, "ou_total": int|None }
-    so the caller can match predictions to games by away/home abbreviation.
-    Results are cached for 10 minutes.
-    """
-    cached = cache_get("accuribet_preds")
-    if cached is not None:
-        return cached
-
-    result: dict = {}
-    own_client = client is None
-    try:
-        if own_client:
-            client = httpx.AsyncClient(timeout=15, headers=_ACCURIBET_HEADERS)
-        v2_resp, ou_resp, games_resp = await asyncio.gather(
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "v2"}, timeout=15, headers=_ACCURIBET_HEADERS),
-            client.get(f"{ACCURIBET_BASE}/sports/predict/all", params={"model_name": "ou"}, timeout=15, headers=_ACCURIBET_HEADERS),
-            client.get(f"{ACCURIBET_BASE}/sports/games", timeout=15, headers=_ACCURIBET_HEADERS),
-        )
-
-        # Map game_id → team abbreviations
-        ab_games = {}  # game_id → { home_abbr, away_abbr }
-        if games_resp.status_code == 200:
-            for g in games_resp.json():
-                gid = g.get("game_id") or g.get("id", "")
-                home_name = g.get("home_team") or g.get("home_team_name", "")
-                away_name = g.get("away_team") or g.get("away_team_name", "")
-                home_abbr = any_name_to_abbr(home_name) if home_name else ""
-                away_abbr = any_name_to_abbr(away_name) if away_name else ""
-                if home_abbr and away_abbr:
-                    ab_games[gid] = {"home": home_abbr, "away": away_abbr}
-        else:
-            logging.warning(f"Accuribet /sports/games returned {games_resp.status_code}")
-
-        # Parse V2 (moneyline) predictions
-        v2_by_gid: dict[str, dict] = {}
-        if v2_resp.status_code == 200:
-            for p in v2_resp.json():
-                gid = p.get("game_id", "")
-                team_name = p.get("prediction", "")
-                confidence = p.get("confidence")
-                abbr = any_name_to_abbr(team_name)
-                v2_by_gid[gid] = {"team": abbr, "confidence": confidence}
-        else:
-            logging.warning(f"Accuribet v2 predict returned {v2_resp.status_code}")
-
-        # Parse OU (score) predictions
-        ou_by_gid: dict[str, int | None] = {}
-        if ou_resp.status_code == 200:
-            for p in ou_resp.json():
-                gid = p.get("game_id", "")
-                try:
-                    ou_by_gid[gid] = int(p.get("prediction", 0))
-                except (ValueError, TypeError):
-                    ou_by_gid[gid] = None
-        else:
-            logging.warning(f"Accuribet ou predict returned {ou_resp.status_code}")
-
-        # Merge by game_id → keyed by frozenset of abbreviations for easy lookup
-        for gid, teams in ab_games.items():
-            key = frozenset([teams["home"], teams["away"]])
-            entry: dict = {}
-            if gid in v2_by_gid:
-                entry["ml_team"] = v2_by_gid[gid]["team"]
-                entry["ml_confidence"] = v2_by_gid[gid]["confidence"]
-            if gid in ou_by_gid:
-                entry["ou_total"] = ou_by_gid[gid]
-            if entry:
-                result[key] = entry
-
-        logging.info(f"Accuribet: fetched {len(result)} game predictions")
-        cache_set("accuribet_preds", result, ttl=600)  # 10 min cache
-    except Exception as e:
-        logging.warning(f"Accuribet fetch failed (non-fatal): {type(e).__name__}: {e!r}")
-        cache_set("accuribet_preds", result, ttl=60)  # cache empty for 1 min on error (retry sooner)
-    finally:
-        if own_client and client:
-            await client.aclose()
-
-    return result
-
-
-async def fetch_accuribet_accuracy(client: httpx.AsyncClient) -> float | None:
-    """Fetch Accuribet V2 model overall accuracy (hit rate %).  Cached 30 min."""
-    cached = cache_get("accuribet_accuracy")
-    if cached is not None:
-        return cached
-    try:
-        resp = await client.get(
-            f"{ACCURIBET_BASE}/sports/model/accuracy",
-            params={"model_name": "v2"}, timeout=15,
-            headers=_ACCURIBET_HEADERS,
-        )
-        if resp.status_code == 200:
-            val = resp.json()
-            pct = float(val) if not isinstance(val, dict) else float(val.get("accuracy", 0))
-            cache_set("accuribet_accuracy", pct, ttl=1800)
-            return pct
-    except Exception as e:
-        logging.warning(f"Accuribet accuracy fetch failed: {e}")
-    return None
+# NOTE: Accuribet predictions are now fetched exclusively on the client side
+# (browser fetch) to bypass Cloudflare/IP restrictions on Hugging Face Spaces.
+# The frontend merges the data into analyses at display time.
 
 
 # ── SYSTEM PROMPT (built dynamically) ─────────────────────────────────────────
@@ -1392,7 +1283,6 @@ def build_system_prompt(
     injuries: set,
     team_stats: dict | None = None,
     rest_days: dict | None = None,
-    accuribet: dict | None = None,
 ) -> str:
     injury_note = ""
     if injuries:
@@ -1448,26 +1338,6 @@ def build_system_prompt(
         if rows:
             team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
-    # Build Accuribet ML model context
-    ab_ctx = ""
-    if accuribet:
-        ab_rows = []
-        for g in games:
-            key = frozenset([g["home"], g["away"]])
-            ab = accuribet.get(key)
-            if not ab:
-                continue
-            parts = []
-            if ab.get("ml_team") and ab.get("ml_confidence") is not None:
-                pct = round(ab["ml_confidence"] * 100, 1)
-                parts.append(f"ML model picks {ab['ml_team']} ({pct}% confidence)")
-            if ab.get("ou_total") is not None:
-                parts.append(f"OU model predicts {ab['ou_total']} total pts")
-            if parts:
-                ab_rows.append(f"  {g['away']}@{g['home']}: {'; '.join(parts)}")
-        if ab_rows:
-            ab_ctx = "\nACCURIBET ML MODEL (TensorFlow, ~58% historical accuracy):\n" + "\n".join(ab_rows)
-
     return (
         "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
         "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
@@ -1476,8 +1346,7 @@ def build_system_prompt(
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}"
-        f"{team_ctx}"
-        f"{ab_ctx}\n"
+        f"{team_ctx}\n"
         "Respond with EXACTLY the three labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
@@ -1739,33 +1608,13 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     return merged
 
 
-def _enrich_games_with_accuribet(games: list[dict], accuribet_preds: dict) -> None:
-    """Inject ACCURIBET predictions into each game's analysis dict (in-place)."""
-    if not accuribet_preds:
-        return
-    for g in games:
-        analysis = g.get("analysis")
-        if not analysis or not isinstance(analysis, dict):
-            continue
-        # Skip if already has accuribet data
-        if analysis.get("accuribet_ml"):
-            continue
-        ab_key = frozenset([g.get("home", ""), g.get("away", "")])
-        ab_pred = accuribet_preds.get(ab_key)
-        if ab_pred:
-            analysis["accuribet_ml"] = ab_pred.get("ml_team")
-            conf = ab_pred.get("ml_confidence")
-            analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
-            analysis["accuribet_ou"] = ab_pred.get("ou_total")
-
-
 @app.get("/api/games")
 async def get_games(date: Optional[str] = None):
     """Fetch games for a given date (YYYYMMDD). Defaults to today."""
     date_str = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    # Fetch ACCURIBET predictions so we can enrich cached analyses
-    accuribet_preds = await fetch_accuribet_predictions()
+    # NOTE: Accuribet predictions are fetched client-side (browser) to bypass
+    # Cloudflare/IP restrictions on Hugging Face.  The frontend merges them in.
 
     # Only use Firestore cache for dates clearly in the past (>= 2 days old from
     # server UTC). For today / yesterday / tomorrow the cache may hold data written
@@ -1775,7 +1624,6 @@ async def get_games(date: Optional[str] = None):
         # ── 1. Past date — safe to serve from Firestore cache instantly
         cached_games = _load_games_from_firestore(date_str)
         if cached_games:
-            _enrich_games_with_accuribet(cached_games, accuribet_preds)
             asyncio.create_task(_full_espn_refresh(date_str, date))
             return {
                 "games": cached_games,
@@ -1793,7 +1641,6 @@ async def get_games(date: Optional[str] = None):
             return {"games": [], "source": "empty"}
         return {"games": MOCK_GAMES, "source": "mock"}
 
-    _enrich_games_with_accuribet(merged, accuribet_preds)
     return {
         "games": merged,
         "source": "live",
@@ -2071,11 +1918,10 @@ async def analyze_game(req: AnalyzeRequest):
     today_date = req.date or datetime.now().strftime("%Y%m%d")
 
     async with httpx.AsyncClient(timeout=20) as client:
-        espn_games, injuries, team_stats, accuribet_preds = await asyncio.gather(
+        espn_games, injuries, team_stats = await asyncio.gather(
             fetch_espn_games(client, req.date),
             fetch_espn_injuries(client),
             fetch_espn_standings(client),
-            fetch_accuribet_predictions(client),
         )
         # Enrich with summary data (moneylines + BPI win prob) for the analysis prompt
         if espn_games:
@@ -2112,7 +1958,7 @@ async def analyze_game(req: AnalyzeRequest):
     async with httpx.AsyncClient() as client:
         rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
 
-    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days, accuribet_preds)
+    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days)
     is_live  = game["status"] == "live"
     is_final = game["status"] == "final"
 
@@ -2221,15 +2067,8 @@ async def analyze_game(req: AnalyzeRequest):
         analysis["_snap"] = {"spread": spread_ln, "ou": ou_line,
                               "homeOdds": home_ml, "awayOdds": away_ml}
 
-    # Attach Accuribet ML model prediction BEFORE persisting to Firestore
-    # so cached analysis includes ACCURIBET data on subsequent loads.
-    ab_key = frozenset([game["home"], game["away"]])
-    ab_pred = accuribet_preds.get(ab_key)
-    if ab_pred:
-        analysis["accuribet_ml"] = ab_pred.get("ml_team")
-        conf = ab_pred.get("ml_confidence")
-        analysis["accuribet_confidence"] = round(conf * 100, 1) if conf is not None else None
-        analysis["accuribet_ou"] = ab_pred.get("ou_total")
+    # NOTE: Accuribet data is now merged client-side (browser fetch bypasses
+    # Cloudflare/IP restrictions on Hugging Face).
 
     # Only persist to Firestore when we got a real analysis (non-null best_bet)
     # and the game hasn't tipped off yet (freeze pre-game data once live).
@@ -2261,13 +2100,6 @@ async def analyze_game(req: AnalyzeRequest):
             "dubl_score_ou":  analysis.get("dubl_score_ou"),
             "saved_at":     datetime.now(timezone.utc).isoformat(),
         }
-
-        # Include Accuribet predictions in pick record
-        if ab_pred:
-            pick_data["accuribet_ml"] = ab_pred.get("ml_team")
-            ab_conf = ab_pred.get("ml_confidence")
-            pick_data["accuribet_confidence"] = round(ab_conf * 100, 1) if ab_conf is not None else None
-            pick_data["accuribet_ou"] = ab_pred.get("ou_total")
 
         _save_pick_to_firestore(date_str, pick_data)
 

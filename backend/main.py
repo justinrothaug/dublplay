@@ -1089,124 +1089,6 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
         return {}
 
 
-async def fetch_prizepicks_props(client: httpx.AsyncClient) -> list[dict]:
-    """
-    Fetch NBA player props from PrizePicks public API — no key required.
-    Returns real lines posted for today's games.
-    PrizePicks league_id 7 = NBA.
-    """
-    cached = cache_get("pp_props")
-    if cached is not None:
-        return cached
-
-    STAT_MAP = {
-        "Points": "Points",
-        "Rebounds": "Rebounds",
-        "Assists": "Assists",
-        "3-PT Made": "3PM",
-        "Pts+Rebs+Asts": "PRA",
-        "Pts+Ast": "PA",
-        "Pts+Reb": "PR",
-        "Reb+Ast": "RA",
-        "Blocks": "Blocks",
-        "Steals": "Steals",
-        "Turnovers": "Turnovers",
-        "Fantasy Score": "Fantasy",
-    }
-
-    try:
-        r = await client.get(
-            "https://api.prizepicks.com/projections",
-            params={"league_id": "7", "per_page": "250", "single_stat": "true"},
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Origin": "https://app.prizepicks.com",
-                "Referer": "https://app.prizepicks.com/board",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site",
-                "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "Connection": "keep-alive",
-            },
-            timeout=15,
-        )
-        if r.status_code != 200:
-            import logging
-            logging.warning(f"PrizePicks API returned {r.status_code}: {r.text[:200]}")
-            return []
-        data = r.json()
-    except Exception as e:
-        import logging
-        logging.warning(f"PrizePicks fetch error: {e}")
-        return []
-
-    # Build player lookup from "included" array
-    players: dict[str, dict] = {}
-    for item in data.get("included", []):
-        if item.get("type") == "new_player":
-            pid = item["id"]
-            attrs = item.get("attributes", {})
-            players[pid] = {
-                "name": attrs.get("name", ""),
-                "team": attrs.get("team", "—"),
-                "pos":  attrs.get("position", "—"),
-            }
-
-    props_out: list[dict] = []
-    for proj in data.get("data", []):
-        if proj.get("type") != "projection":
-            continue
-        attrs = proj.get("attributes", {})
-        # Skip lines that are explicitly pulled (injured reserve, suspended, etc.)
-        if attrs.get("status") in ("injured_reserve", "suspended", "out"):
-            continue
-
-        raw_stat = attrs.get("stat_type", "")
-        stat = STAT_MAP.get(raw_stat, raw_stat)
-        line = attrs.get("line_score")
-        if not line:
-            continue
-
-        pid = (proj.get("relationships", {})
-                   .get("new_player", {})
-                   .get("data", {})
-                   .get("id", ""))
-        player_info = players.get(pid, {})
-        player_name = player_info.get("name", "")
-        if not player_name:
-            continue
-
-        team     = player_info.get("team", "—")
-        pos      = player_info.get("pos",  "—")
-        matchup  = attrs.get("description", "—")   # "ORL @ CHA" style
-
-        # PrizePicks doesn't publish vig odds — standard lines are -120/-100 ish
-        over_odds = "-115"
-
-        props_out.append({
-            "player":     player_name,
-            "team":       team,
-            "pos":        pos,
-            "game":       matchup,
-            "prop":       f"{stat} {line}+",
-            "rec":        "OVER",
-            "line":       line,
-            "conf":       62,
-            "edge_score": 65,
-            "l5": 60, "l10": 55, "l15": 52,
-            "streak":     0,
-            "avg":        line,
-            "odds":       over_odds,
-            "reason":     f"PrizePicks real line · {matchup}",
-        })
-
-    cache_set("pp_props", props_out)
-    return props_out
 
 
 
@@ -1881,14 +1763,7 @@ async def get_props():
             if props:
                 source = "gemini"
 
-        # Last resort: PrizePicks public API
-        if not props:
-            try:
-                props = await fetch_prizepicks_props(client)
-                if props:
-                    source = "prizepicks"
-            except Exception:
-                pass
+        # PrizePicks removed — blocked by bot protection and props tab is hidden
 
     filtered = [p for p in props if p.get("player", "").lower() not in injuries]
     return {"props": filtered, "source": source, "injured_out": sorted(injuries)}

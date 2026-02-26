@@ -544,7 +544,7 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 
   const ab = (analysis.accuribet_ml || analysis.accuribet_ou) ? { ml: analysis.accuribet_ml, confidence: analysis.accuribet_confidence, ou: analysis.accuribet_ou } : null;
   const items = [
-    { type:"bet",  icon:"✦", label:"BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, accuribet: ab && ab.ml ? { ml: ab.ml, confidence: ab.confidence, ou: null } : null, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
+    { type:"bet",  icon:"✦", label: isLive ? "BEST BET (LIVE)" : "BEST BET",   text: analysis.best_bet, color:T.green,  score: analysis.dubl_score_bet, reasoning: analysis.dubl_reasoning_bet, accuribet: ab && ab.ml ? { ml: ab.ml, confidence: ab.confidence, ou: null } : null, isBet: true, betTeam: analysis.bet_team, betIsSpread: analysis.bet_is_spread },
     { type:"ou",   icon:"◉", label: isLive ? "TOTAL (LIVE)" : "O/U LEAN", text: analysis.ou, color:T.gold, score: analysis.dubl_score_ou, reasoning: analysis.dubl_reasoning_ou, accuribet: ab && ab.ou ? { ml: null, confidence: null, ou: ab.ou } : null, isOu: true },
     { type:"prop", icon:"▸", label:"PLAYER PROP", text: analysis.props,   color:"#a78bfa", score: null, accuribet: null, isProp: true },
   ].filter(i => i.text);
@@ -981,7 +981,7 @@ function TopPickDetailPopup({ pick, onClose, onPickOdds }) {
         {/* Header row: badge + close */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
           <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.06em", color, background:`${color}18`, border:`1px solid ${color}44`, borderRadius:4, padding:"3px 8px" }}>
-            {isBet ? "✦ BEST BET" : "◉ O/U PICK"}
+            {isBet ? (isLiveGame ? "✦ BEST BET (LIVE)" : "✦ BEST BET") : "◉ O/U PICK"}
           </span>
           <button onClick={onClose} style={{ background:"none", border:"none", color:T.text3, fontSize:20, cursor:"pointer", padding:"0 0 0 12px", lineHeight:1 }}>×</button>
         </div>

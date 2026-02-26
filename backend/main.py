@@ -1277,7 +1277,7 @@ def parse_gemini_analysis(text: str) -> dict:
     bet_type_raw = (extract("BET_TYPE") or "").upper()
     return {
         "best_bet":           extract("BEST_BET"),
-        "bet_team":           (extract("BET_TEAM") or "").strip().split()[0].upper() or None,
+        "bet_team":           ((extract("BET_TEAM") or "").strip().split() or [None])[0],
         "bet_is_spread":      "SPREAD" in bet_type_raw,
         "ou":                 extract("OU_LEAN"),
         "props":              extract("PLAYER_PROP"),

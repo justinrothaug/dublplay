@@ -393,7 +393,7 @@ def _load_picks_from_firestore(date_str: str) -> list[dict]:
     return []
 
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 ESPN_STANDINGS_URL  = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings"
@@ -2028,7 +2028,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
+                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.2},
             },
             timeout=30,
         )

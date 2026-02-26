@@ -1923,7 +1923,10 @@ async def analyze_game(req: AnalyzeRequest):
         raise HTTPException(status_code=400, detail=data["error"]["message"])
     parts = data["candidates"][0]["content"]["parts"]
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
+    logging.info(f"Gemini raw response for {req.game_id}: {text[:500]}")
     analysis = parse_gemini_analysis(text)
+    if not analysis.get("best_bet"):
+        logging.warning(f"Gemini analysis missing BEST_BET for {req.game_id}. Full text: {text[:1000]}")
 
     # Normalize Gemini's spread to FAV -X before persisting anywhere
     lines = analysis.get("lines") or {}

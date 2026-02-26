@@ -1831,7 +1831,7 @@ async def fetch_gemini_props(client: httpx.AsyncClient, key: str, games: list[di
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 8000, "temperature": 0.2},
             },
-            timeout=60,
+            timeout=120,
         )
         data = resp.json()
         if "error" in data:

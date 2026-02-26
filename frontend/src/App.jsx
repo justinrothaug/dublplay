@@ -2021,11 +2021,10 @@ export default function App() {
     setGames([]);
     setAiOverrides({});
     analyzedPreGameRef.current.clear();
-    Promise.all([api.getGames(selectedDate || todayStr), api.getProps(), fetchAccuribetPredictions()])
-      .then(([g, p, ab]) => {
+    Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
+      .then(([g, ab]) => {
         accuribetRef.current = ab || {};
         setGames(g.games);
-        setProps(p.props);
         setDataLoaded(true);
         initialLoadDone.current = true;
         setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date());

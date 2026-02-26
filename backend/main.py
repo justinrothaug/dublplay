@@ -1248,6 +1248,7 @@ def parse_gemini_analysis(text: str) -> dict:
     # Strip markdown bold/bullet formatting that 3.1 Pro may add around markers
     cleaned = re.sub(r'\*+', '', text)
     cleaned = re.sub(r'^[\s*•\-]+', '', cleaned, flags=re.MULTILINE)
+    logging.info(f"Parser cleaned text (first 800): {repr(cleaned[:800])}")
 
     stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
@@ -1918,19 +1919,24 @@ async def analyze_game(req: AnalyzeRequest):
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.2},
+                "generationConfig": {
+                    "maxOutputTokens": 8192,
+                    "temperature": 0.2,
+                    "thinkingConfig": {"thinkingBudget": 2048},
+                },
             },
-            timeout=90,
+            timeout=180,
         )
     data = resp.json()
     if "error" in data:
         raise HTTPException(status_code=400, detail=data["error"]["message"])
     parts = data["candidates"][0]["content"]["parts"]
     text = " ".join(p.get("text", "") for p in parts if "text" in p)
-    logging.info(f"Gemini raw response for {req.game_id}: {text[:500]}")
+    logging.info(f"Gemini raw response for {req.game_id}: {repr(text[:800])}")
     analysis = parse_gemini_analysis(text)
+    logging.info(f"Parsed best_bet for {req.game_id}: {repr(analysis.get('best_bet', '')[:200])}")
     if not analysis.get("best_bet"):
-        logging.warning(f"Gemini analysis missing BEST_BET for {req.game_id}. Full text: {text[:1000]}")
+        logging.warning(f"Gemini analysis missing BEST_BET for {req.game_id}. Full text: {repr(text[:1500])}")
 
     # Normalize Gemini's spread to FAV -X before persisting anywhere
     lines = analysis.get("lines") or {}
@@ -2029,9 +2035,13 @@ async def chat(req: ChatRequest):
             json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": contents,
-                "generationConfig": {"maxOutputTokens": 600, "temperature": 0.75},
+                "generationConfig": {
+                    "maxOutputTokens": 4096,
+                    "temperature": 0.75,
+                    "thinkingConfig": {"thinkingBudget": 1024},
+                },
             },
-            timeout=90,
+            timeout=180,
         )
     data = resp.json()
     if "error" in data:

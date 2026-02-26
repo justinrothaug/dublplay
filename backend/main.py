@@ -1920,7 +1920,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.2},
             },
-            timeout=90,
+            timeout=180,
         )
     data = resp.json()
     if "error" in data:
@@ -2031,7 +2031,7 @@ async def chat(req: ChatRequest):
                 "contents": contents,
                 "generationConfig": {"maxOutputTokens": 600, "temperature": 0.75},
             },
-            timeout=90,
+            timeout=180,
         )
     data = resp.json()
     if "error" in data:

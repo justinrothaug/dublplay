@@ -1339,15 +1339,25 @@ def build_system_prompt(
             team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
     return (
-        "You are a sharp NBA betting analyst writing for serious bettors who want actionable picks, not fluff. "
+        "You are an elite NBA betting analyst writing for serious bettors who want actionable, data-driven picks. "
         "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
         "Always cite specific edges: matchup advantages, pace differentials, recent ATS records, "
-        "key injuries, rest advantages, or defensive rankings.\n"
+        "key injuries, rest advantages, or defensive rankings.\n\n"
+        "CRITICAL: Before making picks, search for AND incorporate these data points:\n"
+        "1. PUBLIC BETTING % — search Covers, Action Network, or OddsShark for consensus picks & money splits. "
+        "When 70%+ of public is on one side, strongly consider fading the public (sportsbooks profit on public bias).\n"
+        "2. ATS RECORDS — search for each team's Against-The-Spread record (overall, last 10, home/away). "
+        "Teams with strong ATS records are covering for real reasons.\n"
+        "3. SHARP MONEY — when bet % and money % diverge (e.g. 30% of bets but 55% of money on one side), "
+        "that signals sharp/professional money. Lean with the sharps.\n"
+        "4. LINE MOVEMENT — if the line has moved against the public side, that's a strong indicator of sharp action.\n"
+        "5. SITUATIONAL SPOTS — rest disadvantage (B2B), long road trips, lookahead spots, revenge games, "
+        "and schedule density all matter.\n\n"
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}"
         f"{team_ctx}\n"
-        "Respond with EXACTLY the three labeled lines requested. No preamble, no disclaimer, no extra text."
+        "Respond with EXACTLY the labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
 
@@ -1978,7 +1988,7 @@ async def analyze_game(req: AnalyzeRequest):
         prompt = (
             f"Live: {game['awayName']} {game.get('awayScore',0)} @ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            "Search for this game's current betting lines AND player prop lines.\n"
+            "Search for this game's current live betting lines, player prop lines, and live public betting %.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
             f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
             f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"
@@ -2002,7 +2012,8 @@ async def analyze_game(req: AnalyzeRequest):
     else:
         prompt = (
             f"Pre-game: {game['awayName']} @ {game['homeName']}.\n"
-            "Search for this game's current betting lines AND player prop lines.\n"
+            "Search for this game's current betting lines, player prop lines, "
+            "public betting consensus %, ATS records, and any sharp money indicators.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
             f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
             f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"

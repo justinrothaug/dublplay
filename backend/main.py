@@ -1245,16 +1245,20 @@ def build_system_prompt(
 
 def parse_gemini_analysis(text: str) -> dict:
     """Parse structured Gemini response into best_bet / ou / props / dubl scores."""
+    # Strip markdown bold/bullet formatting that 3.1 Pro may add around markers
+    cleaned = re.sub(r'\*+', '', text)
+    cleaned = re.sub(r'^[\s*•\-]+', '', cleaned, flags=re.MULTILINE)
+
     stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
-        m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', text, re.DOTALL | re.IGNORECASE)
+        m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', cleaned, re.DOTALL | re.IGNORECASE)
         if not m:
             return None
-        return m.group(1).strip().replace("**", "").strip() or None
+        return m.group(1).strip() or None
 
     def extract_score(marker: str) -> float | None:
-        m = re.search(rf'{marker}:\s*([0-9]+(?:\.[0-9]+)?)', text, re.IGNORECASE)
+        m = re.search(rf'{marker}:\s*([0-9]+(?:\.[0-9]+)?)', cleaned, re.IGNORECASE)
         if not m:
             return None
         try:
@@ -1914,7 +1918,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
-                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.2},
+                "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.2},
             },
             timeout=90,
         )

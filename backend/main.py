@@ -1004,7 +1004,7 @@ async def fetch_gemini_odds(client: httpx.AsyncClient, games: list[dict]) -> dic
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 2000, "temperature": 0},
             },
-            timeout=25,
+            timeout=60,
         )
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
@@ -1067,7 +1067,7 @@ async def fetch_gemini_historical_odds(client: httpx.AsyncClient, games: list[di
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 2000, "temperature": 0},
             },
-            timeout=25,
+            timeout=60,
         )
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
@@ -2041,7 +2041,7 @@ async def analyze_game(req: AnalyzeRequest):
                 "tools": [{"google_search": {}}],
                 "generationConfig": {"maxOutputTokens": 800, "temperature": 0.2},
             },
-            timeout=30,
+            timeout=90,
         )
     data = resp.json()
     if "error" in data:
@@ -2149,7 +2149,7 @@ async def chat(req: ChatRequest):
                 "contents": contents,
                 "generationConfig": {"maxOutputTokens": 600, "temperature": 0.75},
             },
-            timeout=30,
+            timeout=90,
         )
     data = resp.json()
     if "error" in data:

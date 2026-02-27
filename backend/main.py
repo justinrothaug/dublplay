@@ -1313,7 +1313,7 @@ def parse_gemini_analysis(text: str) -> dict:
     cleaned = re.sub(r'^[\s*•\-]+', '', cleaned, flags=re.MULTILINE)
     logging.info(f"Parser cleaned text (first 800): {repr(cleaned[:800])}")
 
-    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
+    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_BET:|DUBL_OU:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
         m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', cleaned, re.DOTALL | re.IGNORECASE)
@@ -1330,6 +1330,21 @@ def parse_gemini_analysis(text: str) -> dict:
         except ValueError:
             return None
 
+    def extract_combined(marker: str) -> tuple[float | None, str | None]:
+        """Parse combined 'X.X — reasoning' field into (score, reasoning)."""
+        raw = extract(marker)
+        if not raw:
+            return None, None
+        m = re.match(r'([0-9]+(?:\.[0-9]+)?)\s*[—–\-]\s*(.*)', raw, re.DOTALL)
+        if m:
+            try:
+                score = round(min(5.0, max(1.0, float(m.group(1)))), 1)
+                reasoning = m.group(2).strip() or None
+                return score, reasoning
+            except ValueError:
+                pass
+        return None, raw
+
     away_ml     = extract("AWAY_ML")
     home_ml     = extract("HOME_ML")
     spread_line = extract("SPREAD_LINE")
@@ -1343,6 +1358,12 @@ def parse_gemini_analysis(text: str) -> dict:
     )
 
     bet_type_raw = (extract("BET_TYPE") or "").upper()
+
+    # Parse combined DUBL_BET / DUBL_OU fields (new format: "X.X — reasoning")
+    # Falls back to old separate DUBL_SCORE_BET / DUBL_REASONING_BET fields
+    dubl_bet_score, dubl_bet_reason = extract_combined("DUBL_BET")
+    dubl_ou_score, dubl_ou_reason = extract_combined("DUBL_OU")
+
     return {
         "best_bet":           extract("BEST_BET"),
         "bet_team":           ((extract("BET_TEAM") or "").strip().split() or [None])[0],
@@ -1351,10 +1372,10 @@ def parse_gemini_analysis(text: str) -> dict:
         "props":              extract("PLAYER_PROP"),
         "prop_status":        raw_prop_status or None,
         "prop_on_track":      prop_on_track,
-        "dubl_score_bet":     extract_score("DUBL_SCORE_BET"),
-        "dubl_reasoning_bet": extract("DUBL_REASONING_BET"),
-        "dubl_score_ou":      extract_score("DUBL_SCORE_OU"),
-        "dubl_reasoning_ou":  extract("DUBL_REASONING_OU"),
+        "dubl_score_bet":     dubl_bet_score or extract_score("DUBL_SCORE_BET"),
+        "dubl_reasoning_bet": dubl_bet_reason or extract("DUBL_REASONING_BET"),
+        "dubl_score_ou":      dubl_ou_score or extract_score("DUBL_SCORE_OU"),
+        "dubl_reasoning_ou":  dubl_ou_reason or extract("DUBL_REASONING_OU"),
         "lines": {
             "awayOdds": away_ml,
             "homeOdds": home_ml,
@@ -1950,15 +1971,15 @@ async def analyze_game(req: AnalyzeRequest):
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence in WINNING, not value. "
+            "DUBL_BET: [Score and reasoning together in ONE line. Format: 'X.X — reasoning sentence'. "
+            "The score (1.0-5.0) is your confidence this bet WINS: "
             "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
-            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip, no real edge. "
-            "CRITICAL: your score MUST match your reasoning. If your reasoning says 'only option' or 'least bad', score 2.0 or below. "
-            "If your reasoning says 'dominant' or 'clear edge', score 4.0+. Do NOT give 4.0+ with weak reasoning.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — must justify the score above. "
-            "If you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence the O/U lean hits. Same scale: 5.0 = extreme pace mismatch, 1.0 = no edge.]\n"
-            "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean — must justify the score]"
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip. "
+            "The reasoning MUST match the score — 'only option' = 2.0 max, 'dominant' = 4.0+. "
+            "Example: '4.2 — CLE leads by 14 in Q3 with the #2 defense, laying 6.5 is safe.' "
+            "Example: '2.0 — Neither team inspires confidence but HOU has home court.']\n"
+            "DUBL_OU: [Same format: 'X.X — reasoning sentence'. Score is confidence the O/U lean hits. "
+            "Example: '3.5 — Both teams in top 10 pace, combined 118 pts at half projects well over 224.5.']"
         )
     else:
         prompt = (
@@ -1981,15 +2002,15 @@ async def analyze_game(req: AnalyzeRequest):
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence in WINNING, not value. "
+            "DUBL_BET: [Score and reasoning together in ONE line. Format: 'X.X — reasoning sentence'. "
+            "The score (1.0-5.0) is your confidence this bet WINS: "
             "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
-            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip, no real edge. "
-            "CRITICAL: your score MUST match your reasoning. If your reasoning says 'only option' or 'least bad', score 2.0 or below. "
-            "If your reasoning says 'dominant' or 'clear edge', score 4.0+. Do NOT give 4.0+ with weak reasoning.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — must justify the score above. "
-            "If you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence the O/U lean hits. Same scale: 5.0 = extreme pace mismatch, 1.0 = no edge.]\n"
-            "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean — must justify the score]"
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip. "
+            "The reasoning MUST match the score — 'only option' = 2.0 max, 'dominant' = 4.0+. "
+            "Example: '4.2 — BOS is 8-2 L10 at home and OKC is on a B2B, laying 5.5 is the right call.' "
+            "Example: '2.1 — Two bad teams but WAS has home court and a rest edge.']\n"
+            "DUBL_OU: [Same format: 'X.X — reasoning sentence'. Score is confidence the O/U lean hits. "
+            "Example: '3.8 — Both teams top 10 in pace with weak perimeter D, projects over 228.5.']"
         )
 
     async with httpx.AsyncClient() as client:

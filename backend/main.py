@@ -1950,10 +1950,15 @@ async def analyze_game(req: AnalyzeRequest):
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability, not on odds value.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is the O/U lean to hit based on current pace and scoring rate?]\n"
-            "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence in WINNING, not value. "
+            "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip, no real edge. "
+            "CRITICAL: your score MUST match your reasoning. If your reasoning says 'only option' or 'least bad', score 2.0 or below. "
+            "If your reasoning says 'dominant' or 'clear edge', score 4.0+. Do NOT give 4.0+ with weak reasoning.]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — must justify the score above. "
+            "If you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence the O/U lean hits. Same scale: 5.0 = extreme pace mismatch, 1.0 = no edge.]\n"
+            "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean — must justify the score]"
         )
     else:
         prompt = (
@@ -1976,10 +1981,15 @@ async def analyze_game(req: AnalyzeRequest):
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability and matchup strength, not on odds value.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is this O/U lean to hit based on pace, defense, and scoring trends?]\n"
-            "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence in WINNING, not value. "
+            "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip, no real edge. "
+            "CRITICAL: your score MUST match your reasoning. If your reasoning says 'only option' or 'least bad', score 2.0 or below. "
+            "If your reasoning says 'dominant' or 'clear edge', score 4.0+. Do NOT give 4.0+ with weak reasoning.]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — must justify the score above. "
+            "If you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence the O/U lean hits. Same scale: 5.0 = extreme pace mismatch, 1.0 = no edge.]\n"
+            "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean — must justify the score]"
         )
 
     async with httpx.AsyncClient() as client:

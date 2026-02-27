@@ -393,6 +393,62 @@ def _load_picks_from_firestore(date_str: str) -> list[dict]:
     return []
 
 
+def _load_recent_pick_record(lookback_days: int = 7) -> str:
+    """Load scored picks from the last N days and build a performance summary for the system prompt."""
+    db = _init_firestore()
+    if not db:
+        return ""
+    hits_bet, misses_bet, hits_ou, misses_ou = 0, 0, 0, 0
+    recent_misses: list[str] = []  # track recent losing patterns
+    try:
+        today = datetime.now(timezone.utc)
+        for i in range(1, lookback_days + 1):
+            d = (today - timedelta(days=i)).strftime("%Y%m%d")
+            doc = db.collection(_FS_COL).document(d).get()
+            if not doc.exists:
+                continue
+            games_map = doc.to_dict().get("games", {})
+            for gid, gdata in games_map.items():
+                pick = gdata.get("pick")
+                if not pick:
+                    continue
+                rb = pick.get("result_bet")
+                if rb == "HIT":
+                    hits_bet += 1
+                elif rb == "MISS":
+                    misses_bet += 1
+                    # Track what kind of pick missed
+                    team = pick.get("bet_team", "?")
+                    btype = "spread" if pick.get("bet_is_spread") else "ML"
+                    recent_misses.append(f"{team} {btype}")
+                ro = pick.get("result_ou")
+                if ro == "HIT":
+                    hits_ou += 1
+                elif ro == "MISS":
+                    misses_ou += 1
+    except Exception as e:
+        logging.warning(f"Failed to load pick record: {e}")
+        return ""
+
+    total_bet = hits_bet + misses_bet
+    total_ou = hits_ou + misses_ou
+    if total_bet == 0 and total_ou == 0:
+        return ""
+
+    lines = [f"\nRECENT PICK PERFORMANCE (last {lookback_days} days):"]
+    if total_bet > 0:
+        pct = hits_bet / total_bet * 100
+        lines.append(f"  Best Bets: {hits_bet}-{misses_bet} ({pct:.0f}%)")
+        if pct < 50 and recent_misses:
+            lines.append(f"  Recent losses: {', '.join(recent_misses[-5:])} — avoid repeating these patterns.")
+    if total_ou > 0:
+        pct = hits_ou / total_ou * 100
+        lines.append(f"  O/U Leans: {hits_ou}-{misses_ou} ({pct:.0f}%)")
+    if total_bet > 0 and hits_bet / total_bet < 0.5:
+        lines.append("  WARNING: Below 50% hit rate. Be MORE selective — only pick sides where you have strong conviction. Favor favorites and home teams.")
+    return "\n".join(lines)
+
+
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent"
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_INJURIES_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
@@ -1165,6 +1221,7 @@ def build_system_prompt(
     injuries: set,
     team_stats: dict | None = None,
     rest_days: dict | None = None,
+    pick_record: str = "",
 ) -> str:
     injury_note = ""
     if injuries:
@@ -1221,24 +1278,30 @@ def build_system_prompt(
             team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
     return (
-        "You are an elite NBA betting analyst writing for serious bettors who want actionable, data-driven picks. "
-        "Never say obvious things like 'both teams can score' or 'it should be a close game'. "
-        "Always cite specific edges: matchup advantages, pace differentials, recent ATS records, "
-        "key injuries, rest advantages, or defensive rankings.\n\n"
-        "CRITICAL: Before making picks, search for AND incorporate these data points:\n"
-        "1. PUBLIC BETTING % — search Covers, Action Network, or OddsShark for consensus picks & money splits. "
-        "When 70%+ of public is on one side, strongly consider fading the public (sportsbooks profit on public bias).\n"
-        "2. ATS RECORDS — search for each team's Against-The-Spread record (overall, last 10, home/away). "
-        "Teams with strong ATS records are covering for real reasons.\n"
-        "3. SHARP MONEY — when bet % and money % diverge (e.g. 30% of bets but 55% of money on one side), "
-        "that signals sharp/professional money. Lean with the sharps.\n"
-        "4. LINE MOVEMENT — if the line has moved against the public side, that's a strong indicator of sharp action.\n"
-        "5. SITUATIONAL SPOTS — rest disadvantage (B2B), long road trips, lookahead spots, revenge games, "
-        "and schedule density all matter.\n\n"
+        "You are an elite NBA betting analyst. Your #1 goal is PICKING WINNERS — not finding value, not optimizing juice. "
+        "A correct pick at -110 beats a 'value' pick that loses. "
+        "Never say obvious things like 'both teams can score' or 'it should be a close game'.\n\n"
+        "PICK SELECTION FRAMEWORK (use this order):\n"
+        "1. PICK THE WINNING SIDE FIRST — before thinking about spread vs ML, determine which team wins this game. "
+        "Use record, recent form (L10), scoring margin, home/away splits, head-to-head, and injuries.\n"
+        "2. THEN CHOOSE THE BET TYPE — once you've picked the winning side:\n"
+        "   • If the team is a small favorite (1-5 pts) or underdog: SPREAD is usually safer.\n"
+        "   • If the team is a big favorite (-300+) and you're very confident: SPREAD (laying points) is better than expensive ML.\n"
+        "   • Only pick ML when the price is reasonable (better than -200) AND you're confident in a straight-up win.\n"
+        "3. AVOID VALUE TRAPS — do NOT pick underdogs just because the + odds look appealing. "
+        "Bad teams lose. A +250 underdog that loses is worse than a -150 favorite that wins.\n\n"
+        "DATA TO SEARCH FOR:\n"
+        "1. RECENT FORM — search for each team's last 5-10 game results. Teams on winning streaks tend to continue.\n"
+        "2. HEAD-TO-HEAD — search for season series results between these teams.\n"
+        "3. ATS RECORDS — search for Against-The-Spread records (overall + last 10). Strong ATS = real covering ability.\n"
+        "4. KEY INJURIES — missing starters dramatically shift win probability. A team missing its best player is a different team.\n"
+        "5. REST & SCHEDULE — B2B, long road trips, and schedule spots matter. Tired teams underperform.\n"
+        "6. HOME COURT — home teams win ~60% in the NBA. Factor this in, especially for strong home teams.\n\n"
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}"
-        f"{team_ctx}\n"
+        f"{team_ctx}"
+        f"{pick_record}\n"
         "Respond with EXACTLY the labeled lines requested. No preamble, no disclaimer, no extra text."
     )
 
@@ -1848,7 +1911,8 @@ async def analyze_game(req: AnalyzeRequest):
     async with httpx.AsyncClient() as client:
         rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
 
-    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days)
+    pick_record = _load_recent_pick_record()
+    system_prompt = build_system_prompt(games_to_search, injuries, team_stats, rest_days, pick_record)
     is_live  = game["status"] == "live"
     is_final = game["status"] == "final"
 
@@ -1868,14 +1932,16 @@ async def analyze_game(req: AnalyzeRequest):
         prompt = (
             f"Live: {game['awayName']} {game.get('awayScore',0)} @ {game['homeName']} {game.get('homeScore',0)} "
             f"(Q{game.get('quarter','?')} {game.get('clock','')}).\n"
-            "Search for this game's current live betting lines, player prop lines, and live public betting %.\n"
+            "Search for this game's current live betting lines, player prop lines, and live scoring pace.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
             f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
             f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"
             f"SPREAD_LINE: [current spread from your search, e.g. {game['away']} +5.5]\n"
             "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
-            "Look at the AWAY_ML, HOME_ML, and SPREAD_LINE you already wrote above. Compare those exact prices: what is the ML price vs -110 spread juice, and how many points of protection does the spread actually give? Use those numbers to decide which is better value, then pick it. "
+            "FIRST decide which team will WIN this game based on the current score, momentum, and remaining time. "
+            "THEN choose the bet type: use SPREAD if laying points is safer given the lead, use ML only if the price is reasonable (better than -200). "
+            "Do NOT pick an underdog just because the + odds look good — only pick the underdog if you genuinely believe they will win or cover. "
             "Format: 'TEAM LINE — 1-2 sentence live edge reason (score situation, foul trouble, pace).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
@@ -1884,31 +1950,35 @@ async def analyze_game(req: AnalyzeRequest):
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs live price. Heavy favorite (-400+) scores lower even if likely.]\n"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability, not on odds value.]\n"
             "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — value score: pace/foul/scoring edge vs -110 juice]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is the O/U lean to hit based on current pace and scoring rate?]\n"
             "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean]"
         )
     else:
         prompt = (
             f"Pre-game: {game['awayName']} @ {game['homeName']}.\n"
             "Search for this game's current betting lines, player prop lines, "
-            "public betting consensus %, ATS records, and any sharp money indicators.\n"
+            "each team's recent form (last 5-10 games), head-to-head results this season, and ATS records.\n"
             "Respond with EXACTLY these labeled lines, no other text:\n"
             f"AWAY_ML: [current {game['away']} moneyline from your search, e.g. +175]\n"
             f"HOME_ML: [current {game['home']} moneyline from your search, e.g. -210]\n"
             f"SPREAD_LINE: [current spread you found, e.g. {game['away']} +5.5]\n"
             "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
-            "Look at the AWAY_ML, HOME_ML, and SPREAD_LINE you already wrote above. Compare those exact prices: what is the ML price vs -110 spread juice, and how many points of protection does the spread actually give? Use those numbers to decide which is better value, then pick it. "
-            "Format: 'TEAM LINE — 2-sentence reason (matchup, recent form, pace, injury, schedule spot).']\n"
+            "FIRST decide which team will WIN this game — use record, recent form, home court, injuries, and head-to-head. "
+            "The better team with the better recent form playing at home is usually the right pick. "
+            "THEN choose the bet type: prefer SPREAD for big favorites (-250+) since laying points at -110 is cheaper than expensive ML. "
+            "Only pick ML when the price is reasonable (better than -200) and you're confident in a straight-up win. "
+            "Do NOT pick underdogs just because + odds look appealing — bad teams lose more often than the odds suggest. "
+            "Format: 'TEAM LINE — 2-sentence reason (who wins and why, then why this bet type).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — value score vs price. Heavy favorite (-500+) scores lower.]\n"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability and matchup strength, not on odds value.]\n"
             "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — value score: statistical/situational edge vs -110 juice]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is this O/U lean to hit based on pace, defense, and scoring trends?]\n"
             "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean]"
         )
 
@@ -2023,7 +2093,8 @@ async def chat(req: ChatRequest):
     async with httpx.AsyncClient() as client:
         rest_days = await fetch_team_rest_days(client, today_abbrs, today_date)
 
-    system_prompt = build_system_prompt(games, injuries, team_stats, rest_days)
+    pick_record = _load_recent_pick_record()
+    system_prompt = build_system_prompt(games, injuries, team_stats, rest_days, pick_record)
 
     contents = [
         {"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}

@@ -1311,9 +1311,17 @@ def build_system_prompt(
         "• Home teams win ~60% outright (~3 point edge). Use as secondary factor, not primary.\n"
         "• Home underdogs have historically covered at profitable rates on large spreads.\n\n"
 
+        "SITUATIONAL EDGES (data-backed — apply when the situation matches):\n"
+        "• LETDOWN SPOT: Home favorites -10+ coming off a 15+ point win cover only 42.5%. Fade them — take the underdog (57.5% ATS, n=259).\n"
+        "• BOUNCE-BACK BLOWOUT: Road underdogs who lost their last game by 16+ cover at 54.9% (7.2% ROI). Vs 60%+ win teams: 61.2% ATS.\n"
+        "• OFFENSIVE BOUNCE-BACK: Teams that scored under 90 pts last game and are favored next: 62.3% ATS (n=161).\n"
+        "• DOUBLE-DIGIT SPREAD OVERS: Games with 10+ point spreads hit the over 60.7% (79-51-2). Blowouts produce more total points.\n"
+        "• POST-ASB TANKING: After All-Star break, bad teams (<40% win rate) as underdogs coming off a win — fade them (57.1% ATS, 11.5% ROI).\n"
+        "• REVERSE LINE MOVEMENT: 60%+ bets on one side but line moves the other way by 1+ pts — follow the line movement (54.8% ATS, n=409).\n\n"
+
         "DATA TO SEARCH FOR:\n"
         "1. ATS RECORDS — against-the-spread records (overall + last 10). This is the #1 signal for spread bets.\n"
-        "2. RECENT FORM — last 5-10 game results + scoring margin trends.\n"
+        "2. RECENT FORM — last 5-10 game results + scoring margin trends. Check last game score to spot bounce-back/letdown situations above.\n"
         "3. HEAD-TO-HEAD — season series results between these teams.\n"
         "4. KEY INJURIES — missing starters shift win probability and usage/prop lines dramatically.\n"
         "5. REST & SCHEDULE — B2B, rest days, road trip length. Cross-reference with rules above.\n\n"

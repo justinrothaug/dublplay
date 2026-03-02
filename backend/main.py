@@ -1594,6 +1594,24 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     # Persist full game state to Firestore for instant loads
     _save_games_to_firestore(date_str, merged)
 
+    # Re-attach cached analysis & pick from Firestore so subsequent users
+    # don't trigger a fresh Gemini call for games already analyzed today.
+    try:
+        db = _init_firestore()
+        if db:
+            doc = db.collection(_FS_COL).document(date_str).get()
+            if doc.exists:
+                fs_games = doc.to_dict().get("games", {})
+                for g in merged:
+                    gid = re.sub(r'-\d{8}$', '', g["id"])
+                    stored = fs_games.get(gid, {})
+                    if stored.get("analysis") and not g.get("analysis"):
+                        g["analysis"] = stored["analysis"]
+                    if stored.get("pick") and not g.get("pick"):
+                        g["pick"] = stored["pick"]
+    except Exception as e:
+        logging.warning(f"Firestore analysis merge failed: {e}")
+
     # Auto-score any picks whose games are now final
     _score_picks_for_date(date_str, merged)
 

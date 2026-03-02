@@ -2258,9 +2258,8 @@ export default function App() {
             if (totalBet === 0 && totalOu === 0) return null;
             const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
             const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
-            const total4 = totalBet4 + totalOu4;
-            const hits4 = hitsBet4 + hitsOu4;
-            const pct4 = total4 > 0 ? Math.round(hits4 / total4 * 100) : null;
+            const betPct4 = totalBet4 > 0 ? Math.round(hitsBet4 / totalBet4 * 100) : null;
+            const ouPct4  = totalOu4  > 0 ? Math.round(hitsOu4  / totalOu4  * 100) : null;
             const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
             return (
               <div style={{ marginLeft:"auto", display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1, padding:"4px 0" }}>
@@ -2275,10 +2274,17 @@ export default function App() {
                     <span style={{ color:c(ouPct) }}>O/U {hitsOu}-{totalOu - hitsOu} ({ouPct}%)</span>
                   )}
                 </span>
-                {pct4 !== null && (
+                {(betPct4 !== null || ouPct4 !== null) && (
                   <span style={{ fontSize:8, fontWeight:800, letterSpacing:"0.06em", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:4 }}>
-                    <span style={{ color:T.green, fontSize:7 }}>★</span>
-                    <span style={{ color:c(pct4) }}>TOP PICKS {hits4}-{total4 - hits4} ({pct4}%)</span>
+                    {betPct4 !== null && (
+                      <span style={{ color:c(betPct4) }}>★ODDS {hitsBet4}-{totalBet4 - hitsBet4} ({betPct4}%)</span>
+                    )}
+                    {betPct4 !== null && ouPct4 !== null && (
+                      <span style={{ color:T.text3 }}>|</span>
+                    )}
+                    {ouPct4 !== null && (
+                      <span style={{ color:c(ouPct4) }}>★O/U {hitsOu4}-{totalOu4 - hitsOu4} ({ouPct4}%)</span>
+                    )}
                   </span>
                 )}
               </div>

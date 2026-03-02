@@ -1644,8 +1644,12 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
                 for g in merged:
                     gid = re.sub(r'-\d{8}$', '', g["id"])
                     stored = fs_games.get(gid, {})
-                    if stored.get("analysis") and not g.get("analysis"):
-                        g["analysis"] = stored["analysis"]
+                    stored_analysis = stored.get("analysis")
+                    if stored_analysis and stored_analysis.get("best_bet"):
+                        # Only overwrite if the game doesn't already have a REAL analysis
+                        existing = g.get("analysis")
+                        if not existing or not existing.get("best_bet"):
+                            g["analysis"] = stored_analysis
                     if stored.get("pick") and not g.get("pick"):
                         g["pick"] = stored["pick"]
     except Exception as e:
@@ -2016,6 +2020,32 @@ async def analyze_game(req: AnalyzeRequest):
     spread_ln = game.get("espn_spread")   or sticky.get("spread")   or "N/A"
     away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
     home_ml   = game.get("espn_homeOdds") or sticky.get("homeOdds") or "N/A"
+
+    # ── Early return: if a pre-game analysis already exists in Firestore and
+    #    the odds haven't moved, return it immediately — no Gemini call needed.
+    if not is_live:
+        try:
+            db = _init_firestore()
+            if db:
+                date_str_check = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else today_date
+                doc = db.collection(_FS_COL).document(date_str_check).get()
+                if doc.exists:
+                    stored = doc.to_dict().get("games", {}).get(base_game_id, {})
+                    cached_analysis = stored.get("analysis")
+                    if cached_analysis and cached_analysis.get("best_bet"):
+                        snap = cached_analysis.get("_snap", {})
+                        odds_match = (
+                            (snap.get("spread") == spread_ln or spread_ln == "N/A") and
+                            (snap.get("ou") == ou_line or ou_line == "N/A")
+                        )
+                        if odds_match:
+                            logging.info(f"Returning cached analysis for {req.game_id} (odds unchanged)")
+                            return {"analysis": cached_analysis}
+                        else:
+                            logging.info(f"Re-analyzing {req.game_id}: odds changed "
+                                         f"(spread {snap.get('spread')!r}→{spread_ln!r}, ou {snap.get('ou')!r}→{ou_line!r})")
+        except Exception as e:
+            logging.warning(f"Firestore cache check failed for {req.game_id}: {e}")
 
     if is_live:
         prompt = (

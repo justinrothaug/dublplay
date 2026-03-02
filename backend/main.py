@@ -1428,6 +1428,38 @@ def get_effective_key(request_key: str) -> str:
     return key
 
 
+async def _gemini_post_with_retry(
+    url: str,
+    json_body: dict,
+    *,
+    timeout: float = 180,
+    max_retries: int = 2,
+) -> httpx.Response:
+    """POST to Gemini with retry + exponential backoff on timeout/network errors."""
+    last_exc: Exception | None = None
+    for attempt in range(1 + max_retries):
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=15, read=timeout, write=15, pool=15),
+            ) as client:
+                resp = await client.post(url, json=json_body)
+                return resp
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                wait = 2 ** (attempt + 1)  # 2s, 4s
+                logging.warning(
+                    f"Gemini timeout (attempt {attempt + 1}/{1 + max_retries}), "
+                    f"retrying in {wait}s: {exc!r}"
+                )
+                await asyncio.sleep(wait)
+            else:
+                logging.error(
+                    f"Gemini timeout after {1 + max_retries} attempts: {exc!r}"
+                )
+    raise last_exc  # type: ignore[misc]
+
+
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
 def _merge_odds(espn_games: list[dict], odds_map: dict, date_str: str | None = None) -> list[dict]:
@@ -1982,10 +2014,10 @@ async def analyze_game(req: AnalyzeRequest):
             "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean]"
         )
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
+    try:
+        resp = await _gemini_post_with_retry(
             f"{GEMINI_URL}?key={key}",
-            json={
+            {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
@@ -1996,6 +2028,12 @@ async def analyze_game(req: AnalyzeRequest):
                 },
             },
             timeout=180,
+            max_retries=2,
+        )
+    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
+        raise HTTPException(
+            status_code=504,
+            detail="Analysis timed out — Gemini took too long to respond. Please try again.",
         )
     data = resp.json()
     if "error" in data:
@@ -2100,10 +2138,10 @@ async def chat(req: ChatRequest):
         {"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
         for m in req.messages
     ]
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
+    try:
+        resp = await _gemini_post_with_retry(
             f"{GEMINI_URL}?key={key}",
-            json={
+            {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": contents,
                 "generationConfig": {
@@ -2113,6 +2151,12 @@ async def chat(req: ChatRequest):
                 },
             },
             timeout=180,
+            max_retries=2,
+        )
+    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
+        raise HTTPException(
+            status_code=504,
+            detail="Chat timed out — Gemini took too long to respond. Please try again.",
         )
     data = resp.json()
     if "error" in data:

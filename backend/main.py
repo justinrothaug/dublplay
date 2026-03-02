@@ -2031,10 +2031,16 @@ async def analyze_game(req: AnalyzeRequest):
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability, not on odds value.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is the O/U lean to hit based on current pace and scoring rate?]\n"
-            "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — use this rubric strictly:\n"
+            "  1.0-2.0 = coin flip, no clear edge, conflicting signals\n"
+            "  2.5-3.0 = slight lean, one factor supports the pick\n"
+            "  3.5 = solid edge, ATS record + one situational factor align\n"
+            "  4.0-4.5 = STRONG — multiple edges stack (e.g. bounce-back spot + strong ATS + rest advantage + live momentum). Reserve 4.0+ for when 2+ of the SITUATIONAL EDGES from the system prompt apply simultaneously.\n"
+            "  5.0 = near-lock, 3+ strong edges align, historically dominant spot. Should be RARE (max 1 per night).\n"
+            "  Be honest — most picks are 2.5-3.5. Only go 4.0+ when the data clearly stacks.]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type. If a SITUATIONAL EDGE applies, name it.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — same rubric as above but for O/U. 4.0+ requires pace data + a situational factor like B2B fatigue, double-digit spread, or both teams rested.]\n"
+            "DUBL_REASONING_OU: [1 sentence: key live stat driving the lean. Name the situational edge if one applies.]"
         )
     else:
         prompt = (
@@ -2058,10 +2064,16 @@ async def analyze_game(req: AnalyzeRequest):
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
             "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0 — confidence score: how likely is this pick to WIN/COVER? 5.0 = near-lock, 1.0 = coin flip. Base this on win probability and matchup strength, not on odds value.]\n"
-            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0 — confidence score: how likely is this O/U lean to hit based on pace, defense, and scoring trends?]\n"
-            "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean]"
+            "DUBL_SCORE_BET: [float 1.0-5.0 — use this rubric strictly:\n"
+            "  1.0-2.0 = coin flip, no clear edge, conflicting signals\n"
+            "  2.5-3.0 = slight lean, one factor supports the pick\n"
+            "  3.5 = solid edge, ATS record + one situational factor align\n"
+            "  4.0-4.5 = STRONG — multiple edges stack (e.g. letdown spot + poor ATS record + rest disadvantage). Reserve 4.0+ for when 2+ of the SITUATIONAL EDGES from the system prompt apply simultaneously.\n"
+            "  5.0 = near-lock, 3+ strong edges align, historically dominant spot. Should be RARE (max 1 per night).\n"
+            "  Be honest — most picks are 2.5-3.5. Only go 4.0+ when the data clearly stacks.]\n"
+            "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose in BEST_BET — if you picked the spread, explain the spread; if you picked the ML, explain the ML. Do NOT mention the other bet type. If a SITUATIONAL EDGE applies, name it.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0 — same rubric as above but for O/U. 4.0+ requires pace data + a situational factor like B2B fatigue, double-digit spread, or both teams rested.]\n"
+            "DUBL_REASONING_OU: [1 sentence: key stat or factor driving the lean. Name the situational edge if one applies.]"
         )
 
     try:

@@ -2122,6 +2122,7 @@ export default function App() {
     Promise.all(pastDays.map(d => api.getPicks(d).catch(() => null)))
       .then(results => {
         let hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0;
+        let hitsBet4 = 0, totalBet4 = 0, hitsOu4 = 0, totalOu4 = 0;
         results.forEach(r => {
           if (!r) return;
           (r.picks || []).forEach(p => {
@@ -2129,10 +2130,21 @@ export default function App() {
             else if (p.result_bet === "MISS") { totalBet++; }
             if (p.result_ou === "HIT") { hitsOu++; totalOu++; }
             else if (p.result_ou === "MISS") { totalOu++; }
+            // Track 4.0+ DUBL_SCORE picks separately
+            const sb = p.dubl_score_bet;
+            if (sb != null && sb >= 4.0) {
+              if (p.result_bet === "HIT") { hitsBet4++; totalBet4++; }
+              else if (p.result_bet === "MISS") { totalBet4++; }
+            }
+            const so = p.dubl_score_ou;
+            if (so != null && so >= 4.0) {
+              if (p.result_ou === "HIT") { hitsOu4++; totalOu4++; }
+              else if (p.result_ou === "MISS") { totalOu4++; }
+            }
           });
         });
         if (totalBet > 0 || totalOu > 0) {
-          setOverallStats({ hitsBet, totalBet, hitsOu, totalOu });
+          setOverallStats({ hitsBet, totalBet, hitsOu, totalOu, hitsBet4, totalBet4, hitsOu4, totalOu4 });
         }
       });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2242,23 +2254,34 @@ export default function App() {
             }}>{t.label}</button>
           ))}
           {(() => {
-            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
+            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0, hitsBet4 = 0, totalBet4 = 0, hitsOu4 = 0, totalOu4 = 0 } = overallStats || {};
             if (totalBet === 0 && totalOu === 0) return null;
             const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
             const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
+            const total4 = totalBet4 + totalOu4;
+            const hits4 = hitsBet4 + hitsOu4;
+            const pct4 = total4 > 0 ? Math.round(hits4 / total4 * 100) : null;
             const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
             return (
-              <span style={{ marginLeft:"auto", fontSize:9, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
-                {betPct !== null && (
-                  <span style={{ color:c(betPct) }}>ODDS {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
+              <div style={{ marginLeft:"auto", display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1, padding:"4px 0" }}>
+                <span style={{ fontSize:9, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
+                  {betPct !== null && (
+                    <span style={{ color:c(betPct) }}>ODDS {hitsBet}-{totalBet - hitsBet} ({betPct}%)</span>
+                  )}
+                  {betPct !== null && ouPct !== null && (
+                    <span style={{ color:T.text3 }}>|</span>
+                  )}
+                  {ouPct !== null && (
+                    <span style={{ color:c(ouPct) }}>O/U {hitsOu}-{totalOu - hitsOu} ({ouPct}%)</span>
+                  )}
+                </span>
+                {pct4 !== null && (
+                  <span style={{ fontSize:8, fontWeight:800, letterSpacing:"0.06em", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:4 }}>
+                    <span style={{ color:T.green, fontSize:7 }}>★</span>
+                    <span style={{ color:c(pct4) }}>TOP PICKS {hits4}-{total4 - hits4} ({pct4}%)</span>
+                  </span>
                 )}
-                {betPct !== null && ouPct !== null && (
-                  <span style={{ color:T.text3 }}>|</span>
-                )}
-                {ouPct !== null && (
-                  <span style={{ color:c(ouPct) }}>O/U {hitsOu}-{totalOu - hitsOu} ({ouPct}%)</span>
-                )}
-              </span>
+              </div>
             );
           })()}
         </div>

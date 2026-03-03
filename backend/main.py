@@ -1311,10 +1311,13 @@ def build_system_prompt(
         "• Spread vs ML: Prefer SPREAD over ML when ML is worse than -200.\n"
         "• Big spreads (10+): Underdogs cover more often than you'd think. Check the specific ATS records.\n"
         "• B2B: Road teams on B2B decline 1-3 pts. Both on B2B → lean UNDER.\n"
+        "• B2B props: Guards show biggest stat decline on B2B (fatigue hits perimeter most). Centers hold steadier.\n"
         "• Letdown: Home faves -10+ after 15+ pt win cover only 42.5%.\n"
         "• Bounce-back: Road dogs who lost by 16+ cover at 54.9%.\n"
         "• Double-digit spread overs hit 60.7%.\n"
-        "• Home court ≈ 3 pt edge. Secondary factor only.\n\n"
+        "• Q4 fatigue: Close games see pace drop + 3pt accuracy decline in Q4. Lean UNDER on live O/U in tight Q4 games.\n"
+        "• Home court ≈ 3 pt edge. Secondary factor only.\n"
+        "• 19% of games are decided in Q4 — don't overweight halftime leads for live bets.\n\n"
 
         "O/U ANALYSIS — must be numbers-driven for THIS game:\n"
         "• Add Team A's PPG + Team B's PPG → compare to the O/U line.\n"
@@ -1323,14 +1326,14 @@ def build_system_prompt(
         "• Your reasoning MUST cite specific PPG, opp PPG, or defensive rating numbers.\n\n"
 
         "### DUBL SCORES\n"
-        "Score each pick 1.0-5.0. This is purely how confident you are that this pick hits.\n"
-        "  1.0-2.0 = coin flip, picking a side but not confident\n"
-        "  2.0-3.0 = slight lean, some evidence but nothing overwhelming\n"
-        "  3.0-4.0 = confident, clear edge you can articulate with data\n"
-        "  4.0-5.0 = extremely confident, you would bet your own money on this\n"
-        "Remember: NBA ATS picks hit ~50-55% even for sharp bettors. A 4.0+ should be rare — "
-        "it means you think this pick hits 70%+ which almost never happens against the spread. "
-        "Be honest with yourself. Most picks are 2s and 3s.\n\n"
+        "Score each pick 1.0-5.0. This is how confident you are this pick hits.\n"
+        "  1.0-1.9 = coin flip, you have to pick a side but you're basically guessing\n"
+        "  2.0-2.9 = slight lean, thin edge that could easily go wrong\n"
+        "  3.0-3.9 = confident, clear data-backed edge you can explain\n"
+        "  4.0-5.0 = near-lock, overwhelming evidence, would bet your rent\n"
+        "Be honest — before scoring, think about the strongest reason this pick could LOSE. "
+        "If the counter-argument is strong, keep the score low. NBA ATS picks hit ~52%. "
+        "Most real edges are in the 2.0-3.0 range. 4.0+ should be rare.\n\n"
 
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
@@ -1443,6 +1446,18 @@ class AnalyzeRequest(BaseModel):
 
 class ParlayRequest(BaseModel):
     odds: list[str]
+
+class RerankPick(BaseModel):
+    game_id: str
+    label: str          # e.g. "MIL +5.5" or "OVER 224.5"
+    pick_type: str      # "bet" or "ou"
+    score: float
+    reasoning: str = ""
+
+class RerankRequest(BaseModel):
+    picks: list[RerankPick]
+    api_key: str = ""
+    date: Optional[str] = None
 
 
 def american_to_decimal(odds_str: str) -> float:
@@ -2058,6 +2073,8 @@ async def analyze_game(req: AnalyzeRequest):
             "Consider: (1) Who wins? (2) Does the trailing team COVER the live spread? "
             "A team can lose but still cover if the spread is large relative to the actual deficit. "
             "For large live spreads, consider the underdog side — favorites with big leads often coast and fail to cover. "
+            "19% of NBA games are decided in Q4 — don't overweight halftime leads. "
+            "In close Q4 games, pace drops and 3pt accuracy fades — lean UNDER on live O/U. "
             "For ML: only pick ML when the price is reasonable (better than -200). Prefer SPREAD over expensive ML. "
             "Format: 'TEAM LINE — 1-2 sentence live edge reason (score situation, foul trouble, pace).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
@@ -2070,13 +2087,9 @@ async def analyze_game(req: AnalyzeRequest):
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0. How confident are you this live pick hits? "
-            "Tight game with no clear edge = 1.0-2.0. Clear live edge = 3.0+. "
-            "4.0+ means the live situation is overwhelmingly one-sided.]\n"
+            "DUBL_SCORE_BET: [float 1.0-5.0. How confident is this live pick? Tight game = low score.]\n"
             "DUBL_REASONING_BET: [1 sentence about the EXACT bet — reference the live score situation, momentum, or specific matchup factor.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0. How confident are you in this live O/U call? "
-            "Pace projection close to line = 1.0-2.0. Clear pace gap = 3.0+. "
-            "4.0+ means the current pace makes it nearly certain.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0. How confident? Pace close to line = low score.]\n"
             "DUBL_REASONING_OU: [1 sentence with specific numbers — current scoring pace projected to end vs the O/U line.]"
         )
     else:
@@ -2106,14 +2119,10 @@ async def analyze_game(req: AnalyzeRequest):
             "DET also plays at the 4th-fastest pace (101.2) which will push PHX into more possessions than usual.' "
             "NEVER write 'double-digit spreads hit overs' or any generic rule as your primary reasoning.]\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason with specific stats']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0. How confident are you this pick hits? "
-            "Most ATS picks are coin flips (1.0-2.0) or slight leans (2.0-3.0). "
-            "4.0+ means you think this hits 70%+, which is extremely rare against the spread.]\n"
+            "DUBL_SCORE_BET: [float 1.0-5.0. How confident is this pick? Be honest — consider why it could lose.]\n"
             "DUBL_REASONING_BET: [1 sentence about the EXACT bet you chose. MUST reference specific team stats, ATS records, or player situations. "
             "Do NOT cite generic betting rules — explain why THIS specific team in THIS specific matchup.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0. How confident are you in this O/U pick? "
-            "If the projection is close to the line, that's a 1.0-2.0. Clear gap = 3.0+. "
-            "4.0+ means the data overwhelmingly points one direction.]\n"
+            "DUBL_SCORE_OU: [float 1.0-5.0. How confident? If projection is close to line, score low.]\n"
             "DUBL_REASONING_OU: [1 sentence with SPECIFIC numbers — combined PPG projection vs the line, defensive ratings, or pace stats. "
             "Do NOT just name a generic rule like 'B2B teams score less'.]"
         )
@@ -2215,6 +2224,89 @@ async def analyze_game(req: AnalyzeRequest):
         _save_pick_to_firestore(date_str, pick_data)
 
     return {"analysis": analysis}
+
+
+@app.post("/api/rerank-scores")
+async def rerank_scores(req: RerankRequest):
+    """Second-pass: Gemini sees ALL picks at once and redistributes scores with real variation."""
+    if len(req.picks) < 2:
+        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
+
+    key = get_effective_key(req.api_key)
+
+    # Build a simple numbered list of picks for Gemini to compare
+    pick_lines = []
+    for i, p in enumerate(req.picks, 1):
+        pick_lines.append(f"{i}. [{p.game_id}] ({p.pick_type}) {p.label} — current score: {p.score} — reasoning: {p.reasoning}")
+
+    prompt = (
+        "You are re-ranking NBA betting picks by confidence. Below are all of tonight's picks.\n"
+        "Your job: RANK them from most to least confident and assign NEW scores 1.0-5.0.\n\n"
+        "RULES:\n"
+        "- Scores MUST have real variation. The gap between your best and worst pick must be at least 1.5 points.\n"
+        "- No more than 2 picks can share the same score (rounded to nearest 0.5).\n"
+        "- Use precise decimals: 1.7, 2.3, 3.1, 4.2 — NEVER round everything to .0 or .5.\n"
+        "- Be honest: most picks are in the 1.5-3.0 range. Only your single strongest pick should be 3.5+.\n"
+        "- Think about WHICH pick you'd actually put the most money on and which is the weakest.\n\n"
+        "PICKS:\n" + "\n".join(pick_lines) + "\n\n"
+        "Respond with ONLY numbered lines in this exact format (same order as input):\n"
+        + "\n".join(f"{i}. SCORE: [new float]" for i in range(1, len(req.picks) + 1))
+    )
+
+    try:
+        resp = await _gemini_post_with_retry(
+            f"{GEMINI_URL}?key={key}",
+            {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 1024,
+                    "temperature": 0.3,
+                },
+            },
+            timeout=30,
+            max_retries=1,
+        )
+    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
+        logging.warning("Rerank timed out — returning original scores")
+        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
+
+    data = resp.json()
+    if "error" in data:
+        logging.warning(f"Rerank Gemini error: {data['error']}")
+        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
+
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    text = " ".join(p.get("text", "") for p in parts if "text" in p)
+    logging.info(f"Rerank raw response: {repr(text[:500])}")
+
+    # Parse "N. SCORE: X.X" lines
+    score_map = {}
+    for m in re.finditer(r'(\d+)\.\s*SCORE:\s*([0-9]+(?:\.[0-9]+)?)', text, re.IGNORECASE):
+        idx = int(m.group(1)) - 1  # 0-based
+        score = round(min(5.0, max(1.0, float(m.group(2)))), 1)
+        if 0 <= idx < len(req.picks):
+            score_map[idx] = score
+
+    result = []
+    date_str = req.date or datetime.now().strftime("%Y%m%d")
+    for i, p in enumerate(req.picks):
+        new_score = score_map.get(i, p.score)
+        result.append({"game_id": p.game_id, "pick_type": p.pick_type, "score": new_score})
+
+        # Update Firestore with reranked score
+        if new_score != p.score:
+            base_game_id = re.sub(r'-\d{8}$', '', p.game_id)
+            score_field = "dubl_score_bet" if p.pick_type == "bet" else "dubl_score_ou"
+            try:
+                db = _init_firestore()
+                if db:
+                    doc_ref = db.collection(_FS_COL).document(date_str)
+                    doc_ref.update({f"games.{base_game_id}.analysis.{score_field}": new_score})
+                    logging.info(f"Reranked {base_game_id} {score_field}: {p.score} → {new_score}")
+            except Exception as e:
+                logging.warning(f"Firestore rerank update failed for {base_game_id}: {e}")
+
+    return {"picks": result}
 
 
 @app.post("/api/chat")

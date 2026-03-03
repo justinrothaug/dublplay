@@ -23,8 +23,6 @@ export const api = {
   getPicks:     (date)         => req(`/api/picks/${date}`),
   analyze:      (game_id, api_key, date = null) =>
     req("/api/analyze", { method:"POST", body: JSON.stringify({ game_id, api_key, date }) }),
-  rerankScores: (picks, api_key, date = null) =>
-    req("/api/rerank-scores", { method:"POST", body: JSON.stringify({ picks, api_key, date }) }),
   chat: (messages, api_key) =>
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),

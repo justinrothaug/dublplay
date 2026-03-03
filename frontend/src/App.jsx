@@ -1983,7 +1983,6 @@ export default function App() {
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
   const accuribetRef = useRef({}); // client-side ACCURIBET predictions (bypasses Cloudflare)
-  const rerankedRef = useRef(null); // date string we already reranked for (prevents re-triggering)
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -2022,7 +2021,6 @@ export default function App() {
     setGames([]);
     setAiOverrides({});
     analyzedPreGameRef.current.clear();
-    rerankedRef.current = null;
     Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
       .then(([g, ab]) => {
         accuribetRef.current = ab || {};
@@ -2103,48 +2101,6 @@ export default function App() {
     });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 5b) Rerank scores once all pre-game analyses are done.
-  //     Fires when loadingIds empties out — sends all picks to Gemini in one shot
-  //     so it can compare them and assign varied scores.
-  useEffect(() => {
-    if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
-    if (loadingIds.size > 0) return; // still loading some games
-    const dateKey = selectedDate || todayStr;
-    if (rerankedRef.current === dateKey) return; // already reranked for this date
-
-    // Collect all picks that have scores
-    const picks = [];
-    for (const [gameId, a] of Object.entries(aiOverrides)) {
-      if (a.dubl_score_bet != null && a.best_bet) {
-        picks.push({ game_id: gameId, pick_type: "bet", label: a.best_bet.slice(0, 80), score: a.dubl_score_bet, reasoning: a.dubl_reasoning_bet || "" });
-      }
-      if (a.dubl_score_ou != null && a.ou) {
-        picks.push({ game_id: gameId, pick_type: "ou", label: a.ou.slice(0, 80), score: a.dubl_score_ou, reasoning: a.dubl_reasoning_ou || "" });
-      }
-    }
-    if (picks.length < 3) return; // not enough picks to meaningfully rerank
-
-    rerankedRef.current = dateKey; // mark as in-progress to prevent re-triggering
-    api.rerankScores(picks, apiKey, dateKey)
-      .then(d => {
-        if (!d.picks) return;
-        setAiOverrides(prev => {
-          const next = { ...prev };
-          for (const p of d.picks) {
-            if (next[p.game_id]) {
-              next[p.game_id] = { ...next[p.game_id] };
-              if (p.pick_type === "bet") next[p.game_id].dubl_score_bet = p.score;
-              else next[p.game_id].dubl_score_ou = p.score;
-            }
-          }
-          return next;
-        });
-      })
-      .catch(err => {
-        console.error("Rerank failed:", err);
-        // Don't reset rerankedRef — keep original scores rather than retrying
-      });
-  }, [loadingIds, aiOverrides, dataLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 6) Load picks for the currently selected date (for HIT/MISS display on game cards).
   //    Re-runs when games change so hit stats update as games go final.

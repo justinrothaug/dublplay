@@ -1459,18 +1459,6 @@ class AnalyzeRequest(BaseModel):
 class ParlayRequest(BaseModel):
     odds: list[str]
 
-class RerankPick(BaseModel):
-    game_id: str
-    label: str          # e.g. "MIL +5.5" or "OVER 224.5"
-    pick_type: str      # "bet" or "ou"
-    score: float
-    reasoning: str = ""
-
-class RerankRequest(BaseModel):
-    picks: list[RerankPick]
-    api_key: str = ""
-    date: Optional[str] = None
-
 
 def american_to_decimal(odds_str: str) -> float:
     o = int(odds_str.replace("+", ""))
@@ -2245,87 +2233,6 @@ async def analyze_game(req: AnalyzeRequest):
     return {"analysis": analysis}
 
 
-@app.post("/api/rerank-scores")
-async def rerank_scores(req: RerankRequest):
-    """Second-pass: Gemini sees ALL picks at once and redistributes scores with real variation."""
-    if len(req.picks) < 2:
-        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
-
-    key = get_effective_key(req.api_key)
-
-    # Build a simple numbered list of picks for Gemini to compare
-    pick_lines = []
-    for i, p in enumerate(req.picks, 1):
-        pick_lines.append(f"{i}. [{p.game_id}] ({p.pick_type}) {p.label} — current score: {p.score} — reasoning: {p.reasoning}")
-
-    prompt = (
-        "You are re-ranking NBA betting picks by confidence. Below are all of tonight's picks.\n"
-        "Your job: RANK them from most to least confident and assign NEW scores 1.0-5.0.\n\n"
-        "RULES:\n"
-        "- Scores MUST have real variation. The gap between your best and worst pick must be at least 1.5 points.\n"
-        "- No more than 2 picks can share the same score (rounded to nearest 0.5).\n"
-        "- Use precise decimals: 1.7, 2.3, 3.1, 4.2 — NEVER round everything to .0 or .5.\n"
-        "- Be honest: most picks are in the 1.5-3.0 range. Only your single strongest pick should be 3.5+.\n"
-        "- Think about WHICH pick you'd actually put the most money on and which is the weakest.\n\n"
-        "PICKS:\n" + "\n".join(pick_lines) + "\n\n"
-        "Respond with ONLY numbered lines in this exact format (same order as input):\n"
-        + "\n".join(f"{i}. SCORE: [new float]" for i in range(1, len(req.picks) + 1))
-    )
-
-    try:
-        resp = await _gemini_post_with_retry(
-            f"{GEMINI_URL}?key={key}",
-            {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": 1024,
-                    "temperature": 0.3,
-                },
-            },
-            timeout=30,
-            max_retries=1,
-        )
-    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
-        logging.warning("Rerank timed out — returning original scores")
-        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
-
-    data = resp.json()
-    if "error" in data:
-        logging.warning(f"Rerank Gemini error: {data['error']}")
-        return {"picks": [{"game_id": p.game_id, "pick_type": p.pick_type, "score": p.score} for p in req.picks]}
-
-    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-    text = " ".join(p.get("text", "") for p in parts if "text" in p)
-    logging.info(f"Rerank raw response: {repr(text[:500])}")
-
-    # Parse "N. SCORE: X.X" lines
-    score_map = {}
-    for m in re.finditer(r'(\d+)\.\s*SCORE:\s*([0-9]+(?:\.[0-9]+)?)', text, re.IGNORECASE):
-        idx = int(m.group(1)) - 1  # 0-based
-        score = round(min(5.0, max(1.0, float(m.group(2)))), 1)
-        if 0 <= idx < len(req.picks):
-            score_map[idx] = score
-
-    result = []
-    date_str = req.date or datetime.now().strftime("%Y%m%d")
-    for i, p in enumerate(req.picks):
-        new_score = score_map.get(i, p.score)
-        result.append({"game_id": p.game_id, "pick_type": p.pick_type, "score": new_score})
-
-        # Update Firestore with reranked score
-        if new_score != p.score:
-            base_game_id = re.sub(r'-\d{8}$', '', p.game_id)
-            score_field = "dubl_score_bet" if p.pick_type == "bet" else "dubl_score_ou"
-            try:
-                db = _init_firestore()
-                if db:
-                    doc_ref = db.collection(_FS_COL).document(date_str)
-                    doc_ref.update({f"games.{base_game_id}.analysis.{score_field}": new_score})
-                    logging.info(f"Reranked {base_game_id} {score_field}: {p.score} → {new_score}")
-            except Exception as e:
-                logging.warning(f"Firestore rerank update failed for {base_game_id}: {e}")
-
-    return {"picks": result}
 
 
 @app.post("/api/chat")

@@ -1,3 +1,5 @@
+import { getIdToken } from "./firebase.js";
+
 const BASE = import.meta.env.VITE_API_URL || "";
 
 async function req(path, options = {}) {
@@ -5,6 +7,22 @@ async function req(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
+  const data = await res.json();
+  if (!res.ok) {
+    const detail = data.detail;
+    const msg = Array.isArray(detail)
+      ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
+      : (typeof detail === "string" ? detail : "Request failed");
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function authReq(path, options = {}) {
+  const token = await getIdToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { headers, ...options });
   const data = await res.json();
   if (!res.ok) {
     const detail = data.detail;
@@ -26,4 +44,10 @@ export const api = {
   chat: (messages, api_key) =>
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),
+
+  // Auth endpoints (for future real-auth mode)
+  getMe:        ()             => authReq("/api/me"),
+  placeBet:     (bet)          => authReq("/api/bets", { method: "POST", body: JSON.stringify(bet) }),
+  getBets:      (date = null)  => authReq(date ? `/api/bets?date=${date}` : "/api/bets"),
+  settleBets:   (date)         => authReq(`/api/bets/settle?date=${date}`, { method: "POST" }),
 };

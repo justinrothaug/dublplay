@@ -213,7 +213,7 @@ function ProfileDropdown({ profile, onClose }) {
             width:"100%", boxSizing:"border-box",
             background:"rgba(0,0,0,0.4)", border:`1px solid ${T.borderBr}`,
             borderRadius:8, color:T.text, padding:"10px 12px",
-            fontSize:13, fontFamily:"inherit",
+            fontSize:16, fontFamily:"inherit",
           }}
         />
         <button
@@ -323,7 +323,7 @@ function ApiKeyGate({ onSubmit, serverHasKey }) {
               onKeyDown={e => e.key==="Enter" && key && onSubmit(key)}
               style={{ width:"100%", boxSizing:"border-box", background:"rgba(0,0,0,0.4)",
                 border:`1px solid ${err ? T.red : T.borderBr}`, borderRadius:10,
-                color:T.text, padding:"13px 16px", fontSize:12, fontFamily:"inherit", marginBottom:10 }} />
+                color:T.text, padding:"13px 16px", fontSize:16, fontFamily:"inherit", marginBottom:10 }} />
             {err && <p style={{ color:T.red, fontSize:11, margin:"0 0 10px" }}>{err}</p>}
             <button onClick={() => key ? onSubmit(key) : setErr("Enter your API key")} style={gateBtn}>
               CONNECT →
@@ -1736,7 +1736,7 @@ function BetCalcCard() {
           <div key={f.label} style={{ flex:1, minWidth:80 }}>
             <label style={{ display:"block", fontSize:8, color:T.text3, letterSpacing:"0.08em", marginBottom:5 }}>{f.label}</label>
             <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.placeholder} type={f.type||"text"}
-              style={{ width:"100%", boxSizing:"border-box", background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, padding:"9px 12px", fontSize:12, fontFamily:"inherit" }} />
+              style={{ width:"100%", boxSizing:"border-box", background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, padding:"9px 12px", fontSize:16, fontFamily:"inherit" }} />
           </div>
         ))}
         <div style={{ flex:1, minWidth:80 }}>
@@ -1818,7 +1818,7 @@ function PropsTab({ props, parlay, toggleParlay, onCalc, games }) {
             flex:"1 1 160px", minWidth:0,
             background:T.cardAlt, border:`1px solid ${search ? T.greenBdr : T.borderBr}`,
             borderRadius:8, color:T.text, padding:"8px 12px",
-            fontSize:13, fontFamily:"inherit",
+            fontSize:16, fontFamily:"inherit",
             outline:"none",
           }}
         />
@@ -1974,7 +1974,7 @@ function ParlayTray({ parlay, onRemove, onClear }) {
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <input value={stake} onChange={e=>{setStake(e.target.value);setResult(null);}} type="number" placeholder="$100"
-              style={{ width:70, background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:7, color:T.text, padding:"7px 10px", fontSize:12, fontFamily:"inherit" }} />
+              style={{ width:80, background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:7, color:T.text, padding:"7px 10px", fontSize:16, fontFamily:"inherit" }} />
             <button onClick={calc} disabled={busy||parlay.length<2} style={{
               background:T.green, color:"#080d1a", border:"none", borderRadius:7,
               padding:"8px 14px", fontSize:10, fontWeight:800, letterSpacing:"0.06em",
@@ -2056,7 +2056,7 @@ function ChatTab({ apiKey }) {
         <div style={{ borderTop:`1px solid ${T.border}`, padding:"12px 14px", display:"flex", gap:10 }}>
           <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
             placeholder="Ask about games, props, spreads, value plays..."
-            style={{ flex:1, background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:9, color:T.text, padding:"10px 13px", fontSize:12, fontFamily:"inherit" }} />
+            style={{ flex:1, background:T.cardAlt, border:`1px solid ${T.border}`, borderRadius:9, color:T.text, padding:"10px 13px", fontSize:16, fontFamily:"inherit" }} />
           <button onClick={()=>send()} disabled={busy||!input.trim()} style={{
             background:"#a78bfa", color:"#0d0f14", border:"none", borderRadius:9,
             padding:"10px 20px", fontSize:11, fontWeight:800, letterSpacing:"0.06em",

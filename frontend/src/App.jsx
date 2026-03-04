@@ -456,7 +456,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               fontSize:9, fontWeight:800, color:"#fff",
               border:"1.5px solid rgba(255,255,255,0.3)",
             }}>{e.username[0].toUpperCase()}</div>
-            {shortLine && <div style={{ fontSize:7, fontWeight:700, color:T.text3, lineHeight:1, whiteSpace:"nowrap" }}>{shortLine}</div>}
+            {shortLine && <div style={{ fontSize:7, fontWeight:800, color:"#000", lineHeight:1, whiteSpace:"nowrap" }}>{shortLine}</div>}
           </div>
         );
       })}

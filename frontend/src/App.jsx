@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "./api.js";
-import { initFirebase, googleSignIn, googleSignOut, onAuthChange } from "./firebase.js";
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
 const T = {
@@ -151,6 +150,98 @@ function useFavoritePicks() {
   };
 }
 
+// ── USER STATE (localStorage) ────────────────────────────────────────────────
+const STARTING_BALANCE = 500;
+const LS_USER = "dublplay_user";
+const LS_BETS = "dublplay_bets";
+
+function useUserState() {
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_USER)) || { name: "", balance: STARTING_BALANCE }; }
+    catch { return { name: "", balance: STARTING_BALANCE }; }
+  });
+  const save = (u) => {
+    setUser(u);
+    try { localStorage.setItem(LS_USER, JSON.stringify(u)); } catch {}
+  };
+  return {
+    name: user.name,
+    balance: user.balance,
+    setName: (name) => save({ ...user, name }),
+    setBalance: (balance) => save({ ...user, balance: Math.round(balance * 100) / 100 }),
+    adjustBalance: (delta) => save({ ...user, balance: Math.round((user.balance + delta) * 100) / 100 }),
+  };
+}
+
+function useUserBets() {
+  const [bets, setBets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_BETS) || "[]"); }
+    catch { return []; }
+  });
+  const save = (b) => {
+    setBets(b);
+    try { localStorage.setItem(LS_BETS, JSON.stringify(b)); } catch {}
+  };
+  return {
+    bets,
+    forGame: (gameId) => {
+      const base = gameId.replace(/-\d{8}$/, "");
+      return bets.find(b => b.game_id === base || b.game_id === gameId);
+    },
+    forDate: (dateStr) => bets.filter(b => b.date === dateStr),
+    place: (bet) => save([...bets, { ...bet, id: Date.now().toString(36), status: "pending", payout: 0, created_at: Date.now() }]),
+    settle: (betId, status, payout) => save(bets.map(b => b.id === betId ? { ...b, status, payout } : b)),
+  };
+}
+
+// Settle pending bets against final game data
+function settleUserBets(userBets, games, userState) {
+  const finals = {};
+  games.forEach(g => {
+    if (g.status === "final") {
+      finals[g.id] = g;
+      finals[g.id.replace(/-\d{8}$/, "")] = g;
+    }
+  });
+
+  userBets.bets.filter(b => b.status === "pending").forEach(b => {
+    const game = finals[b.game_id];
+    if (!game) return;
+    const homeScore = parseInt(game.homeScore) || 0;
+    const awayScore = parseInt(game.awayScore) || 0;
+    if (homeScore === 0 && awayScore === 0) return;
+
+    const result = settleSpread(b, game, homeScore, awayScore);
+    let payout = 0;
+    if (result === "won") {
+      const o = parseInt((b.odds || "-110").replace("+", ""), 10);
+      payout = o > 0 ? Math.round((b.amount * o / 100 + b.amount) * 100) / 100
+                      : Math.round((b.amount * 100 / Math.abs(o) + b.amount) * 100) / 100;
+    } else if (result === "push") {
+      payout = b.amount;
+    }
+
+    userBets.settle(b.id, result, payout);
+    if (payout > 0) userState.adjustBalance(payout);
+  });
+}
+
+function settleSpread(bet, game, homeScore, awayScore) {
+  const m = bet.line.trim().toUpperCase().match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
+  if (!m) return "lost";
+  const favAbbr = m[1];
+  const spreadVal = parseFloat(m[2]);
+  const homeAbbr = (game.home || "").toUpperCase();
+  const favScore = favAbbr === homeAbbr ? homeScore : awayScore;
+  const dogScore = favAbbr === homeAbbr ? awayScore : homeScore;
+  const margin = favScore - dogScore;
+  const needed = Math.abs(spreadVal);
+  if (margin === needed) return "push";
+  const favCovered = margin > needed;
+  const betOnFav = bet.side.toUpperCase() === favAbbr;
+  return (betOnFav ? favCovered : !favCovered) ? "won" : "lost";
+}
+
 function BookmarkBtn({ active, onClick, light }) {
   return (
     <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
@@ -229,7 +320,7 @@ function lineMovement(current, opening, isSpread) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, user, userBet, onBet }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, userBet, onBet }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -395,7 +486,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
       )}
 
       {/* ── Bet buttons (spread only, upcoming games) ── */}
-      {isUp && dispSpread && user && onBet && !userBet && (() => {
+      {isUp && dispSpread && onBet && !userBet && (() => {
         const m = dispSpread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
         if (!m) return null;
         const favAbbr = m[1];
@@ -884,7 +975,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, user, userBets, onBet }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, userBets, onBet }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -964,7 +1055,6 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
-              user={user}
               userBet={userBets?.find(b => {
                 const baseId = g.id.replace(/-\d{8}$/, "");
                 return b.game_id === baseId || b.game_id === g.id;
@@ -2042,66 +2132,38 @@ export default function App() {
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
   const accuribetRef = useRef({}); // client-side ACCURIBET predictions (bypasses Cloudflare)
 
-  // ── AUTH STATE ──
-  const [user, setUser] = useState(null); // Firebase user object
-  const [userProfile, setUserProfile] = useState(null); // { uid, display_name, photo_url, balance }
-  const [authReady, setAuthReady] = useState(false);
-  const [userBets, setUserBets] = useState([]); // bets for current date
-  const [betSlip, setBetSlip] = useState(null); // { gameId, side, line, odds, game }
+  // ── USER STATE (localStorage) ──
+  const userState = useUserState();
+  const userBets = useUserBets();
+  const [betSlip, setBetSlip] = useState(null); // { gameId, side, line, odds, amount, game }
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
 
-  // Initialize Firebase Auth on mount
-  useEffect(() => {
-    initFirebase().then(() => {
-      const unsub = onAuthChange((fbUser) => {
-        setUser(fbUser);
-        setAuthReady(true);
-        if (fbUser) {
-          api.getMe().then(setUserProfile).catch(console.error);
-        } else {
-          setUserProfile(null);
-        }
-      });
-      return unsub;
-    }).catch(() => setAuthReady(true));
-  }, []);
-
-  // Load user bets when date or user changes
-  useEffect(() => {
-    if (!user) { setUserBets([]); return; }
-    const dateKey = selectedDate || todayStr;
-    api.getBets(dateKey).then(d => setUserBets(d.bets || [])).catch(() => setUserBets([]));
-  }, [user, selectedDate, games]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSignIn = async () => {
-    try { await googleSignIn(); } catch (e) { console.error("Sign-in failed:", e); }
+  const handlePlaceBet = () => {
+    if (!betSlip) return;
+    const amount = betSlip.amount || 10;
+    if (amount > userState.balance) { alert("Insufficient balance"); return; }
+    // Check for duplicate
+    if (userBets.forGame(betSlip.gameId)) { alert("Already have a bet on this game"); return; }
+    userState.adjustBalance(-amount);
+    userBets.place({
+      game_id: betSlip.gameId.replace(/-\d{8}$/, ""),
+      date: selectedDate || todayStr,
+      bet_type: "spread",
+      side: betSlip.side,
+      line: betSlip.line,
+      odds: betSlip.odds || "-110",
+      amount,
+    });
+    setBetSlip(null);
   };
-  const handleSignOut = async () => {
-    try { await googleSignOut(); } catch (e) { console.error("Sign-out failed:", e); }
-  };
-  const refreshProfile = useCallback(() => {
-    if (user) api.getMe().then(setUserProfile).catch(console.error);
-  }, [user]);
-  const handlePlaceBet = async () => {
-    if (!betSlip || !user) return;
-    try {
-      const result = await api.placeBet({
-        game_id: betSlip.gameId,
-        date: selectedDate || todayStr,
-        bet_type: "spread",
-        side: betSlip.side,
-        line: betSlip.line,
-        odds: betSlip.odds || "-110",
-        amount: betSlip.amount || 10,
-      });
-      setUserProfile(prev => prev ? { ...prev, balance: result.balance } : prev);
-      setBetSlip(null);
-      // Refresh bets list
-      const dateKey = selectedDate || todayStr;
-      api.getBets(dateKey).then(d => setUserBets(d.bets || [])).catch(() => {});
-    } catch (e) {
-      alert(e.message);
+
+  // Auto-settle bets when games go final
+  useEffect(() => {
+    if (games.some(g => g.status === "final")) {
+      settleUserBets(userBets, games, userState);
     }
-  };
+  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
@@ -2319,53 +2381,104 @@ export default function App() {
       {/* ── Header ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", height:52, paddingLeft:20, overflow:"hidden" }}>
-          {/* Logo — fixed, no shrink */}
-          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12 }}>
-            <span style={{ fontSize:20 }}>🏀</span>
+          {/* Logo + Profile dropdown */}
+          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12, position:"relative" }}>
+            <span
+              style={{ fontSize:20, cursor:"pointer", userSelect:"none" }}
+              onClick={() => setProfileOpen(p => !p)}
+              title="Profile"
+            >🏀</span>
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
-          </div>
-          {/* Auth / Balance — right side */}
-          <div style={{ marginLeft:"auto", flexShrink:0, display:"flex", alignItems:"center", gap:8, paddingRight:16 }}>
-            {user ? (
+            <span style={{
+              background: T.greenDim, border: `1px solid ${T.greenBdr}`,
+              borderRadius: 6, padding: "2px 7px",
+              fontSize: 10, fontWeight: 800, color: T.green, flexShrink:0,
+            }}>${userState.balance.toFixed(0)}</span>
+
+            {/* Profile dropdown */}
+            {profileOpen && (
               <>
-                {userProfile && (
-                  <span style={{
-                    background: T.greenDim, border: `1px solid ${T.greenBdr}`,
-                    borderRadius: 6, padding: "3px 8px",
-                    fontSize: 11, fontWeight: 800, color: T.green,
-                  }}>
-                    ${userProfile.balance?.toFixed(0) ?? "500"}
-                  </span>
-                )}
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt=""
-                    referrerPolicy="no-referrer"
-                    style={{ width: 28, height: 28, borderRadius: "50%", cursor: "pointer", border: `2px solid ${T.border}` }}
-                    onClick={handleSignOut}
-                    title="Sign out"
-                  />
-                ) : (
-                  <button onClick={handleSignOut} style={{
-                    background: "transparent", border: `1px solid ${T.border}`,
-                    borderRadius: 6, padding: "4px 8px", color: T.text2, fontSize: 9,
-                    fontWeight: 700, letterSpacing: "0.06em",
-                  }}>OUT</button>
-                )}
+                <div style={{ position:"fixed", inset:0, zIndex:998 }} onClick={() => { setProfileOpen(false); setEditingName(false); }} />
+                <div style={{
+                  position:"absolute", top:44, left:0, zIndex:999,
+                  background:T.card, border:`1px solid ${T.borderBr}`,
+                  borderRadius:12, padding:16, minWidth:220,
+                  boxShadow:"0 8px 32px rgba(0,0,0,0.5)",
+                }}>
+                  <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.1em", marginBottom:8 }}>PROFILE</div>
+                  {editingName ? (
+                    <input
+                      autoFocus
+                      defaultValue={userState.name}
+                      placeholder="Enter your name"
+                      onKeyDown={e => {
+                        if (e.key === "Enter") { userState.setName(e.target.value.trim()); setEditingName(false); }
+                        if (e.key === "Escape") setEditingName(false);
+                      }}
+                      onBlur={e => { userState.setName(e.target.value.trim()); setEditingName(false); }}
+                      style={{
+                        width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${T.border}`,
+                        borderRadius:8, padding:"8px 10px", color:T.text, fontSize:13, fontWeight:700,
+                        fontFamily:"inherit",
+                      }}
+                    />
+                  ) : (
+                    <div
+                      onClick={() => setEditingName(true)}
+                      style={{
+                        padding:"8px 10px", borderRadius:8, cursor:"pointer",
+                        background:"rgba(255,255,255,0.04)", border:`1px solid ${T.border}`,
+                        display:"flex", justifyContent:"space-between", alignItems:"center",
+                      }}
+                    >
+                      <span style={{ fontSize:13, fontWeight:700, color: userState.name ? T.text : T.text3 }}>
+                        {userState.name || "Tap to set name"}
+                      </span>
+                      <span style={{ fontSize:10, color:T.text3 }}>edit</span>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:10, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>BALANCE</span>
+                    <span style={{ fontSize:16, fontWeight:800, color:T.green }}>${userState.balance.toFixed(2)}</span>
+                  </div>
+
+                  {/* Recent bets */}
+                  {userBets.bets.length > 0 && (
+                    <>
+                      <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.1em", marginTop:14, marginBottom:6 }}>RECENT BETS</div>
+                      <div style={{ maxHeight:150, overflowY:"auto" }}>
+                        {userBets.bets.slice(-5).reverse().map(b => (
+                          <div key={b.id} style={{
+                            display:"flex", justifyContent:"space-between", alignItems:"center",
+                            padding:"4px 0", borderBottom:`1px solid ${T.border}`,
+                          }}>
+                            <div>
+                              <span style={{ fontSize:10, fontWeight:700, color:T.text }}>{b.side} </span>
+                              <span style={{ fontSize:9, color:T.text3 }}>{b.line.replace(b.side, "").trim()}</span>
+                            </div>
+                            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                              <span style={{ fontSize:10, color:T.text3 }}>${b.amount}</span>
+                              <span style={{
+                                fontSize:8, fontWeight:800, letterSpacing:"0.06em",
+                                color: b.status === "won" ? T.green : b.status === "lost" ? T.red : b.status === "push" ? T.gold : T.text3,
+                              }}>
+                                {b.status === "pending" ? "OPEN" : b.status.toUpperCase()}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </>
-            ) : authReady ? (
-              <button onClick={handleSignIn} style={{
-                background: T.green, color: "#080d1a", border: "none",
-                borderRadius: 8, padding: "6px 14px", fontSize: 10,
-                fontWeight: 800, letterSpacing: "0.06em",
-              }}>SIGN IN</button>
-            ) : null}
+            )}
           </div>
           {/* Date strip — scrollable, fills remaining width */}
           <div className="date-strip" style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
-            display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
+            display:"flex", alignItems:"center", gap:5, padding:"0 4px",
           }}>
             {dateOptions.map(({ label, val }) => {
               const isActive = selectedDate === val;
@@ -2435,8 +2548,7 @@ export default function App() {
             favorites={favorites}
             onFavorite={favorites}
             picksMap={picksMap}
-            user={user}
-            userBets={userBets}
+            userBets={userBets.bets}
             onBet={(gameId, side, line, odds, game) => setBetSlip({ gameId, side, line, odds: odds || "-110", amount: 10, game })}
           />
         </>
@@ -2518,7 +2630,7 @@ export default function App() {
             <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, fontSize:11, color:T.text2 }}>
               <span>Balance after</span>
               <span style={{ color:T.text3 }}>
-                ${((userProfile?.balance ?? 500) - betSlip.amount).toFixed(2)}
+                ${(userState.balance - betSlip.amount).toFixed(2)}
               </span>
             </div>
             <button onClick={handlePlaceBet} style={{

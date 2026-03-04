@@ -45,7 +45,7 @@ export const api = {
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),
 
-  // Auth endpoints
+  // Auth endpoints (for future real-auth mode)
   getMe:        ()             => authReq("/api/me"),
   placeBet:     (bet)          => authReq("/api/bets", { method: "POST", body: JSON.stringify(bet) }),
   getBets:      (date = null)  => authReq(date ? `/api/bets?date=${date}` : "/api/bets"),

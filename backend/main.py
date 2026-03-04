@@ -2152,17 +2152,37 @@ async def chat(req: ChatRequest):
     return {"reply": text}
 
 
-# ── FIREBASE AUTH HELPERS ─────────────────────────────────────────────────────
+# ── FIREBASE AUTH + BETTING (kept for future real-auth use) ───────────────────
 from firebase_admin import auth as fb_auth
+from fastapi import Header
 
-# Firebase client-side config — served to the frontend so it can initialize
-# Firebase Auth without hardcoding keys.  Read from env or fall back to empty.
-FIREBASE_CLIENT_CONFIG = {
-    "apiKey":     os.getenv("FIREBASE_API_KEY", ""),
-    "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN", ""),
-    "projectId":  os.getenv("FIREBASE_PROJECT_ID", ""),
-    "appId":      os.getenv("FIREBASE_APP_ID", ""),
-}
+BYPASS_AUTH = os.getenv("BYPASS_AUTH", "").strip().lower() in ("true", "1", "yes")
+_BYPASS_UID = "admin"
+
+# Derive Firebase client config from the service account when possible.
+def _build_firebase_client_config() -> dict:
+    sa_env = os.getenv("FIREBASE_CREDENTIALS", "").strip()
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "")
+    if not project_id and sa_env:
+        try:
+            project_id = json.loads(sa_env).get("project_id", "")
+        except Exception:
+            pass
+    if not project_id and pathlib.Path("firebase-service-account.json").exists():
+        try:
+            with open("firebase-service-account.json") as f:
+                project_id = json.load(f).get("project_id", "")
+        except Exception:
+            pass
+    return {
+        "apiKey": os.getenv("FIREBASE_API_KEY", ""),
+        "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN", f"{project_id}.firebaseapp.com" if project_id else ""),
+        "projectId": project_id,
+        "appId": os.getenv("FIREBASE_APP_ID", ""),
+        "bypass_auth": BYPASS_AUTH,
+    }
+
+FIREBASE_CLIENT_CONFIG = _build_firebase_client_config()
 
 STARTING_BALANCE = 500.0
 DEFAULT_BET_AMOUNT = 10.0
@@ -2171,11 +2191,13 @@ _BETS_COL = "bets"
 
 
 def _verify_token(authorization: str) -> dict:
-    """Verify a Firebase ID token from the Authorization header. Returns decoded token."""
+    """Verify a Firebase ID token, or return bypass admin if BYPASS_AUTH is set."""
+    if BYPASS_AUTH:
+        return {"uid": _BYPASS_UID, "name": "Admin", "picture": ""}
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing auth token")
     token = authorization[7:]
-    _init_firestore()  # ensure firebase app is initialized
+    _init_firestore()
     try:
         return fb_auth.verify_id_token(token)
     except Exception as e:
@@ -2205,11 +2227,8 @@ def _get_or_create_user(uid: str, display_name: str = "", photo_url: str = "") -
 
 @app.get("/api/firebase-config")
 def firebase_config():
-    """Return Firebase client config so frontend can init without env vars."""
+    """Return Firebase client config + bypass_auth flag."""
     return FIREBASE_CLIENT_CONFIG
-
-
-from fastapi import Header
 
 
 @app.get("/api/me")
@@ -2254,7 +2273,6 @@ def place_bet(req: PlaceBetRequest, authorization: str = Header("")):
     if req.amount > 100:
         raise HTTPException(status_code=400, detail="Max bet is $100")
 
-    # Get user balance
     user_ref = db.collection(_USERS_COL).document(uid)
     user_doc = user_ref.get()
     if not user_doc.exists:
@@ -2265,18 +2283,15 @@ def place_bet(req: PlaceBetRequest, authorization: str = Header("")):
     if req.amount > balance:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    # Check for duplicate bet (same user, same game, same bet_type)
     existing = db.collection(_BETS_COL).where("uid", "==", uid).where(
         "game_id", "==", req.game_id
     ).where("bet_type", "==", req.bet_type).where("status", "==", "pending").limit(1).get()
     if len(list(existing)) > 0:
         raise HTTPException(status_code=400, detail="You already have a pending bet on this game")
 
-    # Deduct balance
     new_balance = round(balance - req.amount, 2)
     user_ref.update({"balance": new_balance})
 
-    # Create bet document
     bet_data = {
         "uid": uid,
         "game_id": req.game_id,
@@ -2286,7 +2301,7 @@ def place_bet(req: PlaceBetRequest, authorization: str = Header("")):
         "line": req.line,
         "odds": req.odds,
         "amount": req.amount,
-        "status": "pending",  # pending | won | lost | push
+        "status": "pending",
         "payout": 0,
         "created_at": fb_firestore.SERVER_TIMESTAMP,
     }
@@ -2294,7 +2309,6 @@ def place_bet(req: PlaceBetRequest, authorization: str = Header("")):
     bet_ref.set(bet_data)
     bet_data["id"] = bet_ref.id
     bet_data["balance"] = new_balance
-
     return bet_data
 
 
@@ -2306,12 +2320,10 @@ def get_bets(date: Optional[str] = None, authorization: str = Header("")):
     db = _init_firestore()
     if not db:
         return {"bets": []}
-
     query = db.collection(_BETS_COL).where("uid", "==", uid)
     if date:
         query = query.where("date", "==", date)
     query = query.limit(50)
-
     bets = []
     for doc in query.stream():
         b = doc.to_dict()
@@ -2322,28 +2334,22 @@ def get_bets(date: Optional[str] = None, authorization: str = Header("")):
 
 @app.post("/api/bets/settle")
 def settle_bets(date: str, authorization: str = Header("")):
-    """Settle all pending bets for a date using final scores. Admin-style but any authed user can trigger."""
+    """Settle all pending bets for a date using final scores."""
     decoded = _verify_token(authorization)
     db = _init_firestore()
     if not db:
         raise HTTPException(status_code=500, detail="Firestore unavailable")
-
-    # Load final games for this date
     games = _load_games_from_firestore(date)
     if not games:
         return {"settled": 0}
-
     final_games = {
         re.sub(r'-\d{8}$', '', g["id"]): g
         for g in games if g.get("status") == "final"
     }
     if not final_games:
         return {"settled": 0}
-
-    # Find all pending bets for this date
     pending = db.collection(_BETS_COL).where("date", "==", date).where("status", "==", "pending").stream()
     settled_count = 0
-
     for doc in pending:
         bet = doc.to_dict()
         game_id = bet["game_id"]
@@ -2351,16 +2357,12 @@ def settle_bets(date: str, authorization: str = Header("")):
         game = final_games.get(base_id) or final_games.get(game_id)
         if not game:
             continue
-
         home_score = int(game.get("homeScore") or 0)
         away_score = int(game.get("awayScore") or 0)
         if home_score == 0 and away_score == 0:
             continue
-
-        # Determine result for spread bet
         result = _settle_spread_bet(bet, game, home_score, away_score)
         payout = 0.0
-
         if result == "won":
             odds_val = int(bet.get("odds", "-110").replace("+", ""))
             if odds_val > 0:
@@ -2368,64 +2370,48 @@ def settle_bets(date: str, authorization: str = Header("")):
             else:
                 payout = round(bet["amount"] * (100 / abs(odds_val)) + bet["amount"], 2)
         elif result == "push":
-            payout = bet["amount"]  # return stake
-
-        # Update bet
+            payout = bet["amount"]
         doc.reference.update({
-            "status": result,
-            "payout": payout,
+            "status": result, "payout": payout,
             "settled_at": fb_firestore.SERVER_TIMESTAMP,
         })
-
-        # Credit user balance
         if payout > 0:
             user_ref = db.collection(_USERS_COL).document(bet["uid"])
             user_doc = user_ref.get()
             if user_doc.exists:
                 cur_balance = user_doc.to_dict().get("balance", 0)
                 user_ref.update({"balance": round(cur_balance + payout, 2)})
-
         settled_count += 1
-
     return {"settled": settled_count}
 
 
 def _settle_spread_bet(bet: dict, game: dict, home_score: int, away_score: int) -> str:
-    """Determine if a spread bet won, lost, or pushed. Returns 'won', 'lost', or 'push'."""
+    """Determine if a spread bet won, lost, or pushed."""
     line_str = bet.get("line", "")
     side = bet.get("side", "")
-
-    # Parse spread line like "BOS -2.5"
     m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', line_str.strip().upper())
     if not m:
-        return "lost"  # can't parse = loss (shouldn't happen)
-
+        return "lost"
     fav_abbr = m.group(1)
-    spread_val = float(m.group(2))  # negative = favored by that much
-
+    spread_val = float(m.group(2))
     home_abbr = (game.get("home") or "").upper()
     fav_score = home_score if fav_abbr == home_abbr else away_score
     dog_score = away_score if fav_abbr == home_abbr else home_score
     actual_margin = fav_score - dog_score
     needed = abs(spread_val)
-
     if actual_margin > needed:
         fav_covered = True
     elif actual_margin < needed:
         fav_covered = False
     else:
         return "push"
-
     bet_on_fav = side.upper() == fav_abbr
-    if bet_on_fav:
-        return "won" if fav_covered else "lost"
-    else:
-        return "won" if not fav_covered else "lost"
+    return ("won" if fav_covered else "lost") if bet_on_fav else ("won" if not fav_covered else "lost")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
+    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY), "bypass_auth": BYPASS_AUTH}
 
 
 USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"

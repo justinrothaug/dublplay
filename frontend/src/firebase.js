@@ -7,11 +7,18 @@ import {
   signOut,
 } from "firebase/auth";
 
-// Firebase config is injected via env vars at build time.
-// Falls back to reading from the backend /api/firebase-config endpoint.
 let _app = null;
 let _auth = null;
 let _provider = null;
+let _bypassAuth = false;
+
+// Fake user for bypass mode
+const BYPASS_USER = {
+  uid: "admin",
+  displayName: "Admin",
+  photoURL: "",
+  email: "admin@local",
+};
 
 const ENV_CONFIG = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -26,40 +33,59 @@ function hasEnvConfig() {
 
 async function getFirebaseConfig() {
   if (hasEnvConfig()) return ENV_CONFIG;
-  const res = await fetch("/api/firebase-config");
-  if (!res.ok) throw new Error("Failed to fetch Firebase config");
-  return res.json();
+  try {
+    const res = await fetch("/api/firebase-config");
+    if (!res.ok) return {};
+    return res.json();
+  } catch {
+    return {};
+  }
 }
 
 export async function initFirebase() {
-  if (_app) return _auth;
+  if (_app || _bypassAuth) return { auth: _auth, bypass: _bypassAuth };
+
   const config = await getFirebaseConfig();
-  _app = initializeApp(config);
-  _auth = getAuth(_app);
-  _provider = new GoogleAuthProvider();
-  return _auth;
+  _bypassAuth = config.bypass_auth === true;
+
+  if (_bypassAuth) return { auth: null, bypass: true };
+
+  if (config.apiKey && config.projectId) {
+    _app = initializeApp(config);
+    _auth = getAuth(_app);
+    _provider = new GoogleAuthProvider();
+  }
+
+  return { auth: _auth, bypass: false };
 }
 
-export function getFirebaseAuth() {
-  return _auth;
+export function isBypassAuth() {
+  return _bypassAuth;
 }
 
 export async function googleSignIn() {
+  if (_bypassAuth) return { user: BYPASS_USER };
   if (!_auth) await initFirebase();
   return signInWithPopup(_auth, _provider);
 }
 
 export async function googleSignOut() {
+  if (_bypassAuth) return;
   if (!_auth) return;
   return signOut(_auth);
 }
 
 export function onAuthChange(callback) {
+  if (_bypassAuth) {
+    setTimeout(() => callback(BYPASS_USER), 0);
+    return () => {};
+  }
   if (!_auth) return () => {};
   return onAuthStateChanged(_auth, callback);
 }
 
 export async function getIdToken() {
+  if (_bypassAuth) return "bypass";
   if (!_auth?.currentUser) return null;
   return _auth.currentUser.getIdToken();
 }

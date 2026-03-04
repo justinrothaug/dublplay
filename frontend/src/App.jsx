@@ -150,98 +150,6 @@ function useFavoritePicks() {
   };
 }
 
-// ── USER STATE (localStorage) ────────────────────────────────────────────────
-const STARTING_BALANCE = 500;
-const LS_USER = "dublplay_user";
-const LS_BETS = "dublplay_bets";
-
-function useUserState() {
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(LS_USER)) || { name: "", balance: STARTING_BALANCE }; }
-    catch { return { name: "", balance: STARTING_BALANCE }; }
-  });
-  const save = (u) => {
-    setUser(u);
-    try { localStorage.setItem(LS_USER, JSON.stringify(u)); } catch {}
-  };
-  return {
-    name: user.name,
-    balance: user.balance,
-    setName: (name) => save({ ...user, name }),
-    setBalance: (balance) => save({ ...user, balance: Math.round(balance * 100) / 100 }),
-    adjustBalance: (delta) => save({ ...user, balance: Math.round((user.balance + delta) * 100) / 100 }),
-  };
-}
-
-function useUserBets() {
-  const [bets, setBets] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(LS_BETS) || "[]"); }
-    catch { return []; }
-  });
-  const save = (b) => {
-    setBets(b);
-    try { localStorage.setItem(LS_BETS, JSON.stringify(b)); } catch {}
-  };
-  return {
-    bets,
-    forGame: (gameId) => {
-      const base = gameId.replace(/-\d{8}$/, "");
-      return bets.find(b => b.game_id === base || b.game_id === gameId);
-    },
-    forDate: (dateStr) => bets.filter(b => b.date === dateStr),
-    place: (bet) => save([...bets, { ...bet, id: Date.now().toString(36), status: "pending", payout: 0, created_at: Date.now() }]),
-    settle: (betId, status, payout) => save(bets.map(b => b.id === betId ? { ...b, status, payout } : b)),
-  };
-}
-
-// Settle pending bets against final game data
-function settleUserBets(userBets, games, userState) {
-  const finals = {};
-  games.forEach(g => {
-    if (g.status === "final") {
-      finals[g.id] = g;
-      finals[g.id.replace(/-\d{8}$/, "")] = g;
-    }
-  });
-
-  userBets.bets.filter(b => b.status === "pending").forEach(b => {
-    const game = finals[b.game_id];
-    if (!game) return;
-    const homeScore = parseInt(game.homeScore) || 0;
-    const awayScore = parseInt(game.awayScore) || 0;
-    if (homeScore === 0 && awayScore === 0) return;
-
-    const result = settleSpread(b, game, homeScore, awayScore);
-    let payout = 0;
-    if (result === "won") {
-      const o = parseInt((b.odds || "-110").replace("+", ""), 10);
-      payout = o > 0 ? Math.round((b.amount * o / 100 + b.amount) * 100) / 100
-                      : Math.round((b.amount * 100 / Math.abs(o) + b.amount) * 100) / 100;
-    } else if (result === "push") {
-      payout = b.amount;
-    }
-
-    userBets.settle(b.id, result, payout);
-    if (payout > 0) userState.adjustBalance(payout);
-  });
-}
-
-function settleSpread(bet, game, homeScore, awayScore) {
-  const m = bet.line.trim().toUpperCase().match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
-  if (!m) return "lost";
-  const favAbbr = m[1];
-  const spreadVal = parseFloat(m[2]);
-  const homeAbbr = (game.home || "").toUpperCase();
-  const favScore = favAbbr === homeAbbr ? homeScore : awayScore;
-  const dogScore = favAbbr === homeAbbr ? awayScore : homeScore;
-  const margin = favScore - dogScore;
-  const needed = Math.abs(spreadVal);
-  if (margin === needed) return "push";
-  const favCovered = margin > needed;
-  const betOnFav = bet.side.toUpperCase() === favAbbr;
-  return (betOnFav ? favCovered : !favCovered) ? "won" : "lost";
-}
-
 function BookmarkBtn({ active, onClick, light }) {
   return (
     <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
@@ -320,7 +228,7 @@ function lineMovement(current, opening, isSpread) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, userBet, onBet }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -482,57 +390,6 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           {dispHomeOdds && dispAwayOdds && (
             <OddsCol label="MONEYLINE" value={`${dispAwayOdds} / ${dispHomeOdds}`} highlight={!isFinal} />
           )}
-        </div>
-      )}
-
-      {/* ── Bet buttons (spread only, upcoming games) ── */}
-      {isUp && dispSpread && onBet && !userBet && (() => {
-        const m = dispSpread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
-        if (!m) return null;
-        const favAbbr = m[1];
-        const spreadNum = parseFloat(m[2]);
-        const dogAbbr = favAbbr === game.home ? game.away : game.home;
-        const dogLine = `${dogAbbr} +${Math.abs(spreadNum)}`;
-        return (
-          <div style={{ display:"flex", background:"rgba(83,211,55,0.04)", borderTop:`1px solid ${T.border}` }}>
-            <button
-              onClick={() => onBet(game.id, favAbbr, dispSpread, dispAwaySpreadOdds || dispHomeSpreadOdds || "-110", game)}
-              style={{
-                flex:1, padding:"9px 0", textAlign:"center",
-                background:"transparent", border:"none", borderRight:`1px solid ${T.border}`,
-                fontSize:10, fontWeight:700, color:T.green, letterSpacing:"0.04em",
-              }}
-            >BET {dispSpread}</button>
-            <button
-              onClick={() => onBet(game.id, dogAbbr, dogLine, dispHomeSpreadOdds || dispAwaySpreadOdds || "-110", game)}
-              style={{
-                flex:1, padding:"9px 0", textAlign:"center",
-                background:"transparent", border:"none",
-                fontSize:10, fontWeight:700, color:T.green, letterSpacing:"0.04em",
-              }}
-            >BET {dogLine}</button>
-          </div>
-        );
-      })()}
-      {/* Show existing bet badge */}
-      {userBet && (
-        <div style={{
-          display:"flex", alignItems:"center", justifyContent:"center", gap:6,
-          padding:"8px 12px", background:"rgba(83,211,55,0.06)",
-          borderTop:`1px solid ${T.border}`,
-        }}>
-          <span style={{
-            fontSize:9, fontWeight:800, letterSpacing:"0.08em",
-            color: userBet.status === "won" ? T.green : userBet.status === "lost" ? T.red : userBet.status === "push" ? T.gold : T.text2,
-          }}>
-            {userBet.status === "pending" ? "BET PLACED" : userBet.status.toUpperCase()}
-          </span>
-          <span style={{ fontSize:10, fontWeight:700, color:T.text }}>
-            {userBet.side} {userBet.line.replace(userBet.side, "").trim()}
-          </span>
-          <span style={{ fontSize:10, color:T.text3 }}>${userBet.amount}</span>
-          {userBet.status === "won" && <span style={{ fontSize:10, fontWeight:700, color:T.green }}>+${(userBet.payout - userBet.amount).toFixed(2)}</span>}
-          {userBet.status === "lost" && <span style={{ fontSize:10, fontWeight:700, color:T.red }}>-${userBet.amount.toFixed(2)}</span>}
         </div>
       )}
 
@@ -975,7 +832,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, userBets, onBet }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -1055,11 +912,6 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
-              userBet={userBets?.find(b => {
-                const baseId = g.id.replace(/-\d{8}$/, "");
-                return b.game_id === baseId || b.game_id === g.id;
-              })}
-              onBet={onBet}
             />
           );
         })}
@@ -2132,39 +1984,6 @@ export default function App() {
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
   const accuribetRef = useRef({}); // client-side ACCURIBET predictions (bypasses Cloudflare)
 
-  // ── USER STATE (localStorage) ──
-  const userState = useUserState();
-  const userBets = useUserBets();
-  const [betSlip, setBetSlip] = useState(null); // { gameId, side, line, odds, amount, game }
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-
-  const handlePlaceBet = () => {
-    if (!betSlip) return;
-    const amount = betSlip.amount || 10;
-    if (amount > userState.balance) { alert("Insufficient balance"); return; }
-    // Check for duplicate
-    if (userBets.forGame(betSlip.gameId)) { alert("Already have a bet on this game"); return; }
-    userState.adjustBalance(-amount);
-    userBets.place({
-      game_id: betSlip.gameId.replace(/-\d{8}$/, ""),
-      date: selectedDate || todayStr,
-      bet_type: "spread",
-      side: betSlip.side,
-      line: betSlip.line,
-      odds: betSlip.odds || "-110",
-      amount,
-    });
-    setBetSlip(null);
-  };
-
-  // Auto-settle bets when games go final
-  useEffect(() => {
-    if (games.some(g => g.status === "final")) {
-      settleUserBets(userBets, games, userState);
-    }
-  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
     const y = d.getFullYear();
@@ -2394,104 +2213,15 @@ export default function App() {
       {/* ── Header ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", height:52, paddingLeft:20, overflow:"hidden" }}>
-          {/* Logo + Profile dropdown */}
-          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12, position:"relative" }}>
-            <span
-              style={{ fontSize:20, cursor:"pointer", userSelect:"none" }}
-              onClick={() => setProfileOpen(p => !p)}
-              title="Profile"
-            >🏀</span>
+          {/* Logo — fixed, no shrink */}
+          <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12 }}>
+            <span style={{ fontSize:20 }}>🏀</span>
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
-            <span style={{
-              background: T.greenDim, border: `1px solid ${T.greenBdr}`,
-              borderRadius: 6, padding: "2px 7px",
-              fontSize: 10, fontWeight: 800, color: T.green, flexShrink:0,
-            }}>${userState.balance.toFixed(0)}</span>
-
-            {/* Profile dropdown */}
-            {profileOpen && (
-              <>
-                <div style={{ position:"fixed", inset:0, zIndex:998 }} onClick={() => { setProfileOpen(false); setEditingName(false); }} />
-                <div style={{
-                  position:"absolute", top:44, left:0, zIndex:999,
-                  background:T.card, border:`1px solid ${T.borderBr}`,
-                  borderRadius:12, padding:16, minWidth:220,
-                  boxShadow:"0 8px 32px rgba(0,0,0,0.5)",
-                }}>
-                  <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.1em", marginBottom:8 }}>PROFILE</div>
-                  {editingName ? (
-                    <input
-                      autoFocus
-                      defaultValue={userState.name}
-                      placeholder="Enter your name"
-                      onKeyDown={e => {
-                        if (e.key === "Enter") { userState.setName(e.target.value.trim()); setEditingName(false); }
-                        if (e.key === "Escape") setEditingName(false);
-                      }}
-                      onBlur={e => { userState.setName(e.target.value.trim()); setEditingName(false); }}
-                      style={{
-                        width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${T.border}`,
-                        borderRadius:8, padding:"8px 10px", color:T.text, fontSize:13, fontWeight:700,
-                        fontFamily:"inherit",
-                      }}
-                    />
-                  ) : (
-                    <div
-                      onClick={() => setEditingName(true)}
-                      style={{
-                        padding:"8px 10px", borderRadius:8, cursor:"pointer",
-                        background:"rgba(255,255,255,0.04)", border:`1px solid ${T.border}`,
-                        display:"flex", justifyContent:"space-between", alignItems:"center",
-                      }}
-                    >
-                      <span style={{ fontSize:13, fontWeight:700, color: userState.name ? T.text : T.text3 }}>
-                        {userState.name || "Tap to set name"}
-                      </span>
-                      <span style={{ fontSize:10, color:T.text3 }}>edit</span>
-                    </div>
-                  )}
-
-                  <div style={{ marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <span style={{ fontSize:10, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>BALANCE</span>
-                    <span style={{ fontSize:16, fontWeight:800, color:T.green }}>${userState.balance.toFixed(2)}</span>
-                  </div>
-
-                  {/* Recent bets */}
-                  {userBets.bets.length > 0 && (
-                    <>
-                      <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.1em", marginTop:14, marginBottom:6 }}>RECENT BETS</div>
-                      <div style={{ maxHeight:150, overflowY:"auto" }}>
-                        {userBets.bets.slice(-5).reverse().map(b => (
-                          <div key={b.id} style={{
-                            display:"flex", justifyContent:"space-between", alignItems:"center",
-                            padding:"4px 0", borderBottom:`1px solid ${T.border}`,
-                          }}>
-                            <div>
-                              <span style={{ fontSize:10, fontWeight:700, color:T.text }}>{b.side} </span>
-                              <span style={{ fontSize:9, color:T.text3 }}>{b.line.replace(b.side, "").trim()}</span>
-                            </div>
-                            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                              <span style={{ fontSize:10, color:T.text3 }}>${b.amount}</span>
-                              <span style={{
-                                fontSize:8, fontWeight:800, letterSpacing:"0.06em",
-                                color: b.status === "won" ? T.green : b.status === "lost" ? T.red : b.status === "push" ? T.gold : T.text3,
-                              }}>
-                                {b.status === "pending" ? "OPEN" : b.status.toUpperCase()}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
           </div>
           {/* Date strip — scrollable, fills remaining width */}
           <div className="date-strip" style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
-            display:"flex", alignItems:"center", gap:5, padding:"0 4px",
+            display:"flex", alignItems:"center", gap:5, padding:"0 16px 0 4px",
           }}>
             {dateOptions.map(({ label, val }) => {
               const isActive = selectedDate === val;
@@ -2578,8 +2308,6 @@ export default function App() {
             favorites={favorites}
             onFavorite={favorites}
             picksMap={picksMap}
-            userBets={userBets.bets}
-            onBet={(gameId, side, line, odds, game) => setBetSlip({ gameId, side, line, odds: odds || "-110", amount: 10, game })}
           />
         </>
       )}
@@ -2607,71 +2335,6 @@ export default function App() {
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
-
-      {/* ── Bet Slip Modal ── */}
-      {betSlip && (
-        <div style={{
-          position:"fixed", inset:0, zIndex:999,
-          background:"rgba(0,0,0,0.7)", display:"flex",
-          alignItems:"flex-end", justifyContent:"center",
-        }} onClick={() => setBetSlip(null)}>
-          <div onClick={e => e.stopPropagation()} style={{
-            background:T.card, borderRadius:"20px 20px 0 0",
-            padding:"24px 20px 32px", width:"100%", maxWidth:400,
-            border:`1px solid ${T.border}`, borderBottom:"none",
-            animation:"slideUp 0.2s ease",
-          }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <span style={{ fontSize:14, fontWeight:800, color:T.text, letterSpacing:"0.04em" }}>PLACE BET</span>
-              <button onClick={() => setBetSlip(null)} style={{ background:"none", border:"none", color:T.text3, fontSize:18 }}>✕</button>
-            </div>
-            <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:12, padding:14, marginBottom:16 }}>
-              <div style={{ fontSize:10, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>SPREAD</div>
-              <div style={{ fontSize:16, fontWeight:800, color:T.text }}>{betSlip.side} {betSlip.line.replace(betSlip.side, "").trim()}</div>
-              <div style={{ fontSize:11, color:T.text2, marginTop:4 }}>
-                {betSlip.game ? `${betSlip.game.awayName} @ ${betSlip.game.homeName}` : betSlip.gameId}
-                <span style={{ color:T.text3, marginLeft:8 }}>{betSlip.odds}</span>
-              </div>
-            </div>
-            <div style={{ marginBottom:16 }}>
-              <div style={{ fontSize:10, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:8 }}>WAGER</div>
-              <div style={{ display:"flex", gap:6 }}>
-                {[5, 10, 25, 50].map(amt => (
-                  <button key={amt} onClick={() => setBetSlip(s => ({ ...s, amount: amt }))} style={{
-                    flex:1, padding:"10px 0", borderRadius:8, fontSize:12, fontWeight:700,
-                    background: betSlip.amount === amt ? T.green : "rgba(255,255,255,0.06)",
-                    color: betSlip.amount === amt ? "#080d1a" : T.text2,
-                    border: `1px solid ${betSlip.amount === amt ? T.green : T.border}`,
-                  }}>${amt}</button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, fontSize:11, color:T.text2 }}>
-              <span>To Win</span>
-              <span style={{ fontWeight:700, color:T.green }}>
-                ${(() => {
-                  const o = parseInt(betSlip.odds?.replace("+",""), 10);
-                  if (isNaN(o)) return "0.00";
-                  const profit = o > 0 ? (betSlip.amount * o / 100) : (betSlip.amount * 100 / Math.abs(o));
-                  return profit.toFixed(2);
-                })()}
-              </span>
-            </div>
-            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, fontSize:11, color:T.text2 }}>
-              <span>Balance after</span>
-              <span style={{ color:T.text3 }}>
-                ${(userState.balance - betSlip.amount).toFixed(2)}
-              </span>
-            </div>
-            <button onClick={handlePlaceBet} style={{
-              width:"100%", background:T.green, color:"#080d1a", border:"none",
-              borderRadius:10, padding:14, fontSize:13, fontWeight:800, letterSpacing:"0.06em",
-            }}>
-              PLACE ${betSlip.amount} BET
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

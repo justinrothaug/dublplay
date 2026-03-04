@@ -165,74 +165,6 @@ function useProfile() {
   };
 }
 
-function usePots() {
-  const [pots, setPots] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("dublplay_pots") || "[]"); } catch { return []; }
-  });
-  const [jackpot, setJackpot] = useState(() => {
-    try { return parseFloat(localStorage.getItem("dublplay_jackpot")) || 0; } catch { return 0; }
-  });
-  const persist = (p, j) => {
-    setPots(p);
-    if (j !== undefined) setJackpot(j);
-    try {
-      localStorage.setItem("dublplay_pots", JSON.stringify(p));
-      if (j !== undefined) localStorage.setItem("dublplay_jackpot", String(j));
-    } catch {}
-  };
-  return {
-    pots, jackpot,
-    forGame: gid => pots.filter(p => p.game_id === gid),
-    create: pot => { const next = [pot, ...pots]; persist(next); return next; },
-    join: (potId, entry) => {
-      const next = pots.map(p => {
-        if (p.pot_id !== potId) return p;
-        const sides = { ...p.sides };
-        if (!sides[entry.side]) sides[entry.side] = [];
-        sides[entry.side] = [...sides[entry.side], { username: entry.username, avatar_color: entry.avatar_color, amount: entry.amount }];
-        return { ...p, sides, total_pool: p.total_pool + entry.amount };
-      });
-      persist(next);
-      return next;
-    },
-    settle: (potId, winningSide) => {
-      let jp = jackpot;
-      const next = pots.map(p => {
-        if (p.pot_id !== potId || p.status !== "open") return p;
-        const sides = p.sides || {};
-        const winEntries = sides[winningSide] || [];
-        const allEntries = Object.values(sides).flat();
-        const loseEntries = allEntries.filter(e => !(sides[winningSide] || []).some(w => w.username === e.username));
-        const loseTotal = loseEntries.reduce((s, e) => s + e.amount, 0);
-        let payouts = {};
-
-        if (winningSide === "push") {
-          allEntries.forEach(e => { payouts[e.username] = (payouts[e.username] || 0) + e.amount; });
-        } else if (winEntries.length === 0) {
-          // Everyone lost — dead money goes to jackpot
-          jp += p.total_pool;
-        } else if (loseTotal === 0) {
-          // Everyone on same winning side — money back
-          winEntries.forEach(e => { payouts[e.username] = e.amount; });
-        } else {
-          // Winners split total pool proportionally
-          const winTotal = winEntries.reduce((s, e) => s + e.amount, 0);
-          winEntries.forEach(e => {
-            payouts[e.username] = Math.round((e.amount / winTotal) * p.total_pool * 100) / 100;
-          });
-        }
-        return { ...p, status: "settled", winning_side: winningSide, payouts };
-      });
-      persist(next, jp);
-      // Return payouts for the settled pot
-      const settled = next.find(p => p.pot_id === potId);
-      return { pots: next, payouts: settled?.payouts || {}, jackpot: jp };
-    },
-    addToJackpot: amt => { const nj = jackpot + amt; persist(pots, nj); },
-    claimJackpot: () => { const val = jackpot; persist(pots, 0); return val; },
-  };
-}
-
 // ── Profile Dropdown ─────────────────────────────────────────────────────────
 function ProfileDropdown({ profile, onClose }) {
   const [draft, setDraft] = useState(profile.username);
@@ -293,379 +225,29 @@ function ProfileDropdown({ profile, onClose }) {
   );
 }
 
-// ── Pot Action UI Components ─────────────────────────────────────────────────
-function PostPickModal({ game, profile, onPost, onClose }) {
-  const [side, setSide] = useState("away");
-  const [amount, setAmount] = useState("10");
-  const [pickType, setPickType] = useState("spread");
-  const amt = parseFloat(amount) || 0;
-  const canPost = profile.username && amt > 0 && amt <= profile.balance;
-
-  const getLine = () => {
-    if (pickType === "spread") return game.spread || "N/A";
-    if (pickType === "total") return game.ou ? `O/U ${game.ou}` : "N/A";
-    return `${game.away} ${game.awayOdds || ""} / ${game.home} ${game.homeOdds || ""}`;
+// ── Simple pot helper for GameCard ───────────────────────────────────────────
+function useBets() {
+  const [bets, setBets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("dublplay_bets") || "{}"); } catch { return {}; }
+  });
+  const persist = b => { setBets(b); try { localStorage.setItem("dublplay_bets", JSON.stringify(b)); } catch {} };
+  return {
+    bets,
+    // Get pot for a game: { away: [{username, color}], home: [...], myPick: "away"|"home"|null }
+    forGame: (gid, username) => {
+      const g = bets[gid] || { away: [], home: [] };
+      const myPick = username ? (g.away.some(e => e.username === username) ? "away" : g.home.some(e => e.username === username) ? "home" : null) : null;
+      return { ...g, myPick, total: (g.away.length + g.home.length) * 10 };
+    },
+    pick: (gid, side, username, color) => {
+      const prev = bets[gid] || { away: [], home: [] };
+      // Already picked this game? ignore
+      if (prev.away.some(e => e.username === username) || prev.home.some(e => e.username === username)) return false;
+      const next = { ...bets, [gid]: { ...prev, [side]: [...prev[side], { username, color }] } };
+      persist(next);
+      return true;
+    },
   };
-
-  const sideLabel = (s) => {
-    if (pickType === "total") return s === "away" ? "OVER" : "UNDER";
-    return s === "away" ? game.away : game.home;
-  };
-
-  return (
-    <div style={{
-      position:"fixed", inset:0, zIndex:9999,
-      background:"rgba(0,0,0,0.7)", backdropFilter:"blur(4px)",
-      display:"flex", alignItems:"center", justifyContent:"center",
-    }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background:T.card, border:`1px solid ${T.borderBr}`,
-        borderRadius:16, padding:24, width:300, maxWidth:"90vw",
-        boxShadow:"0 12px 40px rgba(0,0,0,0.5)",
-      }}>
-        <div style={{ fontSize:10, color:T.text2, fontWeight:700, letterSpacing:"0.1em", marginBottom:4 }}>POST A PICK</div>
-        <div style={{ fontSize:16, color:T.text, fontWeight:800, marginBottom:16 }}>{game.awayName} @ {game.homeName}</div>
-
-        {/* Pick type selector */}
-        <div style={{ display:"flex", gap:6, marginBottom:14 }}>
-          {["spread","total","moneyline"].map(pt => (
-            <button key={pt} onClick={() => setSide("away") || setPickType(pt)} style={{
-              flex:1, padding:"7px 0", borderRadius:6, fontSize:10, fontWeight:700,
-              letterSpacing:"0.06em", cursor:"pointer", border:"none",
-              background: pickType === pt ? T.green : "rgba(255,255,255,0.06)",
-              color: pickType === pt ? "#000" : T.text2,
-            }}>{pt.toUpperCase()}</button>
-          ))}
-        </div>
-
-        {/* Line */}
-        <div style={{ fontSize:11, color:T.text3, marginBottom:10, textAlign:"center" }}>{getLine()}</div>
-
-        {/* Side selector */}
-        <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-          {["away","home"].map(s => (
-            <button key={s} onClick={() => setSide(s)} style={{
-              flex:1, padding:"12px 0", borderRadius:10, fontSize:13, fontWeight:800,
-              cursor:"pointer", transition:"all 0.15s",
-              border: side === s ? `2px solid ${T.green}` : `1px solid ${T.border}`,
-              background: side === s ? T.greenDim : "rgba(255,255,255,0.03)",
-              color: side === s ? T.green : T.text2,
-            }}>{sideLabel(s)}</button>
-          ))}
-        </div>
-
-        {/* Amount */}
-        <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em", marginBottom:6 }}>
-            AMOUNT (Balance: ${profile.balance.toFixed(2)})
-          </div>
-          <div style={{ display:"flex", gap:6 }}>
-            <input
-              type="number" value={amount} min="1" step="1"
-              onChange={e => setAmount(e.target.value)}
-              style={{
-                flex:1, background:"rgba(0,0,0,0.4)", border:`1px solid ${T.borderBr}`,
-                borderRadius:8, color:T.text, padding:"10px 12px",
-                fontSize:16, fontWeight:700, fontFamily:"inherit",
-              }}
-            />
-            {[5,10,25].map(v => (
-              <button key={v} onClick={() => setAmount(String(v))} style={{
-                padding:"8px 10px", borderRadius:8, fontSize:11, fontWeight:700,
-                border:`1px solid ${T.border}`, cursor:"pointer",
-                background: parseInt(amount) === v ? T.greenDim : "transparent",
-                color: parseInt(amount) === v ? T.green : T.text3,
-              }}>${v}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Submit */}
-        <button
-          disabled={!canPost}
-          onClick={() => {
-            if (!canPost) return;
-            onPost({
-              side: pickType === "total" ? (side === "away" ? "over" : "under") : side,
-              amount: amt,
-              pickType,
-              line: getLine(),
-            });
-          }}
-          style={{
-            width:"100%", padding:"14px 0", borderRadius:10,
-            fontSize:13, fontWeight:800, letterSpacing:"0.06em",
-            border:"none", cursor: canPost ? "pointer" : "default",
-            background: canPost ? T.green : T.text3,
-            color: canPost ? "#000" : "#888",
-            opacity: canPost ? 1 : 0.5,
-          }}
-        >
-          {!profile.username ? "SET USERNAME FIRST" : amt > profile.balance ? "INSUFFICIENT BALANCE" : `DROP $${amt} ON ${sideLabel(side)}`}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PotCard({ pot, game, profile, onJoin, jackpot }) {
-  const sides = pot.sides || {};
-  const allSideKeys = Object.keys(sides);
-  const isSettled = pot.status === "settled";
-  const [joinSide, setJoinSide] = useState(null);
-  const [joinAmt, setJoinAmt] = useState("10");
-  const alreadyIn = profile.username && allSideKeys.some(s => (sides[s] || []).some(e => e.username === profile.username));
-
-  const sideLabel = (s) => {
-    if (pot.pick_type === "total") return s === "over" ? "OVER" : "UNDER";
-    return s === "home" ? (game?.home || "HOME") : s === "away" ? (game?.away || "AWAY") : s.toUpperCase();
-  };
-
-  // Normalize to always show both sides
-  const sideKeys = pot.pick_type === "total" ? ["over", "under"] : ["away", "home"];
-
-  return (
-    <div style={{
-      background: isSettled ? "rgba(255,255,255,0.03)" : T.cardAlt,
-      border:`1px solid ${isSettled ? T.border : T.borderBr}`,
-      borderRadius:12, padding:14, marginBottom:10,
-    }}>
-      {/* Header */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          <span style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.08em" }}>
-            {pot.pick_type.toUpperCase()}
-          </span>
-          <span style={{ fontSize:10, color:T.text2 }}>{pot.line}</span>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          <span style={{ fontSize:13, fontWeight:800, color:T.green }}>${pot.total_pool.toFixed(0)}</span>
-          <span style={{ fontSize:8, color:T.text3, fontWeight:700, letterSpacing:"0.06em" }}>POT</span>
-        </div>
-      </div>
-
-      {/* Two sides with user icons */}
-      <div style={{ display:"flex", gap:8 }}>
-        {sideKeys.map(sk => {
-          const entries = sides[sk] || [];
-          const sideTotal = entries.reduce((s, e) => s + e.amount, 0);
-          const isWinner = isSettled && pot.winning_side === sk;
-          return (
-            <div key={sk} style={{
-              flex:1, borderRadius:8, padding:10,
-              background: isWinner ? "rgba(83,211,55,0.08)" : "rgba(0,0,0,0.2)",
-              border: isWinner ? `1px solid ${T.greenBdr}` : `1px solid ${T.border}`,
-            }}>
-              <div style={{ fontSize:9, fontWeight:800, color: isWinner ? T.green : T.text2, letterSpacing:"0.08em", marginBottom:8, textAlign:"center" }}>
-                {sideLabel(sk)} {isWinner && "W"}
-              </div>
-              {/* User avatars */}
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4, justifyContent:"center", minHeight:28, marginBottom:6 }}>
-                {entries.map((e, i) => (
-                  <div key={i} title={`${e.username}: $${e.amount}`} style={{
-                    width:28, height:28, borderRadius:"50%",
-                    background: e.avatar_color || avatarColor(e.username),
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:11, fontWeight:800, color:"#fff",
-                    border: pot.payouts && pot.payouts[e.username] ? `2px solid ${T.green}` : "2px solid transparent",
-                  }}>
-                    {e.username[0].toUpperCase()}
-                  </div>
-                ))}
-                {entries.length === 0 && (
-                  <div style={{ fontSize:9, color:T.text3, fontStyle:"italic" }}>empty</div>
-                )}
-              </div>
-              <div style={{ textAlign:"center", fontSize:12, fontWeight:700, color: sideTotal > 0 ? T.text : T.text3 }}>
-                ${sideTotal.toFixed(0)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Join buttons (if open and not already in) */}
-      {!isSettled && profile.username && !alreadyIn && (
-        <div style={{ marginTop:10 }}>
-          {joinSide === null ? (
-            <div style={{ display:"flex", gap:6 }}>
-              {sideKeys.map(sk => (
-                <button key={sk} onClick={() => setJoinSide(sk)} style={{
-                  flex:1, padding:"8px 0", borderRadius:8, fontSize:10, fontWeight:700,
-                  letterSpacing:"0.06em", cursor:"pointer", border:`1px solid ${T.borderBr}`,
-                  background:"rgba(255,255,255,0.04)", color:T.text2,
-                }}>JOIN {sideLabel(sk)}</button>
-              ))}
-            </div>
-          ) : (
-            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-              <span style={{ fontSize:10, color:T.text2, fontWeight:700, flexShrink:0 }}>{sideLabel(joinSide)}:</span>
-              <input type="number" value={joinAmt} min="1" onChange={e => setJoinAmt(e.target.value)}
-                style={{
-                  width:60, background:"rgba(0,0,0,0.4)", border:`1px solid ${T.borderBr}`,
-                  borderRadius:6, color:T.text, padding:"6px 8px", fontSize:13, fontWeight:700, fontFamily:"inherit",
-                }} />
-              <button onClick={() => {
-                const a = parseFloat(joinAmt) || 0;
-                if (a > 0 && a <= profile.balance) onJoin(pot.pot_id, joinSide, a);
-                setJoinSide(null);
-              }} style={{
-                padding:"8px 14px", borderRadius:6, fontSize:10, fontWeight:800,
-                background:T.green, color:"#000", border:"none", cursor:"pointer",
-              }}>DROP IN</button>
-              <button onClick={() => setJoinSide(null)} style={{
-                padding:"8px 10px", borderRadius:6, fontSize:10, fontWeight:700,
-                background:"transparent", color:T.text3, border:`1px solid ${T.border}`, cursor:"pointer",
-              }}>X</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Settled payouts */}
-      {isSettled && pot.payouts && Object.keys(pot.payouts).length > 0 && (
-        <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
-          <div style={{ fontSize:8, color:T.text3, fontWeight:700, letterSpacing:"0.08em", marginBottom:4 }}>PAYOUTS</div>
-          {Object.entries(pot.payouts).map(([u, amt]) => (
-            <div key={u} style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
-              <span style={{ color:T.text2 }}>{u}</span>
-              <span style={{ color:T.green, fontWeight:700 }}>+${amt.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── ACTION TAB ───────────────────────────────────────────────────────────────
-function ActionTab({ games, profile, potStore }) {
-  const [pickModal, setPickModal] = useState(null); // game object
-  const upcomingGames = games.filter(g => g.status === "upcoming");
-  const liveGames = games.filter(g => g.status === "live");
-  const activeGames = [...liveGames, ...upcomingGames];
-
-  const handlePost = (game, pick) => {
-    const potId = Math.random().toString(36).slice(2, 10);
-    const entry = { username: profile.username, avatar_color: profile.color, amount: pick.amount };
-    const pot = {
-      pot_id: potId,
-      game_id: game.id,
-      game_label: `${game.away} @ ${game.home}`,
-      pick_type: pick.pickType,
-      line: pick.line,
-      status: "open",
-      sides: { [pick.side]: [entry] },
-      total_pool: pick.amount,
-      created_at: new Date().toISOString(),
-    };
-    profile.deduct(pick.amount);
-    potStore.create(pot);
-    setPickModal(null);
-  };
-
-  const handleJoin = (potId, side, amount) => {
-    profile.deduct(amount);
-    potStore.join(potId, { username: profile.username, avatar_color: profile.color, side, amount });
-  };
-
-  return (
-    <div style={{ maxWidth:960, margin:"0 auto", padding:"22px 16px" }}>
-      {/* Jackpot banner */}
-      {potStore.jackpot > 0 && (
-        <div style={{
-          background:"linear-gradient(135deg, rgba(245,166,35,0.15), rgba(245,166,35,0.05))",
-          border:`1px solid rgba(245,166,35,0.3)`,
-          borderRadius:12, padding:"14px 18px", marginBottom:18,
-          display:"flex", alignItems:"center", justifyContent:"space-between",
-        }}>
-          <div>
-            <div style={{ fontSize:9, color:T.gold, fontWeight:800, letterSpacing:"0.1em" }}>JACKPOT (DEAD MONEY)</div>
-            <div style={{ fontSize:22, color:T.gold, fontWeight:900 }}>${potStore.jackpot.toFixed(2)}</div>
-            <div style={{ fontSize:9, color:T.text3, marginTop:2 }}>Rolls into next losing pot</div>
-          </div>
-        </div>
-      )}
-
-      {!profile.username && (
-        <div style={{
-          background:T.cardAlt, border:`1px solid ${T.border}`,
-          borderRadius:12, padding:20, textAlign:"center", marginBottom:18,
-        }}>
-          <div style={{ fontSize:12, color:T.text2, marginBottom:4 }}>Set your username first</div>
-          <div style={{ fontSize:10, color:T.text3 }}>Tap the ball icon in the top left</div>
-        </div>
-      )}
-
-      {/* Active games with pot action */}
-      {activeGames.length === 0 && (
-        <div style={{ color:T.text3, fontSize:12, textAlign:"center", padding:40 }}>No upcoming games to bet on</div>
-      )}
-      {activeGames.map(game => {
-        const gamePots = potStore.forGame(game.id);
-        return (
-          <div key={game.id} style={{
-            background:T.card, border:`1px solid ${T.border}`,
-            borderRadius:14, padding:16, marginBottom:14,
-          }}>
-            {/* Game header */}
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:14, fontWeight:800, color:T.text }}>{game.away}</span>
-                <span style={{ fontSize:11, color:T.text3 }}>@</span>
-                <span style={{ fontSize:14, fontWeight:800, color:T.text }}>{game.home}</span>
-                {game.status === "live" && (
-                  <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
-                )}
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                {game.spread && <span style={{ fontSize:10, color:T.text2 }}>{game.spread}</span>}
-                {game.ou && <span style={{ fontSize:10, color:T.text3 }}>O/U {game.ou}</span>}
-              </div>
-            </div>
-
-            {/* Existing pots for this game */}
-            {gamePots.map(pot => (
-              <PotCard key={pot.pot_id} pot={pot} game={game} profile={profile} onJoin={handleJoin} jackpot={potStore.jackpot} />
-            ))}
-
-            {/* Post Pick button */}
-            {game.status === "upcoming" && profile.username && (
-              <button onClick={() => setPickModal(game)} style={{
-                width:"100%", padding:"12px 0", borderRadius:10,
-                background:"rgba(83,211,55,0.08)", border:`1px solid ${T.greenBdr}`,
-                color:T.green, fontSize:11, fontWeight:800,
-                letterSpacing:"0.08em", cursor:"pointer",
-              }}>+ POST A PICK</button>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Settled pots history */}
-      {(() => {
-        const settled = potStore.pots.filter(p => p.status === "settled");
-        if (settled.length === 0) return null;
-        return (
-          <>
-            <div style={{ fontSize:10, color:T.text3, fontWeight:700, letterSpacing:"0.1em", margin:"24px 0 12px" }}>SETTLED POTS</div>
-            {settled.map(pot => (
-              <PotCard key={pot.pot_id} pot={pot} game={games.find(g => g.id === pot.game_id)} profile={profile} onJoin={handleJoin} jackpot={potStore.jackpot} />
-            ))}
-          </>
-        );
-      })()}
-
-      {pickModal && (
-        <PostPickModal
-          game={pickModal}
-          profile={profile}
-          onPost={pick => handlePost(pickModal, pick)}
-          onClose={() => setPickModal(null)}
-        />
-      )}
-    </div>
-  );
 }
 
 // ── FAVORITE PICKS (localStorage) ────────────────────────────────────────────
@@ -764,7 +346,7 @@ function lineMovement(current, opening, isSpread) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, gameBets, onBet }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -784,6 +366,33 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
   const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
+
+  // Pot data for this game
+  const myPick = gameBets?.myPick;       // "away" | "home" | null
+  const awayBets = gameBets?.away || [];
+  const homeBets = gameBets?.home || [];
+  const potTotal = gameBets?.total || 0;
+  const canBet = isUp && onBet && !myPick;
+
+  const handleSidePick = (side) => {
+    if (!canBet) return;
+    onBet(game.id, side);
+  };
+
+  // Mini avatar row helper
+  const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
+    <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
+      {entries.map((e, i) => (
+        <div key={i} title={e.username} style={{
+          width:22, height:22, borderRadius:"50%",
+          background: e.color || avatarColor(e.username),
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontSize:9, fontWeight:800, color:"#fff",
+          border:"1.5px solid rgba(255,255,255,0.3)",
+        }}>{e.username[0].toUpperCase()}</div>
+      ))}
+    </div>
+  );
 
   return (
     <div style={{
@@ -818,11 +427,28 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Readability overlay */}
         <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
+        {/* Selection glow overlays (only for upcoming) */}
+        {isUp && myPick === "away" && (
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(90deg, rgba(83,211,55,0.18) 0%, transparent 55%)", zIndex:2, pointerEvents:"none" }} />
+        )}
+        {isUp && myPick === "home" && (
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(90deg, transparent 45%, rgba(83,211,55,0.18) 100%)", zIndex:2, pointerEvents:"none" }} />
+        )}
+
         {/* Content */}
         <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px` }}>
-          {/* Top row: injury alert / win-prob chips */}
+          {/* Top row: pot total (left) / injury alert / win-prob chips (right) */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
-            {game.injuryAlert && isUp ? (
+            {/* Pot total — top left */}
+            {isUp && potTotal > 0 ? (
+              <div style={{
+                background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
+                display:"inline-flex", alignItems:"center", gap:4, flexShrink:0,
+              }}>
+                <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
+                <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
+              </div>
+            ) : game.injuryAlert && isUp ? (
               <div style={{ flex:1, background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, marginRight:8 }}>
                 ⚠ {game.injuryAlert}
               </div>
@@ -835,18 +461,29 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             )}
           </div>
 
-          {/* Teams + Score */}
+          {/* Teams + Score — left/right halves are tappable for upcoming */}
           <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:8 }}>
             {/* Away */}
             <div
-              style={{ flexShrink:0, cursor: dispAwayOdds && onPickOdds ? "pointer" : "default" }}
-              onClick={dispAwayOdds && onPickOdds ? () => onPickOdds(dispAwayOdds) : undefined}
-              title={dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
+              style={{
+                flexShrink:0,
+                cursor: canBet ? "pointer" : (dispAwayOdds && onPickOdds ? "pointer" : "default"),
+                borderRadius:10, padding:"6px 8px", margin:"-6px -8px",
+                transition:"all 0.2s",
+                ...(myPick === "away" ? { background:"rgba(83,211,55,0.12)", boxShadow:`0 0 12px rgba(83,211,55,0.3), inset 0 0 0 1.5px ${T.green}` } : {}),
+              }}
+              onClick={() => {
+                if (canBet) { handleSidePick("away"); return; }
+                if (dispAwayOdds && onPickOdds) onPickOdds(dispAwayOdds);
+              }}
+              title={canBet ? `Pick ${game.awayName}` : dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
             >
               <TeamBadge abbr={game.away} size={44} />
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
-              {isUp && dispAwayOdds && (
-                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispAwayOdds}</div>
+              {/* User avatars on away side */}
+              <AvatarRow entries={awayBets} align="flex-start" />
+              {isUp && myPick === "away" && (
+                <div style={{ fontSize:8, color:T.green, fontWeight:800, letterSpacing:"0.08em", marginTop:4 }}>MY PICK</div>
               )}
             </div>
 
@@ -894,16 +531,27 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
             {/* Home */}
             <div
-              style={{ flexShrink:0, textAlign:"right", cursor: dispHomeOdds && onPickOdds ? "pointer" : "default" }}
-              onClick={dispHomeOdds && onPickOdds ? () => onPickOdds(dispHomeOdds) : undefined}
-              title={dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
+              style={{
+                flexShrink:0, textAlign:"right",
+                cursor: canBet ? "pointer" : (dispHomeOdds && onPickOdds ? "pointer" : "default"),
+                borderRadius:10, padding:"6px 8px", margin:"-6px -8px",
+                transition:"all 0.2s",
+                ...(myPick === "home" ? { background:"rgba(83,211,55,0.12)", boxShadow:`0 0 12px rgba(83,211,55,0.3), inset 0 0 0 1.5px ${T.green}` } : {}),
+              }}
+              onClick={() => {
+                if (canBet) { handleSidePick("home"); return; }
+                if (dispHomeOdds && onPickOdds) onPickOdds(dispHomeOdds);
+              }}
+              title={canBet ? `Pick ${game.homeName}` : dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
             >
               <div style={{ display:"flex", justifyContent:"flex-end" }}>
                 <TeamBadge abbr={game.home} size={44} />
               </div>
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.homeName}</div>
-              {isUp && dispHomeOdds && (
-                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispHomeOdds}</div>
+              {/* User avatars on home side */}
+              <AvatarRow entries={homeBets} align="flex-end" />
+              {isUp && myPick === "home" && (
+                <div style={{ fontSize:8, color:T.green, fontWeight:800, letterSpacing:"0.08em", marginTop:4 }}>MY PICK</div>
               )}
             </div>
           </div>
@@ -1368,7 +1016,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -1448,6 +1096,12 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
+              gameBets={betStore ? betStore.forGame(g.id, profile?.username) : null}
+              onBet={betStore && profile?.username ? (gid, side) => {
+                if (betStore.pick(gid, side, profile.username, profile.color)) {
+                  profile.deduct(10);
+                }
+              } : null}
             />
           );
         })}
@@ -2517,7 +2171,7 @@ export default function App() {
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
   const profile = useProfile();
-  const potStore = usePots();
+  const betStore = useBets();
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -2721,7 +2375,6 @@ export default function App() {
 
   const TABS = [
     { id:"games", label:"GAMES" },
-    { id:"action", label:"ACTION" },
     { id:"chat",  label:"CHAT"  },
   ];
 
@@ -2862,15 +2515,13 @@ export default function App() {
             favorites={favorites}
             onFavorite={favorites}
             picksMap={picksMap}
+            betStore={betStore}
+            profile={profile}
           />
         </>
       )}
 
-      {tab === "action" && (
-        <ActionTab games={games} profile={profile} potStore={potStore} />
-      )}
-
-      {tab !== "games" && tab !== "action" && (
+      {tab !== "games" && (
         <div style={{ maxWidth:960, margin:"0 auto", padding:"22px 16px" }}>
           {tab === "props" && (() => {
             // Merge game-analysis player props into the props list so they

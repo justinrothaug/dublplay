@@ -450,17 +450,25 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Readability overlay */}
         <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
-        {/* Selection glow — full angled half matching the team color split */}
+        {/* Selection outline — bright animated border on the picked side */}
         {isUp && myPick === "away" && (
           <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
             clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
-            background:"rgba(83,211,55,0.18)", boxShadow:"inset -2px 0 12px rgba(83,211,55,0.3)",
+            background:"rgba(83,211,55,0.12)",
+            borderLeft:"2px solid rgba(83,211,55,0.8)",
+            borderTop:"2px solid rgba(83,211,55,0.8)",
+            borderBottom:"2px solid rgba(83,211,55,0.8)",
+            boxShadow:"inset 0 0 18px rgba(83,211,55,0.25), 0 0 12px rgba(83,211,55,0.15)",
           }} />
         )}
         {isUp && myPick === "home" && (
           <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
             clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
-            background:"rgba(83,211,55,0.18)", boxShadow:"inset 2px 0 12px rgba(83,211,55,0.3)",
+            background:"rgba(83,211,55,0.12)",
+            borderRight:"2px solid rgba(83,211,55,0.8)",
+            borderTop:"2px solid rgba(83,211,55,0.8)",
+            borderBottom:"2px solid rgba(83,211,55,0.8)",
+            boxShadow:"inset 0 0 18px rgba(83,211,55,0.25), 0 0 12px rgba(83,211,55,0.15)",
           }} />
         )}
         {/* Settled result glow on final games — green for winners, red for losers */}
@@ -488,52 +496,41 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
         {/* Content */}
         <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px`, pointerEvents: isUp && onBet ? "none" : "auto" }}>
-          {/* Top row: pot/result badge (left) / injury alert / win-prob chips (right) */}
+          {/* Top row: avatars left / injury-or-live-prob / avatars right */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
-            {/* Badge — top left */}
-            {betSettled ? (() => {
-              const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
-              const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
-              const payout = iWon && winners.length > 0 && losers.length > 0
-                ? Math.round(potTotal / winners.length * 100) / 100
-                : iWon ? 10 : 0;
-              return (
-                <div style={{
-                  background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
-                  border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
-                  borderRadius:8, padding:"3px 9px",
-                  display:"inline-flex", alignItems:"center", gap:4, flexShrink:0,
-                }}>
-                  <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
-                    {iWon ? "W" : "L"}
-                  </span>
-                  {iWon && payout && (
-                    <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
-                  )}
-                  {!iWon && (
-                    <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
-                  )}
+            {/* Away bettors — top left */}
+            <div style={{ flexShrink:0, minWidth:40 }}>
+              <AvatarRow entries={awayBets} align="flex-start" />
+              {myPick === "away" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
+                  color: betSettled ? (iWon ? T.green : T.red) : T.green,
+                }}>{betSettled ? (iWon ? "WON" : "LOST") : "MY PICK"}</div>
+              )}
+            </div>
+
+            {/* Center top: injury alert or live win-prob chips */}
+            <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"flex-start" }}>
+              {game.injuryAlert && isUp ? (
+                <div style={{ background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, maxWidth:"80%", textAlign:"center" }}>
+                  ⚠ {game.injuryAlert}
                 </div>
-              );
-            })() : potTotal > 0 && !isFinal ? (
-              <div style={{
-                background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
-                display:"inline-flex", alignItems:"center", gap:4, flexShrink:0,
-              }}>
-                <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
-                <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
-              </div>
-            ) : game.injuryAlert && isUp ? (
-              <div style={{ flex:1, background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, marginRight:8 }}>
-                ⚠ {game.injuryAlert}
-              </div>
-            ) : <div style={{ flex:1 }} />}
-            {isLive && (game.awayWinProb != null && game.homeWinProb != null) && (
-              <div style={{ display:"flex", gap:5, flexShrink:0 }}>
-                <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
-                <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
-              </div>
-            )}
+              ) : isLive && (game.awayWinProb != null && game.homeWinProb != null) ? (
+                <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                  <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
+                  <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Home bettors — top right */}
+            <div style={{ flexShrink:0, minWidth:40, textAlign:"right" }}>
+              <AvatarRow entries={homeBets} align="flex-end" />
+              {myPick === "home" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
+                  color: betSettled ? (winningSide === "home" ? T.green : T.red) : T.green,
+                }}>{betSettled ? (winningSide === "home" ? "WON" : "LOST") : "MY PICK"}</div>
+              )}
+            </div>
           </div>
 
           {/* Teams + Score */}
@@ -542,16 +539,9 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             <div style={{ flexShrink:0 }}>
               <TeamBadge abbr={game.away} size={44} />
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
-              {/* User avatars on away side */}
-              <AvatarRow entries={awayBets} align="flex-start" />
-              {myPick === "away" && (
-                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
-                  color: betSettled ? (iWon ? T.green : T.red) : T.green,
-                }}>{betSettled ? (iWon ? "WON" : "LOST") : "MY PICK"}</div>
-              )}
             </div>
 
-            {/* Center */}
+            {/* Center — scores/prob + pot badge */}
             <div style={{ flex:1, textAlign:"center", paddingBottom:2 }}>
               {(isLive || isFinal) ? (
                 <>
@@ -591,6 +581,37 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
                   )}
                 </>
               )}
+              {/* Pot badge — centered below score/prob */}
+              {betSettled ? (() => {
+                const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
+                const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
+                const payout = iWon && winners.length > 0 && losers.length > 0
+                  ? Math.round(potTotal / winners.length * 100) / 100
+                  : iWon ? 10 : 0;
+                return (
+                  <div style={{ marginTop:6, display:"inline-flex", alignItems:"center", gap:4,
+                    background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
+                    border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
+                    borderRadius:8, padding:"3px 9px",
+                  }}>
+                    <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
+                      {iWon ? "W" : "L"}
+                    </span>
+                    {iWon && payout ? (
+                      <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
+                    ) : !iWon ? (
+                      <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
+                    ) : null}
+                  </div>
+                );
+              })() : potTotal > 0 ? (
+                <div style={{ marginTop:6, display:"inline-flex", alignItems:"center", gap:4,
+                  background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
+                }}>
+                  <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
+                  <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
+                </div>
+              ) : null}
             </div>
 
             {/* Home */}
@@ -599,13 +620,6 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
                 <TeamBadge abbr={game.home} size={44} />
               </div>
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.homeName}</div>
-              {/* User avatars on home side */}
-              <AvatarRow entries={homeBets} align="flex-end" />
-              {myPick === "home" && (
-                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
-                  color: betSettled ? (winningSide === "home" ? T.green : T.red) : T.green,
-                }}>{betSettled ? (winningSide === "home" ? "WON" : "LOST") : "MY PICK"}</div>
-              )}
             </div>
           </div>
         </div>

@@ -2071,6 +2071,52 @@ def get_bets(date_str: str):
     return {"date": date_str, "bets": bets}
 
 
+class RenameRequest(BaseModel):
+    old_username: str
+    new_username: str
+    new_color: str = "#555"
+    date: Optional[str] = None
+
+
+@app.post("/api/bets/rename")
+def rename_bettor(req: RenameRequest):
+    """Rename a user across all bets for a date (used when profile name changes)."""
+    date_str = req.date or datetime.now().strftime("%Y%m%d")
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=500, detail="Firestore unavailable")
+    try:
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return {"updated": 0}
+        games_map = doc.to_dict().get("games", {})
+        updates = {}
+        count = 0
+        for gid, gdata in games_map.items():
+            bets = gdata.get("bets")
+            if not bets:
+                continue
+            changed = False
+            for side in ("away", "home"):
+                entries = list(bets.get(side, []))
+                for i, e in enumerate(entries):
+                    if e.get("username") == req.old_username.strip():
+                        entries[i] = {"username": req.new_username.strip(), "color": req.new_color}
+                        changed = True
+                        count += 1
+                bets[side] = entries
+            if changed:
+                updates[f"games.{gid}.bets"] = bets
+        if updates:
+            updates["updated_at"] = fb_firestore.SERVER_TIMESTAMP
+            doc_ref.update(updates)
+        return {"updated": count}
+    except Exception as e:
+        logging.warning(f"Firestore rename failed: {e}")
+        raise HTTPException(status_code=500, detail="Rename failed")
+
+
 @app.post("/api/analyze")
 async def analyze_game(req: AnalyzeRequest):
     key = get_effective_key(req.api_key)

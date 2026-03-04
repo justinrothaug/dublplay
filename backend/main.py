@@ -151,7 +151,7 @@ def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
         for g in games:
             gid = re.sub(r'-\d{8}$', '', g["id"])
             for k, v in g.items():
-                if k in ("analysis", "pick"):
+                if k in ("analysis", "pick", "bets"):
                     continue  # these have dedicated writers — never overwrite
                 updates[f"games.{gid}.{k}"] = v
 
@@ -162,7 +162,7 @@ def _save_games_to_firestore(date_str: str, games: list[dict]) -> None:
             games_map: dict[str, dict] = {}
             for g in games:
                 gid = re.sub(r'-\d{8}$', '', g["id"])
-                games_map[gid] = {k: v for k, v in g.items() if k not in ("analysis", "pick")}
+                games_map[gid] = {k: v for k, v in g.items() if k not in ("analysis", "pick", "bets")}
             doc_ref.set({"games": games_map, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
     except Exception as e:
         logging.warning(f"Firestore games write failed: {e}")
@@ -1966,6 +1966,109 @@ def calculate_parlay(req: ParlayRequest):
         "implied_prob": round((1 / combined) * 100, 1),
         "payout_per_100": round((combined - 1) * 100, 2),
     }
+
+
+# ── BETS (social picks stored on game document) ──────────────────────────────
+
+class BetRequest(BaseModel):
+    game_id: str            # e.g. "atl-bos"
+    side: str               # "away" or "home"
+    username: str
+    color: str = "#555"
+    date: Optional[str] = None  # YYYYMMDD, defaults to today
+
+
+def _save_bet_to_firestore(date_str: str, game_id: str, side: str, username: str, color: str) -> dict | None:
+    """Add or toggle a user's bet on a game. Returns the updated bets dict."""
+    db = _init_firestore()
+    if not db:
+        return None
+    try:
+        doc_ref = db.collection(_FS_COL).document(date_str)
+        doc = doc_ref.get()
+        bets = {}
+        if doc.exists:
+            game_data = doc.to_dict().get("games", {}).get(game_id, {})
+            bets = game_data.get("bets", {})
+
+        away = list(bets.get("away", []))
+        home = list(bets.get("home", []))
+        other_side = "home" if side == "away" else "away"
+        target = away if side == "away" else home
+        other = home if side == "away" else away
+
+        already_on_target = any(e.get("username") == username for e in target)
+        already_on_other = any(e.get("username") == username for e in other)
+
+        action = "placed"
+        if already_on_target:
+            # Unselect
+            target[:] = [e for e in target if e.get("username") != username]
+            action = "removed"
+        elif already_on_other:
+            # Switch sides
+            other[:] = [e for e in other if e.get("username") != username]
+            target.append({"username": username, "color": color})
+            action = "switched"
+        else:
+            # Fresh pick
+            target.append({"username": username, "color": color})
+
+        updated_bets = {"away": away, "home": home}
+        try:
+            doc_ref.update({
+                f"games.{game_id}.bets": updated_bets,
+                "updated_at": fb_firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            doc_ref.set({"games": {game_id: {"bets": updated_bets}}, "updated_at": fb_firestore.SERVER_TIMESTAMP}, merge=True)
+
+        return {"bets": updated_bets, "action": action}
+    except Exception as e:
+        logging.warning(f"Firestore bet write failed: {e}")
+        return None
+
+
+def _load_bets_from_firestore(date_str: str) -> dict:
+    """Load all bets for a date. Returns { game_id: { away: [...], home: [...] } }"""
+    db = _init_firestore()
+    if not db:
+        return {}
+    try:
+        doc = db.collection(_FS_COL).document(date_str).get()
+        if not doc.exists:
+            return {}
+        games_map = doc.to_dict().get("games", {})
+        result = {}
+        for gid, gdata in games_map.items():
+            bets = gdata.get("bets")
+            if bets:
+                result[gid] = bets
+        return result
+    except Exception as e:
+        logging.warning(f"Firestore bets load failed: {e}")
+        return {}
+
+
+@app.post("/api/bet")
+def place_bet(req: BetRequest):
+    date_str = req.date or datetime.now().strftime("%Y%m%d")
+    game_id = re.sub(r'-\d{8}$', '', req.game_id)
+    if req.side not in ("away", "home"):
+        raise HTTPException(status_code=400, detail="side must be 'away' or 'home'")
+    if not req.username.strip():
+        raise HTTPException(status_code=400, detail="username required")
+
+    result = _save_bet_to_firestore(date_str, game_id, req.side, req.username.strip(), req.color)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Failed to save bet")
+    return result
+
+
+@app.get("/api/bets/{date_str}")
+def get_bets(date_str: str):
+    bets = _load_bets_from_firestore(date_str)
+    return {"date": date_str, "bets": bets}
 
 
 @app.post("/api/analyze")

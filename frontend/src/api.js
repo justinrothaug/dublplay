@@ -26,4 +26,7 @@ export const api = {
   chat: (messages, api_key) =>
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),
+  placeBet: (game_id, side, username, color, date = null) =>
+    req("/api/bet", { method:"POST", body: JSON.stringify({ game_id, side, username, color, date }) }),
+  getBets:  (date) => req(`/api/bets/${date}`),
 };

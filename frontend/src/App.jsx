@@ -132,6 +132,139 @@ function parseGeminiText(text) {
   return { best_bet: text.trim(), ou: null, props: null };
 }
 
+// ── POT ACTION: localStorage betting system ──────────────────────────────────
+const AVATAR_COLORS = ["#f84646","#53d337","#4a90d9","#f5a623","#9b59b6",
+                       "#1abc9c","#e74c3c","#3498db","#e67e22","#2ecc71"];
+function avatarColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+function useProfile() {
+  const [username, setUsername] = useState(() => {
+    try { return localStorage.getItem("dublplay_username") || ""; } catch { return ""; }
+  });
+  const [balance, setBalance] = useState(() => {
+    try { return parseFloat(localStorage.getItem("dublplay_balance")) || 100; } catch { return 100; }
+  });
+  const save = (name, bal) => {
+    setUsername(name);
+    setBalance(bal);
+    try {
+      localStorage.setItem("dublplay_username", name);
+      localStorage.setItem("dublplay_balance", String(bal));
+    } catch {}
+  };
+  return {
+    username, balance,
+    setName: name => save(name, balance),
+    deduct: amt => { const nb = balance - amt; save(username, nb); return nb; },
+    credit: amt => { const nb = balance + amt; save(username, nb); return nb; },
+    color: username ? avatarColor(username) : "#555",
+  };
+}
+
+// ── Profile Dropdown ─────────────────────────────────────────────────────────
+function ProfileDropdown({ profile, onClose }) {
+  const [draft, setDraft] = useState(profile.username);
+  return (
+    <div style={{
+      position:"fixed", inset:0, zIndex:9999,
+      background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        position:"absolute", top:52, left:12,
+        background:T.card, border:`1px solid ${T.borderBr}`,
+        borderRadius:14, padding:20, width:240,
+        boxShadow:"0 12px 40px rgba(0,0,0,0.5)",
+      }}>
+        <div style={{ fontSize:10, color:T.text2, fontWeight:700, letterSpacing:"0.1em", marginBottom:12 }}>PROFILE</div>
+
+        {/* Avatar */}
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+          <div style={{
+            width:40, height:40, borderRadius:"50%",
+            background: profile.username ? avatarColor(profile.username) : T.text3,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:18, fontWeight:800, color:"#fff",
+          }}>
+            {profile.username ? profile.username[0].toUpperCase() : "?"}
+          </div>
+          <div>
+            <div style={{ color:T.text, fontSize:14, fontWeight:700 }}>{profile.username || "Not set"}</div>
+            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${profile.balance.toFixed(2)}</div>
+          </div>
+        </div>
+
+        {/* Username input */}
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && draft.trim()) { profile.setName(draft.trim()); onClose(); } }}
+          placeholder="Enter username..."
+          maxLength={20}
+          style={{
+            width:"100%", boxSizing:"border-box",
+            background:"rgba(0,0,0,0.4)", border:`1px solid ${T.borderBr}`,
+            borderRadius:8, color:T.text, padding:"10px 12px",
+            fontSize:13, fontFamily:"inherit",
+          }}
+        />
+        <button
+          onClick={() => { if (draft.trim()) { profile.setName(draft.trim()); onClose(); } }}
+          style={{
+            width:"100%", marginTop:10, padding:"10px 0",
+            background:T.green, color:"#000", border:"none",
+            borderRadius:8, fontSize:12, fontWeight:800,
+            letterSpacing:"0.06em", cursor:"pointer",
+          }}
+        >SAVE</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Bets (Firestore-backed) ──────────────────────────────────────────────────
+function useBets(dateStr) {
+  const [bets, setBets] = useState({});  // { game_id: { away: [...], home: [...] } }
+
+  // Load bets from Firestore whenever date changes
+  useEffect(() => {
+    if (!dateStr) return;
+    api.getBets(dateStr).then(d => setBets(d.bets || {})).catch(() => {});
+  }, [dateStr]);
+
+  return {
+    bets,
+    reload: () => {
+      if (dateStr) api.getBets(dateStr).then(d => setBets(d.bets || {})).catch(() => {});
+    },
+    forGame: (gid, username) => {
+      const stripped = gid.replace(/-\d{8}$/, "");
+      const g = bets[stripped] || { away: [], home: [] };
+      const myPick = username ? (
+        (g.away || []).some(e => e.username === username) ? "away" :
+        (g.home || []).some(e => e.username === username) ? "home" : null
+      ) : null;
+      return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
+    },
+    // Call backend, optimistically update local state, returns action string
+    pick: async (gid, side, username, color, date) => {
+      try {
+        const res = await api.placeBet(gid, side, username, color, date);
+        // Update local state with the response
+        const stripped = gid.replace(/-\d{8}$/, "");
+        setBets(prev => ({ ...prev, [stripped]: res.bets }));
+        return res.action; // "placed" | "switched" | "removed"
+      } catch (e) {
+        console.error("Bet failed:", e);
+        return null;
+      }
+    },
+  };
+}
+
 // ── FAVORITE PICKS (localStorage) ────────────────────────────────────────────
 function useFavoritePicks() {
   const [picks, setPicks] = useState(() => {
@@ -228,7 +361,7 @@ function lineMovement(current, opening, isSpread) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, gameBets, onBet, username }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -248,6 +381,41 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
   const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
+
+  // Pot data for this game
+  const myPick = gameBets?.myPick;       // "away" | "home" | null
+  const awayBets = gameBets?.away || [];
+  const homeBets = gameBets?.home || [];
+  const potTotal = gameBets?.total || 0;
+  const canBet = isUp && onBet;
+
+  const handleSidePick = (side) => {
+    if (!canBet) return;
+    onBet(game.id, side);
+  };
+
+  // Derive win/loss from final score + bet data (no settlement flag needed)
+  const winningSide = isFinal && (game.awayScore != null && game.homeScore != null)
+    ? (game.awayScore > game.homeScore ? "away" : game.homeScore > game.awayScore ? "home" : null)
+    : null;
+  const hasBet = myPick && potTotal > 0;
+  const betSettled = isFinal && hasBet && winningSide;
+  const iWon = betSettled && winningSide === myPick;
+
+  // Mini avatar row helper
+  const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
+    <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
+      {entries.map((e, i) => (
+        <div key={i} title={e.username} style={{
+          width:22, height:22, borderRadius:"50%",
+          background: e.color || avatarColor(e.username),
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontSize:9, fontWeight:800, color:"#fff",
+          border:"1.5px solid rgba(255,255,255,0.3)",
+        }}>{e.username[0].toUpperCase()}</div>
+      ))}
+    </div>
+  );
 
   return (
     <div style={{
@@ -282,11 +450,80 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Readability overlay */}
         <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
+        {/* Selection glow — full angled half matching the team color split */}
+        {isUp && myPick === "away" && (
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
+            clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+            background:"rgba(83,211,55,0.18)", boxShadow:"inset -2px 0 12px rgba(83,211,55,0.3)",
+          }} />
+        )}
+        {isUp && myPick === "home" && (
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
+            clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+            background:"rgba(83,211,55,0.18)", boxShadow:"inset 2px 0 12px rgba(83,211,55,0.3)",
+          }} />
+        )}
+        {/* Settled result glow on final games — green for winners, red for losers */}
+        {betSettled && (() => {
+          const clr = iWon ? "rgba(83,211,55,0.15)" : "rgba(248,70,70,0.12)";
+          const clip = myPick === "away"
+            ? "polygon(0 0, 55% 0, 40% 100%, 0 100%)"
+            : "polygon(55% 0, 100% 0, 100% 100%, 40% 100%)";
+          return <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none", clipPath:clip, background:clr }} />;
+        })()}
+
+        {/* Clickable side overlays for betting (upcoming only) */}
+        {isUp && onBet && (
+          <>
+            <div onClick={() => handleSidePick("away")} style={{
+              position:"absolute", inset:0, zIndex:4, cursor:"pointer",
+              clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+            }} />
+            <div onClick={() => handleSidePick("home")} style={{
+              position:"absolute", inset:0, zIndex:4, cursor:"pointer",
+              clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+            }} />
+          </>
+        )}
+
         {/* Content */}
-        <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px` }}>
-          {/* Top row: injury alert / win-prob chips */}
+        <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px`, pointerEvents: isUp && onBet ? "none" : "auto" }}>
+          {/* Top row: pot/result badge (left) / injury alert / win-prob chips (right) */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
-            {game.injuryAlert && isUp ? (
+            {/* Badge — top left */}
+            {betSettled ? (() => {
+              const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
+              const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
+              const payout = iWon && winners.length > 0 && losers.length > 0
+                ? Math.round(potTotal / winners.length * 100) / 100
+                : iWon ? 10 : 0;
+              return (
+                <div style={{
+                  background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
+                  border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
+                  borderRadius:8, padding:"3px 9px",
+                  display:"inline-flex", alignItems:"center", gap:4, flexShrink:0,
+                }}>
+                  <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
+                    {iWon ? "W" : "L"}
+                  </span>
+                  {iWon && payout && (
+                    <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
+                  )}
+                  {!iWon && (
+                    <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
+                  )}
+                </div>
+              );
+            })() : potTotal > 0 && !isFinal ? (
+              <div style={{
+                background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
+                display:"inline-flex", alignItems:"center", gap:4, flexShrink:0,
+              }}>
+                <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
+                <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
+              </div>
+            ) : game.injuryAlert && isUp ? (
               <div style={{ flex:1, background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, marginRight:8 }}>
                 ⚠ {game.injuryAlert}
               </div>
@@ -302,15 +539,15 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           {/* Teams + Score */}
           <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:8 }}>
             {/* Away */}
-            <div
-              style={{ flexShrink:0, cursor: dispAwayOdds && onPickOdds ? "pointer" : "default" }}
-              onClick={dispAwayOdds && onPickOdds ? () => onPickOdds(dispAwayOdds) : undefined}
-              title={dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
-            >
+            <div style={{ flexShrink:0 }}>
               <TeamBadge abbr={game.away} size={44} />
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
-              {isUp && dispAwayOdds && (
-                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispAwayOdds}</div>
+              {/* User avatars on away side */}
+              <AvatarRow entries={awayBets} align="flex-start" />
+              {myPick === "away" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
+                  color: betSettled ? (iWon ? T.green : T.red) : T.green,
+                }}>{betSettled ? (iWon ? "WON" : "LOST") : "MY PICK"}</div>
               )}
             </div>
 
@@ -357,17 +594,17 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             </div>
 
             {/* Home */}
-            <div
-              style={{ flexShrink:0, textAlign:"right", cursor: dispHomeOdds && onPickOdds ? "pointer" : "default" }}
-              onClick={dispHomeOdds && onPickOdds ? () => onPickOdds(dispHomeOdds) : undefined}
-              title={dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
-            >
+            <div style={{ flexShrink:0, textAlign:"right" }}>
               <div style={{ display:"flex", justifyContent:"flex-end" }}>
                 <TeamBadge abbr={game.home} size={44} />
               </div>
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.homeName}</div>
-              {isUp && dispHomeOdds && (
-                <div style={{ color:"#fff", fontSize:13, fontWeight:700, marginTop:2 }}>{dispHomeOdds}</div>
+              {/* User avatars on home side */}
+              <AvatarRow entries={homeBets} align="flex-end" />
+              {myPick === "home" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
+                  color: betSettled ? (winningSide === "home" ? T.green : T.red) : T.green,
+                }}>{betSettled ? (winningSide === "home" ? "WON" : "LOST") : "MY PICK"}</div>
               )}
             </div>
           </div>
@@ -832,7 +1069,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile, dateStr }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -912,6 +1149,13 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
+              gameBets={betStore ? betStore.forGame(g.id, profile?.username) : null}
+              onBet={betStore && profile?.username ? async (gid, side) => {
+                const result = await betStore.pick(gid, side, profile.username, profile.color, dateStr);
+                if (result === "placed") profile.deduct(10);
+                else if (result === "removed") profile.credit(10);
+              } : null}
+              username={profile?.username}
             />
           );
         })}
@@ -1979,6 +2223,8 @@ export default function App() {
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
   const [picksData, setPicksData] = useState(null); // picks for the selected date
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
+  const [showProfile, setShowProfile] = useState(false);
+  const profile = useProfile();
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -1995,6 +2241,7 @@ export default function App() {
   // Stabilized: computed once on mount so midnight rollovers don't silently
   // swap the game list mid-session. Refresh the page to get the next day.
   const todayStr = useMemo(() => fmtLocal(new Date()), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const betStore = useBets(selectedDate || todayStr);
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -2032,7 +2279,7 @@ export default function App() {
       .catch(console.error);
   }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 3) Auto-poll scores when live games are active (every 30s)
+  // 3) Auto-poll scores + bets when live games are active (every 30s)
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
     if (!hasLive || apiKey === null) return;
@@ -2040,9 +2287,11 @@ export default function App() {
       api.getGames(selectedDate || todayStr)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
+      betStore.reload();
     }, 30000);
     return () => clearInterval(interval);
   }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // 4) Auto-analyze non-final games once data loads
   //    Skip games that already have cached analysis from Firestore, or were already
@@ -2181,9 +2430,8 @@ export default function App() {
   };
 
   const TABS = [
-    { id:"games", label:"🏀 GAMES" },
-    // { id:"props", label:"🎯 PROPS" },
-    { id:"chat",  label:"💬 CHAT"  },
+    { id:"games", label:"GAMES" },
+    { id:"chat",  label:"CHAT"  },
   ];
 
   // Build 7 past days + TODAY + TMW for the calendar strip
@@ -2213,10 +2461,25 @@ export default function App() {
       {/* ── Header ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", height:52, paddingLeft:20, overflow:"hidden" }}>
-          {/* Logo — fixed, no shrink */}
+          {/* Logo — ball is clickable for profile dropdown */}
           <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10, marginRight:12 }}>
-            <span style={{ fontSize:20 }}>🏀</span>
+            <span
+              onClick={() => setShowProfile(v => !v)}
+              style={{ fontSize:20, cursor:"pointer", position:"relative" }}
+              title="Profile"
+            >
+              {profile.username ? (
+                <span style={{
+                  display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  width:28, height:28, borderRadius:"50%",
+                  background: profile.color, fontSize:13, fontWeight:800, color:"#fff",
+                }}>{profile.username[0].toUpperCase()}</span>
+              ) : "🏀"}
+            </span>
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
+            {profile.username && (
+              <span style={{ fontSize:11, color:T.green, fontWeight:700 }}>${profile.balance.toFixed(0)}</span>
+            )}
           </div>
           {/* Date strip — scrollable, fills remaining width */}
           <div className="date-strip" style={{
@@ -2308,6 +2571,9 @@ export default function App() {
             favorites={favorites}
             onFavorite={favorites}
             picksMap={picksMap}
+            betStore={betStore}
+            profile={profile}
+            dateStr={selectedDate || todayStr}
           />
         </>
       )}
@@ -2335,6 +2601,7 @@ export default function App() {
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
+      {showProfile && <ProfileDropdown profile={profile} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

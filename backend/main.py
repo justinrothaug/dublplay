@@ -29,6 +29,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     import firebase_admin
     from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
+    from firebase_admin import auth as fb_auth
     _FIREBASE_AVAILABLE = True
 except ImportError:
     _FIREBASE_AVAILABLE = False
@@ -1670,6 +1671,351 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
     _score_picks_for_date(date_str, merged)
 
     return merged
+
+
+# ── POT ACTION: AUTH + BETTING ─────────────────────────────────────────────────
+# Firestore collections: "users" (profiles + balance), "pots" (game pots)
+
+import uuid as _uuid
+import hashlib as _hashlib
+
+DEFAULT_BALANCE = 100.0
+AVATAR_COLORS = ["#f84646", "#53d337", "#4a90d9", "#f5a623", "#9b59b6",
+                 "#1abc9c", "#e74c3c", "#3498db", "#e67e22", "#2ecc71"]
+
+
+def _avatar_color_for(uid: str) -> str:
+    """Deterministic avatar color from uid."""
+    idx = int(_hashlib.md5(uid.encode()).hexdigest(), 16) % len(AVATAR_COLORS)
+    return AVATAR_COLORS[idx]
+
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
+def _verify_firebase_token(token: str) -> dict:
+    """Verify a Firebase ID token and return the decoded claims."""
+    if not _FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    _init_firestore()
+    try:
+        decoded = fb_auth.verify_id_token(token)
+        return decoded
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid auth token: {e}")
+
+
+def _get_or_create_user(uid: str, email: str = "", display_name: str = "") -> dict:
+    """Get existing user profile or create a new one."""
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+    doc_ref = db.collection("users").document(uid)
+    doc = doc_ref.get()
+    if doc.exists:
+        return doc.to_dict()
+    # Create new profile
+    profile = {
+        "uid": uid,
+        "email": email,
+        "display_name": display_name or email.split("@")[0],
+        "balance": DEFAULT_BALANCE,
+        "avatar_color": _avatar_color_for(uid),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    doc_ref.set(profile)
+    return profile
+
+
+def _update_balance(uid: str, delta: float):
+    """Atomically update a user's balance by delta (negative = deduct)."""
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+    doc_ref = db.collection("users").document(uid)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="User not found")
+    current = doc.to_dict().get("balance", 0)
+    new_balance = current + delta
+    if new_balance < 0:
+        raise HTTPException(status_code=400, detail=f"Insufficient balance (have ${current:.2f}, need ${abs(delta):.2f})")
+    doc_ref.update({"balance": new_balance})
+    return new_balance
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+class ProfileRequest(BaseModel):
+    token: str  # Firebase ID token
+
+
+class UpdateProfileRequest(BaseModel):
+    token: str
+    display_name: str = ""
+
+
+@app.post("/api/auth/profile")
+async def get_or_create_profile(req: ProfileRequest):
+    """Verify token and return/create user profile."""
+    claims = _verify_firebase_token(req.token)
+    uid = claims["uid"]
+    email = claims.get("email", "")
+    name = claims.get("name", "")
+    profile = _get_or_create_user(uid, email, name)
+    return {"profile": profile}
+
+
+@app.get("/api/auth/profile/{uid}")
+async def get_profile(uid: str):
+    """Get a user's public profile (no auth required — for displaying avatars)."""
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+    doc = db.collection("users").document(uid).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="User not found")
+    data = doc.to_dict()
+    # Return only public fields
+    return {
+        "uid": data["uid"],
+        "display_name": data.get("display_name", ""),
+        "avatar_color": data.get("avatar_color", "#555"),
+    }
+
+
+@app.get("/api/auth/leaderboard")
+async def get_leaderboard():
+    """Return all users sorted by balance (richest first)."""
+    db = _init_firestore()
+    if not db:
+        return {"users": []}
+    docs = db.collection("users").order_by("balance", direction="DESCENDING").limit(50).stream()
+    users = []
+    for doc in docs:
+        d = doc.to_dict()
+        users.append({
+            "uid": d["uid"],
+            "display_name": d.get("display_name", ""),
+            "avatar_color": d.get("avatar_color", "#555"),
+            "balance": d.get("balance", 0),
+        })
+    return {"users": users}
+
+
+# ── Pot Action endpoints ──────────────────────────────────────────────────────
+
+class CreatePotRequest(BaseModel):
+    token: str
+    game_id: str
+    game_label: str       # "MIA @ BOS"
+    pick_type: str        # "spread" | "moneyline" | "total"
+    line: str             # "MIA -3.5" | "O 215.5"
+    side: str             # "home" | "away" | "over" | "under"
+    amount: float
+
+
+class JoinPotRequest(BaseModel):
+    token: str
+    side: str             # "home" | "away" | "over" | "under"
+    amount: float
+
+
+class SettlePotRequest(BaseModel):
+    winning_side: str     # "home" | "away" | "over" | "under" | "push"
+
+
+@app.post("/api/pots")
+async def create_pot(req: CreatePotRequest):
+    """Create a new pot for a game and place the first pick."""
+    claims = _verify_firebase_token(req.token)
+    uid = claims["uid"]
+
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    # Deduct from balance
+    new_balance = _update_balance(uid, -req.amount)
+
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+
+    # Get user profile for the entry
+    user_doc = db.collection("users").document(uid).get()
+    user_data = user_doc.to_dict() if user_doc.exists else {}
+
+    pot_id = str(_uuid.uuid4())[:12]
+    entry = {
+        "uid": uid,
+        "display_name": user_data.get("display_name", ""),
+        "avatar_color": user_data.get("avatar_color", "#555"),
+        "amount": req.amount,
+    }
+
+    pot = {
+        "pot_id": pot_id,
+        "game_id": req.game_id,
+        "game_label": req.game_label,
+        "pick_type": req.pick_type,
+        "line": req.line,
+        "status": "open",
+        "sides": {
+            req.side: [entry],
+        },
+        "total_pool": req.amount,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "settled_at": None,
+        "winning_side": None,
+    }
+    db.collection("pots").document(pot_id).set(pot)
+
+    return {"pot": pot, "new_balance": new_balance}
+
+
+@app.post("/api/pots/{pot_id}/join")
+async def join_pot(pot_id: str, req: JoinPotRequest):
+    """Join an existing pot on a specific side."""
+    claims = _verify_firebase_token(req.token)
+    uid = claims["uid"]
+
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+
+    doc_ref = db.collection("pots").document(pot_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Pot not found")
+
+    pot = doc.to_dict()
+    if pot["status"] != "open":
+        raise HTTPException(status_code=400, detail="Pot is no longer open")
+
+    # Check if user already in this pot on any side
+    for side_name, entries in pot.get("sides", {}).items():
+        for entry in entries:
+            if entry["uid"] == uid:
+                raise HTTPException(status_code=400, detail="You already have a pick in this pot")
+
+    # Deduct from balance
+    new_balance = _update_balance(uid, -req.amount)
+
+    # Get user profile
+    user_doc = db.collection("users").document(uid).get()
+    user_data = user_doc.to_dict() if user_doc.exists else {}
+
+    entry = {
+        "uid": uid,
+        "display_name": user_data.get("display_name", ""),
+        "avatar_color": user_data.get("avatar_color", "#555"),
+        "amount": req.amount,
+    }
+
+    # Add entry to the side
+    sides = pot.get("sides", {})
+    if req.side not in sides:
+        sides[req.side] = []
+    sides[req.side].append(entry)
+
+    new_total = pot.get("total_pool", 0) + req.amount
+    doc_ref.update({
+        "sides": sides,
+        "total_pool": new_total,
+    })
+
+    pot["sides"] = sides
+    pot["total_pool"] = new_total
+    return {"pot": pot, "new_balance": new_balance}
+
+
+@app.get("/api/pots")
+async def list_pots(game_id: Optional[str] = None, status: Optional[str] = None):
+    """List pots, optionally filtered by game_id and/or status."""
+    db = _init_firestore()
+    if not db:
+        return {"pots": []}
+
+    query = db.collection("pots")
+    if game_id:
+        query = query.where("game_id", "==", game_id)
+    if status:
+        query = query.where("status", "==", status)
+
+    docs = query.order_by("created_at", direction="DESCENDING").limit(100).stream()
+    pots = [doc.to_dict() for doc in docs]
+    return {"pots": pots}
+
+
+@app.post("/api/pots/{pot_id}/settle")
+async def settle_pot(pot_id: str, req: SettlePotRequest):
+    """Settle a pot: pay winners proportionally from the total pool.
+
+    If winning_side is "push", everyone gets their money back.
+    If everyone picked the same side and they lose, the pot becomes dead money
+    (returned to the house / rolled into a jackpot — for now, just lost).
+    If everyone picked the same side and they win, everyone gets their money back.
+    """
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+
+    doc_ref = db.collection("pots").document(pot_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Pot not found")
+
+    pot = doc.to_dict()
+    if pot["status"] != "open":
+        raise HTTPException(status_code=400, detail="Pot already settled")
+
+    sides = pot.get("sides", {})
+    total_pool = pot.get("total_pool", 0)
+    payouts = {}  # uid -> payout amount
+
+    if req.winning_side == "push":
+        # Everyone gets their money back
+        for side_name, entries in sides.items():
+            for entry in entries:
+                payouts[entry["uid"]] = payouts.get(entry["uid"], 0) + entry["amount"]
+    else:
+        # Determine winners
+        winning_entries = sides.get(req.winning_side, [])
+        if not winning_entries:
+            # All losers — dead money, nobody gets paid
+            pass
+        else:
+            losing_total = sum(
+                entry["amount"]
+                for side_name, entries in sides.items()
+                if side_name != req.winning_side
+                for entry in entries
+            )
+            if losing_total == 0:
+                # Everyone on the same winning side — return all bets
+                for entry in winning_entries:
+                    payouts[entry["uid"]] = entry["amount"]
+            else:
+                # Winners split the total pool proportionally
+                winning_total = sum(e["amount"] for e in winning_entries)
+                for entry in winning_entries:
+                    share = entry["amount"] / winning_total
+                    payouts[entry["uid"]] = round(share * total_pool, 2)
+
+    # Credit winnings to user balances
+    for uid, amount in payouts.items():
+        _update_balance(uid, amount)
+
+    doc_ref.update({
+        "status": "settled",
+        "winning_side": req.winning_side,
+        "settled_at": datetime.now(timezone.utc).isoformat(),
+        "payouts": payouts,
+    })
+
+    return {"pot_id": pot_id, "winning_side": req.winning_side, "payouts": payouts}
 
 
 @app.get("/api/games")

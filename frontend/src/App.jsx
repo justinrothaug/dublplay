@@ -254,9 +254,9 @@ function useBets(dateStr) {
       ) : null;
       return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
     },
-    pick: async (gid, side, uid, username, color, date) => {
+    pick: async (gid, side, uid, username, date) => {
       try {
-        const res = await api.placeBet(gid, side, uid, username, color, date);
+        const res = await api.placeBet(gid, side, uid, username, date);
         // Update local state with the response
         const stripped = gid.replace(/-\d{8}$/, "");
         setBets(prev => ({ ...prev, [stripped]: res.bets }));
@@ -412,7 +412,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
       {entries.map((e, i) => (
         <div key={i} title={e.username} style={{
           width:22, height:22, borderRadius:"50%",
-          background: e.color || avatarColor(e.username),
+          background: avatarColor(e.username),
           display:"flex", alignItems:"center", justifyContent:"center",
           fontSize:9, fontWeight:800, color:"#fff",
           border:"1.5px solid rgba(255,255,255,0.3)",
@@ -1168,7 +1168,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side) => {
-                const result = await betStore.pick(gid, side, profile.uid, profile.username, profile.color, dateStr);
+                const result = await betStore.pick(gid, side, profile.uid, profile.username, dateStr);
                 if (result === "placed") profile.deduct(10);
                 else if (result === "removed") profile.credit(10);
               } : null}

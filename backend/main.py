@@ -1975,11 +1975,10 @@ class BetRequest(BaseModel):
     side: str               # "away" or "home"
     uid: str                # stable user ID from localStorage
     username: str = ""      # display name (cosmetic, can change)
-    color: str = "#555"
     date: Optional[str] = None  # YYYYMMDD, defaults to today
 
 
-def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, username: str, color: str) -> dict | None:
+def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, username: str) -> dict | None:
     """Add or toggle a user's bet on a game. Keyed by uid (stable). Returns updated bets."""
     db = _init_firestore()
     if not db:
@@ -1996,7 +1995,7 @@ def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, use
         home = list(bets.get("home", []))
         target = away if side == "away" else home
         other = home if side == "away" else away
-        entry = {"uid": uid, "username": username, "color": color}
+        entry = {"uid": uid, "username": username}
 
         already_on_target = any(e.get("uid") == uid for e in target)
         already_on_other = any(e.get("uid") == uid for e in other)
@@ -2057,7 +2056,7 @@ def place_bet(req: BetRequest):
     if not req.uid.strip():
         raise HTTPException(status_code=400, detail="uid required")
 
-    result = _save_bet_to_firestore(date_str, game_id, req.side, req.uid.strip(), req.username.strip(), req.color)
+    result = _save_bet_to_firestore(date_str, game_id, req.side, req.uid.strip(), req.username.strip())
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to save bet")
     return result

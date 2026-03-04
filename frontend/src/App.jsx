@@ -239,13 +239,33 @@ function useBets() {
       const myPick = username ? (g.away.some(e => e.username === username) ? "away" : g.home.some(e => e.username === username) ? "home" : null) : null;
       return { ...g, myPick, total: (g.away.length + g.home.length) * 10 };
     },
+    // Returns: "placed" | "switched" | "removed"
     pick: (gid, side, username, color) => {
       const prev = bets[gid] || { away: [], home: [] };
-      // Already picked this game? ignore
-      if (prev.away.some(e => e.username === username) || prev.home.some(e => e.username === username)) return false;
+      const otherSide = side === "away" ? "home" : "away";
+      const alreadyOnThis = prev[side].some(e => e.username === username);
+      const alreadyOnOther = prev[otherSide].some(e => e.username === username);
+
+      if (alreadyOnThis) {
+        // Unselect — remove from this side
+        const next = { ...bets, [gid]: { ...prev, [side]: prev[side].filter(e => e.username !== username) } };
+        persist(next);
+        return "removed";
+      }
+      if (alreadyOnOther) {
+        // Switch sides — remove from other, add to this
+        const next = { ...bets, [gid]: {
+          ...prev,
+          [otherSide]: prev[otherSide].filter(e => e.username !== username),
+          [side]: [...prev[side], { username, color }],
+        }};
+        persist(next);
+        return "switched";
+      }
+      // Fresh pick
       const next = { ...bets, [gid]: { ...prev, [side]: [...prev[side], { username, color }] } };
       persist(next);
-      return true;
+      return "placed";
     },
   };
 }
@@ -372,7 +392,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   const awayBets = gameBets?.away || [];
   const homeBets = gameBets?.home || [];
   const potTotal = gameBets?.total || 0;
-  const canBet = isUp && onBet && !myPick;
+  const canBet = isUp && onBet;
 
   const handleSidePick = (side) => {
     if (!canBet) return;
@@ -427,16 +447,36 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Readability overlay */}
         <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.22)", zIndex:2 }} />
 
-        {/* Selection glow overlays (only for upcoming) */}
+        {/* Selection glow — full angled half matching the team color split */}
         {isUp && myPick === "away" && (
-          <div style={{ position:"absolute", inset:0, background:"linear-gradient(90deg, rgba(83,211,55,0.18) 0%, transparent 55%)", zIndex:2, pointerEvents:"none" }} />
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
+            clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+            background:"rgba(83,211,55,0.18)", boxShadow:"inset -2px 0 12px rgba(83,211,55,0.3)",
+          }} />
         )}
         {isUp && myPick === "home" && (
-          <div style={{ position:"absolute", inset:0, background:"linear-gradient(90deg, transparent 45%, rgba(83,211,55,0.18) 100%)", zIndex:2, pointerEvents:"none" }} />
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
+            clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+            background:"rgba(83,211,55,0.18)", boxShadow:"inset 2px 0 12px rgba(83,211,55,0.3)",
+          }} />
+        )}
+
+        {/* Clickable side overlays for betting (upcoming only) */}
+        {isUp && onBet && (
+          <>
+            <div onClick={() => handleSidePick("away")} style={{
+              position:"absolute", inset:0, zIndex:4, cursor:"pointer",
+              clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+            }} />
+            <div onClick={() => handleSidePick("home")} style={{
+              position:"absolute", inset:0, zIndex:4, cursor:"pointer",
+              clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+            }} />
+          </>
         )}
 
         {/* Content */}
-        <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px` }}>
+        <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px`, pointerEvents: isUp && onBet ? "none" : "auto" }}>
           {/* Top row: pot total (left) / injury alert / win-prob chips (right) */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
             {/* Pot total — top left */}
@@ -461,23 +501,10 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             )}
           </div>
 
-          {/* Teams + Score — left/right halves are tappable for upcoming */}
+          {/* Teams + Score */}
           <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:8 }}>
             {/* Away */}
-            <div
-              style={{
-                flexShrink:0,
-                cursor: canBet ? "pointer" : (dispAwayOdds && onPickOdds ? "pointer" : "default"),
-                borderRadius:10, padding:"6px 8px", margin:"-6px -8px",
-                transition:"all 0.2s",
-                ...(myPick === "away" ? { background:"rgba(83,211,55,0.12)", boxShadow:`0 0 12px rgba(83,211,55,0.3), inset 0 0 0 1.5px ${T.green}` } : {}),
-              }}
-              onClick={() => {
-                if (canBet) { handleSidePick("away"); return; }
-                if (dispAwayOdds && onPickOdds) onPickOdds(dispAwayOdds);
-              }}
-              title={canBet ? `Pick ${game.awayName}` : dispAwayOdds ? `Calc: ${game.awayName} ${dispAwayOdds}` : undefined}
-            >
+            <div style={{ flexShrink:0 }}>
               <TeamBadge abbr={game.away} size={44} />
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
               {/* User avatars on away side */}
@@ -530,20 +557,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             </div>
 
             {/* Home */}
-            <div
-              style={{
-                flexShrink:0, textAlign:"right",
-                cursor: canBet ? "pointer" : (dispHomeOdds && onPickOdds ? "pointer" : "default"),
-                borderRadius:10, padding:"6px 8px", margin:"-6px -8px",
-                transition:"all 0.2s",
-                ...(myPick === "home" ? { background:"rgba(83,211,55,0.12)", boxShadow:`0 0 12px rgba(83,211,55,0.3), inset 0 0 0 1.5px ${T.green}` } : {}),
-              }}
-              onClick={() => {
-                if (canBet) { handleSidePick("home"); return; }
-                if (dispHomeOdds && onPickOdds) onPickOdds(dispHomeOdds);
-              }}
-              title={canBet ? `Pick ${game.homeName}` : dispHomeOdds ? `Calc: ${game.homeName} ${dispHomeOdds}` : undefined}
-            >
+            <div style={{ flexShrink:0, textAlign:"right" }}>
               <div style={{ display:"flex", justifyContent:"flex-end" }}>
                 <TeamBadge abbr={game.home} size={44} />
               </div>
@@ -1098,9 +1112,10 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.username) : null}
               onBet={betStore && profile?.username ? (gid, side) => {
-                if (betStore.pick(gid, side, profile.username, profile.color)) {
-                  profile.deduct(10);
-                }
+                const result = betStore.pick(gid, side, profile.username, profile.color);
+                if (result === "placed") profile.deduct(10);
+                else if (result === "removed") profile.credit(10);
+                // "switched" = no balance change
               } : null}
             />
           );

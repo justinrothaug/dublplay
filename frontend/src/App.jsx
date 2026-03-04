@@ -443,7 +443,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Team color blend overlay */}
         <div style={{
           position:"absolute", inset:0,
-          background:`linear-gradient(112deg, ${awayC} 47%, ${homeC} 47%)`,
+          background:`linear-gradient(112deg, ${awayC} 48%, ${homeC} 48%)`,
           mixBlendMode:"color",
           zIndex:1,
         }} />
@@ -453,7 +453,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {/* Selection outline — bright animated border on the picked side */}
         {isUp && myPick === "away" && (
           <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
-            clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+            clipPath:"polygon(0 0, 53% 0, 41% 100%, 0 100%)",
             background:"rgba(83,211,55,0.12)",
             borderLeft:"2px solid rgba(83,211,55,0.8)",
             borderTop:"2px solid rgba(83,211,55,0.8)",
@@ -463,7 +463,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         )}
         {isUp && myPick === "home" && (
           <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none",
-            clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+            clipPath:"polygon(53% 0, 100% 0, 100% 100%, 41% 100%)",
             background:"rgba(83,211,55,0.12)",
             borderRight:"2px solid rgba(83,211,55,0.8)",
             borderTop:"2px solid rgba(83,211,55,0.8)",
@@ -475,8 +475,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
         {betSettled && (() => {
           const clr = iWon ? "rgba(83,211,55,0.15)" : "rgba(248,70,70,0.12)";
           const clip = myPick === "away"
-            ? "polygon(0 0, 55% 0, 40% 100%, 0 100%)"
-            : "polygon(55% 0, 100% 0, 100% 100%, 40% 100%)";
+            ? "polygon(0 0, 53% 0, 41% 100%, 0 100%)"
+            : "polygon(53% 0, 100% 0, 100% 100%, 41% 100%)";
           return <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none", clipPath:clip, background:clr }} />;
         })()}
 
@@ -485,11 +485,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           <>
             <div onClick={() => handleSidePick("away")} style={{
               position:"absolute", inset:0, zIndex:4, cursor:"pointer",
-              clipPath:"polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+              clipPath:"polygon(0 0, 53% 0, 41% 100%, 0 100%)",
             }} />
             <div onClick={() => handleSidePick("home")} style={{
               position:"absolute", inset:0, zIndex:4, cursor:"pointer",
-              clipPath:"polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+              clipPath:"polygon(53% 0, 100% 0, 100% 100%, 41% 100%)",
             }} />
           </>
         )}
@@ -608,8 +608,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               {/* Live win-prob chips below score */}
               {isLive && (game.awayWinProb != null && game.homeWinProb != null) && (
                 <div style={{ display:"flex", gap:5, justifyContent:"center", marginTop:6 }}>
-                  <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
-                  <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
+                  <HeroWinChip pct={game.awayWinProb} />
+                  <HeroWinChip pct={game.homeWinProb} />
                 </div>
               )}
             </div>
@@ -679,11 +679,10 @@ function WinProbChip({ pct, abbr }) {
   );
 }
 
-function HeroWinChip({ pct, abbr }) {
+function HeroWinChip({ pct }) {
   return (
     <div style={{ background:"rgba(0,0,0,0.55)", borderRadius:6, padding:"3px 8px", textAlign:"center" }}>
       <div style={{ fontSize:10, fontWeight:800, color: pct > 50 ? T.green : "rgba(255,255,255,0.65)" }}>{pct}%</div>
-      <div style={{ fontSize:8, color:"rgba(255,255,255,0.5)", letterSpacing:"0.04em" }}>{abbr}</div>
     </div>
   );
 }

@@ -254,9 +254,9 @@ function useBets(dateStr) {
       ) : null;
       return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
     },
-    pick: async (gid, side, uid, username, date) => {
+    pick: async (gid, side, uid, username, lockedSpread, lockedMl, date) => {
       try {
-        const res = await api.placeBet(gid, side, uid, username, date);
+        const res = await api.placeBet(gid, side, uid, username, lockedSpread, lockedMl, date);
         // Update local state with the response
         const stripped = gid.replace(/-\d{8}$/, "");
         setBets(prev => ({ ...prev, [stripped]: res.bets }));
@@ -395,7 +395,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
   const handleSidePick = (side) => {
     if (!canBet) return;
-    onBet(game.id, side);
+    const ml = side === "away" ? dispAwayOdds : dispHomeOdds;
+    onBet(game.id, side, dispSpread || "", ml || "");
   };
 
   // Derive win/loss from final score + bet data (no settlement flag needed)
@@ -408,15 +409,18 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
   // Mini avatar row helper
   const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
-    <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
+    <div style={{ display:"flex", gap:4, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
       {entries.map((e, i) => (
-        <div key={i} title={e.username} style={{
-          width:22, height:22, borderRadius:"50%",
-          background: avatarColor(e.username),
-          display:"flex", alignItems:"center", justifyContent:"center",
-          fontSize:9, fontWeight:800, color:"#fff",
-          border:"1.5px solid rgba(255,255,255,0.3)",
-        }}>{e.username[0].toUpperCase()}</div>
+        <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+          <div title={`${e.username}${e.lockedMl ? ` (ML ${e.lockedMl})` : ""}${e.lockedSpread ? ` | ${e.lockedSpread}` : ""}`} style={{
+            width:22, height:22, borderRadius:"50%",
+            background: avatarColor(e.username),
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:9, fontWeight:800, color:"#fff",
+            border:"1.5px solid rgba(255,255,255,0.3)",
+          }}>{e.username[0].toUpperCase()}</div>
+          {e.lockedMl && <div style={{ fontSize:7, fontWeight:700, color:T.text3, lineHeight:1 }}>{e.lockedMl}</div>}
+        </div>
       ))}
     </div>
   );
@@ -1167,8 +1171,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               onFavorite={onFavorite}
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
-              onBet={betStore && profile?.uid ? async (gid, side) => {
-                const result = await betStore.pick(gid, side, profile.uid, profile.username, dateStr);
+              onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+                const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr);
                 if (result === "placed") profile.deduct(10);
                 else if (result === "removed") profile.credit(10);
               } : null}

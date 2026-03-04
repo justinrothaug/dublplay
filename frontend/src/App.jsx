@@ -148,9 +148,7 @@ function useProfile() {
   const [balance, setBalance] = useState(() => {
     try { return parseFloat(localStorage.getItem("dublplay_balance")) || 100; } catch { return 100; }
   });
-  const save = (name, bal) => {
-    setUsername(name);
-    setBalance(bal);
+  const persist = (name, bal) => {
     try {
       localStorage.setItem("dublplay_username", name);
       localStorage.setItem("dublplay_balance", String(bal));
@@ -158,9 +156,9 @@ function useProfile() {
   };
   return {
     username, balance,
-    setName: name => save(name, balance),
-    deduct: amt => { const nb = balance - amt; save(username, nb); return nb; },
-    credit: amt => { const nb = balance + amt; save(username, nb); return nb; },
+    setName: name => { setUsername(name); persist(name, balance); },
+    deduct: amt => { setBalance(prev => { const nb = prev - amt; persist(username, nb); return nb; }); },
+    credit: amt => { setBalance(prev => { const nb = prev + amt; persist(username, nb); return nb; }); },
     color: username ? avatarColor(username) : "#555",
   };
 }

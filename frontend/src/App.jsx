@@ -399,13 +399,47 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
     onBet(game.id, side, dispSpread || "", ml || "");
   };
 
-  // Derive win/loss from final score + bet data (no settlement flag needed)
-  const winningSide = isFinal && (game.awayScore != null && game.homeScore != null)
-    ? (game.awayScore > game.homeScore ? "away" : game.homeScore > game.awayScore ? "home" : null)
+  // ── Spread-aware settlement ──────────────────────────────────────────────
+  // Parse locked spread like "BOS -5.5" → { team:"BOS", line:-5.5 }
+  const parseSpread = (s) => {
+    if (!s) return null;
+    const m = s.match(/^([A-Z]{2,4})\s*([+-]?\d+\.?\d*)$/);
+    return m ? { team: m[1], line: parseFloat(m[2]) } : null;
+  };
+
+  // Did a specific bettor cover the spread?
+  // betSide: "away"|"home", lockedSpread: "BOS -5.5"
+  const didCover = (betSide, lockedSpread) => {
+    if (!isFinal || game.awayScore == null || game.homeScore == null) return null;
+    const sp = parseSpread(lockedSpread);
+    if (!sp) {
+      // No locked spread — fall back to straight-up winner
+      const diff = game.awayScore - game.homeScore;
+      return betSide === "away" ? diff > 0 : diff < 0;
+    }
+    // Spread is from the favorite's perspective: "BOS -5.5" means BOS must win by >5.5
+    // Adjusted score = favTeam's score + line (line is negative for favorites)
+    const favSide = sp.team === game.home ? "home" : "away";
+    const favScore = favSide === "home" ? game.homeScore : game.awayScore;
+    const dogScore = favSide === "home" ? game.awayScore : game.homeScore;
+    const adjustedFav = favScore + sp.line; // e.g. 105 + (-5.5) = 99.5
+    if (adjustedFav === dogScore) return null; // push
+    const favCovers = adjustedFav > dogScore;
+    const betOnFav = betSide === favSide;
+    return betOnFav ? favCovers : !favCovers;
+  };
+
+  // Find my bet entry to get my locked spread
+  const myBetEntry = myPick && username
+    ? (myPick === "away" ? awayBets : homeBets).find(e => e.username === username)
     : null;
+  const iCovered = myBetEntry ? didCover(myPick, myBetEntry.lockedSpread) : null;
+
   const hasBet = myPick && potTotal > 0;
-  const betSettled = isFinal && hasBet && winningSide;
-  const iWon = betSettled && winningSide === myPick;
+  const betSettled = isFinal && hasBet && (game.awayScore != null && game.homeScore != null);
+  const iWon = betSettled && iCovered === true;
+  const iLost = betSettled && iCovered === false;
+  const iPushed = betSettled && iCovered === null;
 
   // Mini avatar row helper
   const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
@@ -484,7 +518,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           }} />
         )}
         {/* Settled result glow on final games — green for winners, red for losers */}
-        {betSettled && (() => {
+        {betSettled && !iPushed && (() => {
           const clr = iWon ? "rgba(83,211,55,0.15)" : "rgba(248,70,70,0.12)";
           const clip = myPick === "away"
             ? "polygon(0 0, 53% 0, 41% 100%, 0 100%)"
@@ -515,31 +549,39 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               <AvatarRow entries={awayBets} align="flex-start" />
               {myPick === "away" && betSettled && (
                 <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
-                  color: iWon ? T.green : T.red,
-                }}>{iWon ? "WON" : "LOST"}</div>
+                  color: iWon ? T.green : iPushed ? T.text2 : T.red,
+                }}>{iWon ? "WON" : iPushed ? "PUSH" : "LOST"}</div>
               )}
             </div>
 
             {/* Center top: POT badge (always top center) or W/L result or injury */}
             <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"flex-start" }}>
               {betSettled ? (() => {
-                const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
-                const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
+                // Count winners/losers per-user using their individual locked spreads
+                const allBettors = [
+                  ...awayBets.map(e => ({ ...e, side: "away" })),
+                  ...homeBets.map(e => ({ ...e, side: "home" })),
+                ];
+                const winners = allBettors.filter(e => didCover(e.side, e.lockedSpread) === true);
+                const losers = allBettors.filter(e => didCover(e.side, e.lockedSpread) === false);
                 const payout = iWon && winners.length > 0 && losers.length > 0
-                  ? Math.round(potTotal / winners.length * 100) / 100
-                  : iWon ? 10 : 0;
+                  ? Math.round((losers.length * 10) / winners.length * 100) / 100
+                  : iPushed ? 0 : iWon ? 10 : 0;
+                const badgeColor = iWon ? T.green : iPushed ? T.text2 : T.red;
+                const badgeBg = iWon ? "rgba(83,211,55,0.25)" : iPushed ? "rgba(255,255,255,0.08)" : "rgba(248,70,70,0.25)";
+                const badgeBorder = iWon ? T.greenBdr : iPushed ? "rgba(255,255,255,0.15)" : "rgba(248,70,70,0.4)";
                 return (
                   <div style={{ display:"inline-flex", alignItems:"center", gap:4,
-                    background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
-                    border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
+                    background: badgeBg,
+                    border: `1px solid ${badgeBorder}`,
                     borderRadius:8, padding:"3px 9px",
                   }}>
-                    <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
-                      {iWon ? "W" : "L"}
+                    <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: badgeColor }}>
+                      {iWon ? "W" : iPushed ? "PUSH" : "L"}
                     </span>
                     {iWon && payout ? (
                       <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
-                    ) : !iWon ? (
+                    ) : iLost ? (
                       <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
                     ) : null}
                   </div>
@@ -563,8 +605,8 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               <AvatarRow entries={homeBets} align="flex-end" />
               {myPick === "home" && betSettled && (
                 <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
-                  color: winningSide === "home" ? T.green : T.red,
-                }}>{winningSide === "home" ? "WON" : "LOST"}</div>
+                  color: iWon ? T.green : iPushed ? T.text2 : T.red,
+                }}>{iWon ? "WON" : iPushed ? "PUSH" : "LOST"}</div>
               )}
             </div>
           </div>

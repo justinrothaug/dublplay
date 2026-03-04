@@ -1973,13 +1973,13 @@ def calculate_parlay(req: ParlayRequest):
 class BetRequest(BaseModel):
     game_id: str            # e.g. "atl-bos"
     side: str               # "away" or "home"
-    username: str
-    color: str = "#555"
+    uid: str                # stable user ID from localStorage
+    username: str = ""      # display name (cosmetic, can change)
     date: Optional[str] = None  # YYYYMMDD, defaults to today
 
 
-def _save_bet_to_firestore(date_str: str, game_id: str, side: str, username: str, color: str) -> dict | None:
-    """Add or toggle a user's bet on a game. Returns the updated bets dict."""
+def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, username: str) -> dict | None:
+    """Add or toggle a user's bet on a game. Keyed by uid (stable). Returns updated bets."""
     db = _init_firestore()
     if not db:
         return None
@@ -1993,26 +1993,23 @@ def _save_bet_to_firestore(date_str: str, game_id: str, side: str, username: str
 
         away = list(bets.get("away", []))
         home = list(bets.get("home", []))
-        other_side = "home" if side == "away" else "away"
         target = away if side == "away" else home
         other = home if side == "away" else away
+        entry = {"uid": uid, "username": username}
 
-        already_on_target = any(e.get("username") == username for e in target)
-        already_on_other = any(e.get("username") == username for e in other)
+        already_on_target = any(e.get("uid") == uid for e in target)
+        already_on_other = any(e.get("uid") == uid for e in other)
 
         action = "placed"
         if already_on_target:
-            # Unselect
-            target[:] = [e for e in target if e.get("username") != username]
+            target[:] = [e for e in target if e.get("uid") != uid]
             action = "removed"
         elif already_on_other:
-            # Switch sides
-            other[:] = [e for e in other if e.get("username") != username]
-            target.append({"username": username, "color": color})
+            other[:] = [e for e in other if e.get("uid") != uid]
+            target.append(entry)
             action = "switched"
         else:
-            # Fresh pick
-            target.append({"username": username, "color": color})
+            target.append(entry)
 
         updated_bets = {"away": away, "home": home}
         try:
@@ -2056,10 +2053,10 @@ def place_bet(req: BetRequest):
     game_id = re.sub(r'-\d{8}$', '', req.game_id)
     if req.side not in ("away", "home"):
         raise HTTPException(status_code=400, detail="side must be 'away' or 'home'")
-    if not req.username.strip():
-        raise HTTPException(status_code=400, detail="username required")
+    if not req.uid.strip():
+        raise HTTPException(status_code=400, detail="uid required")
 
-    result = _save_bet_to_firestore(date_str, game_id, req.side, req.username.strip(), req.color)
+    result = _save_bet_to_firestore(date_str, game_id, req.side, req.uid.strip(), req.username.strip())
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to save bet")
     return result

@@ -225,67 +225,42 @@ function ProfileDropdown({ profile, onClose }) {
   );
 }
 
-// ── Simple pot helper for GameCard ───────────────────────────────────────────
-function useBets() {
-  const [bets, setBets] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("dublplay_bets") || "{}"); } catch { return {}; }
-  });
-  const persist = b => { setBets(b); try { localStorage.setItem("dublplay_bets", JSON.stringify(b)); } catch {} };
+// ── Bets (Firestore-backed) ──────────────────────────────────────────────────
+function useBets(dateStr) {
+  const [bets, setBets] = useState({});  // { game_id: { away: [...], home: [...] } }
+
+  // Load bets from Firestore whenever date changes
+  useEffect(() => {
+    if (!dateStr) return;
+    api.getBets(dateStr).then(d => setBets(d.bets || {})).catch(() => {});
+  }, [dateStr]);
+
   return {
     bets,
-    // Get pot for a game: { away/home entries, myPick, total, settled info }
+    reload: () => {
+      if (dateStr) api.getBets(dateStr).then(d => setBets(d.bets || {})).catch(() => {});
+    },
     forGame: (gid, username) => {
-      const g = bets[gid] || { away: [], home: [] };
-      const myPick = username ? (g.away.some(e => e.username === username) ? "away" : g.home.some(e => e.username === username) ? "home" : null) : null;
-      return { ...g, myPick, total: (g.away.length + g.home.length) * 10 };
+      const stripped = gid.replace(/-\d{8}$/, "");
+      const g = bets[stripped] || { away: [], home: [] };
+      const myPick = username ? (
+        (g.away || []).some(e => e.username === username) ? "away" :
+        (g.home || []).some(e => e.username === username) ? "home" : null
+      ) : null;
+      return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
     },
-    // Returns: "placed" | "switched" | "removed"
-    pick: (gid, side, username, color) => {
-      const prev = bets[gid] || { away: [], home: [] };
-      // Can't pick if already settled
-      if (prev.settled) return null;
-      const otherSide = side === "away" ? "home" : "away";
-      const alreadyOnThis = prev[side].some(e => e.username === username);
-      const alreadyOnOther = prev[otherSide].some(e => e.username === username);
-
-      if (alreadyOnThis) {
-        const next = { ...bets, [gid]: { ...prev, [side]: prev[side].filter(e => e.username !== username) } };
-        persist(next);
-        return "removed";
+    // Call backend, optimistically update local state, returns action string
+    pick: async (gid, side, username, color, date) => {
+      try {
+        const res = await api.placeBet(gid, side, username, color, date);
+        // Update local state with the response
+        const stripped = gid.replace(/-\d{8}$/, "");
+        setBets(prev => ({ ...prev, [stripped]: res.bets }));
+        return res.action; // "placed" | "switched" | "removed"
+      } catch (e) {
+        console.error("Bet failed:", e);
+        return null;
       }
-      if (alreadyOnOther) {
-        const next = { ...bets, [gid]: {
-          ...prev,
-          [otherSide]: prev[otherSide].filter(e => e.username !== username),
-          [side]: [...prev[side], { username, color }],
-        }};
-        persist(next);
-        return "switched";
-      }
-      const next = { ...bets, [gid]: { ...prev, [side]: [...prev[side], { username, color }] } };
-      persist(next);
-      return "placed";
-    },
-    // Settle a game — returns map of { username: payout } for winners
-    settle: (gid, winningSide) => {
-      const prev = bets[gid];
-      if (!prev || prev.settled) return null;
-      const winners = prev[winningSide] || [];
-      const losers = prev[winningSide === "away" ? "home" : "away"] || [];
-      const totalPool = (winners.length + losers.length) * 10;
-      const payouts = {};
-      if (winners.length > 0 && losers.length > 0) {
-        // Winners split the whole pot evenly
-        const each = Math.round(totalPool / winners.length * 100) / 100;
-        winners.forEach(e => { payouts[e.username] = each; });
-      } else if (winners.length > 0) {
-        // Everyone on same side — money back
-        winners.forEach(e => { payouts[e.username] = 10; });
-      }
-      // losers.length > 0 && winners.length === 0 → dead money (no payouts)
-      const next = { ...bets, [gid]: { ...prev, settled: true, winningSide, payouts } };
-      persist(next);
-      return payouts;
     },
   };
 }
@@ -419,6 +394,14 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
     onBet(game.id, side);
   };
 
+  // Derive win/loss from final score + bet data (no settlement flag needed)
+  const winningSide = isFinal && (game.awayScore != null && game.homeScore != null)
+    ? (game.awayScore > game.homeScore ? "away" : game.homeScore > game.awayScore ? "home" : null)
+    : null;
+  const hasBet = myPick && potTotal > 0;
+  const betSettled = isFinal && hasBet && winningSide;
+  const iWon = betSettled && winningSide === myPick;
+
   // Mini avatar row helper
   const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
     <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
@@ -481,8 +464,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           }} />
         )}
         {/* Settled result glow on final games — green for winners, red for losers */}
-        {isFinal && gameBets?.settled && myPick && (() => {
-          const iWon = gameBets.winningSide === myPick;
+        {betSettled && (() => {
           const clr = iWon ? "rgba(83,211,55,0.15)" : "rgba(248,70,70,0.12)";
           const clip = myPick === "away"
             ? "polygon(0 0, 55% 0, 40% 100%, 0 100%)"
@@ -509,9 +491,12 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           {/* Top row: pot/result badge (left) / injury alert / win-prob chips (right) */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
             {/* Badge — top left */}
-            {isFinal && gameBets?.settled && myPick ? (() => {
-              const iWon = gameBets.winningSide === myPick;
-              const payout = gameBets.payouts?.[username];
+            {betSettled ? (() => {
+              const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
+              const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
+              const payout = iWon && winners.length > 0 && losers.length > 0
+                ? Math.round(potTotal / winners.length * 100) / 100
+                : iWon ? 10 : 0;
               return (
                 <div style={{
                   background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
@@ -559,15 +544,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.awayName}</div>
               {/* User avatars on away side */}
               <AvatarRow entries={awayBets} align="flex-start" />
-              {myPick === "away" && (() => {
-                const settled = isFinal && gameBets?.settled;
-                const won = settled && gameBets.winningSide === "away";
-                return (
-                  <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
-                    color: settled ? (won ? T.green : T.red) : T.green,
-                  }}>{settled ? (won ? "WON" : "LOST") : "MY PICK"}</div>
-                );
-              })()}
+              {myPick === "away" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
+                  color: betSettled ? (iWon ? T.green : T.red) : T.green,
+                }}>{betSettled ? (iWon ? "WON" : "LOST") : "MY PICK"}</div>
+              )}
             </div>
 
             {/* Center */}
@@ -620,15 +601,11 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               <div style={{ color:"rgba(255,255,255,0.75)", fontSize:10, fontWeight:500, marginTop:5 }}>{game.homeName}</div>
               {/* User avatars on home side */}
               <AvatarRow entries={homeBets} align="flex-end" />
-              {myPick === "home" && (() => {
-                const settled = isFinal && gameBets?.settled;
-                const won = settled && gameBets.winningSide === "home";
-                return (
-                  <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
-                    color: settled ? (won ? T.green : T.red) : T.green,
-                  }}>{settled ? (won ? "WON" : "LOST") : "MY PICK"}</div>
-                );
-              })()}
+              {myPick === "home" && (
+                <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:4,
+                  color: betSettled ? (winningSide === "home" ? T.green : T.red) : T.green,
+                }}>{betSettled ? (winningSide === "home" ? "WON" : "LOST") : "MY PICK"}</div>
+              )}
             </div>
           </div>
         </div>
@@ -1092,7 +1069,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile, dateStr }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -1173,11 +1150,10 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               onFavorite={onFavorite}
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.username) : null}
-              onBet={betStore && profile?.username ? (gid, side) => {
-                const result = betStore.pick(gid, side, profile.username, profile.color);
+              onBet={betStore && profile?.username ? async (gid, side) => {
+                const result = await betStore.pick(gid, side, profile.username, profile.color, dateStr);
                 if (result === "placed") profile.deduct(10);
                 else if (result === "removed") profile.credit(10);
-                // "switched" = no balance change
               } : null}
               username={profile?.username}
             />
@@ -2249,7 +2225,6 @@ export default function App() {
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
   const profile = useProfile();
-  const betStore = useBets();
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -2266,6 +2241,7 @@ export default function App() {
   // Stabilized: computed once on mount so midnight rollovers don't silently
   // swap the game list mid-session. Refresh the page to get the next day.
   const todayStr = useMemo(() => fmtLocal(new Date()), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const betStore = useBets(selectedDate || todayStr);
 
   const tomorrowStr = (() => {
     const d = new Date();
@@ -2303,7 +2279,7 @@ export default function App() {
       .catch(console.error);
   }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 3) Auto-poll scores when live games are active (every 30s)
+  // 3) Auto-poll scores + bets when live games are active (every 30s)
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
     if (!hasLive || apiKey === null) return;
@@ -2311,25 +2287,11 @@ export default function App() {
       api.getGames(selectedDate || todayStr)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
+      betStore.reload();
     }, 30000);
     return () => clearInterval(interval);
   }, [games, apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 3b) Auto-settle bets when games go final
-  useEffect(() => {
-    games.forEach(g => {
-      if (g.status !== "final") return;
-      const bet = betStore.forGame(g.id, profile.username);
-      if (bet.total === 0 || bet.settled) return;
-      // Determine winner by score
-      const winningSide = g.awayScore > g.homeScore ? "away" : g.homeScore > g.awayScore ? "home" : null;
-      if (!winningSide) return; // tie — skip for now
-      const payouts = betStore.settle(g.id, winningSide);
-      if (payouts && profile.username && payouts[profile.username]) {
-        profile.credit(payouts[profile.username]);
-      }
-    });
-  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 4) Auto-analyze non-final games once data loads
   //    Skip games that already have cached analysis from Firestore, or were already
@@ -2611,6 +2573,7 @@ export default function App() {
             picksMap={picksMap}
             betStore={betStore}
             profile={profile}
+            dateStr={selectedDate || todayStr}
           />
         </>
       )}

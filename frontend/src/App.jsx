@@ -410,18 +410,22 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
   // Mini avatar row helper
   const AvatarRow = ({ entries, align }) => entries.length === 0 ? null : (
     <div style={{ display:"flex", gap:4, flexWrap:"wrap", justifyContent: align, marginTop:6 }}>
-      {entries.map((e, i) => (
-        <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
-          <div title={`${e.username}${e.lockedMl ? ` (ML ${e.lockedMl})` : ""}${e.lockedSpread ? ` | ${e.lockedSpread}` : ""}`} style={{
-            width:22, height:22, borderRadius:"50%",
-            background: avatarColor(e.username),
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:9, fontWeight:800, color:"#fff",
-            border:"1.5px solid rgba(255,255,255,0.3)",
-          }}>{e.username[0].toUpperCase()}</div>
-          {e.lockedMl && <div style={{ fontSize:7, fontWeight:700, color:T.text3, lineHeight:1 }}>{e.lockedMl}</div>}
-        </div>
-      ))}
+      {entries.map((e, i) => {
+        // Show locked spread as short line, e.g. "BOS -5.5" → "-5.5"
+        const shortLine = e.lockedSpread ? e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "") : "";
+        return (
+          <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+            <div style={{
+              width:22, height:22, borderRadius:"50%",
+              background: avatarColor(e.username),
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:9, fontWeight:800, color:"#fff",
+              border:"1.5px solid rgba(255,255,255,0.3)",
+            }}>{e.username[0].toUpperCase()}</div>
+            {shortLine && <div style={{ fontSize:7, fontWeight:700, color:T.text3, lineHeight:1, whiteSpace:"nowrap" }}>{shortLine}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -509,10 +513,10 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             {/* Away bettors — top left */}
             <div style={{ flexShrink:0, minWidth:40 }}>
               <AvatarRow entries={awayBets} align="flex-start" />
-              {myPick === "away" && (
+              {myPick === "away" && betSettled && (
                 <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
-                  color: betSettled ? (iWon ? T.green : T.red) : T.green,
-                }}>{betSettled ? (iWon ? "WON" : "LOST") : "MY PICK"}</div>
+                  color: iWon ? T.green : T.red,
+                }}>{iWon ? "WON" : "LOST"}</div>
               )}
             </div>
 
@@ -557,10 +561,10 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
             {/* Home bettors — top right */}
             <div style={{ flexShrink:0, minWidth:40, textAlign:"right" }}>
               <AvatarRow entries={homeBets} align="flex-end" />
-              {myPick === "home" && (
+              {myPick === "home" && betSettled && (
                 <div style={{ fontSize:8, fontWeight:800, letterSpacing:"0.08em", marginTop:3,
-                  color: betSettled ? (winningSide === "home" ? T.green : T.red) : T.green,
-                }}>{betSettled ? (winningSide === "home" ? "WON" : "LOST") : "MY PICK"}</div>
+                  color: winningSide === "home" ? T.green : T.red,
+                }}>{winningSide === "home" ? "WON" : "LOST"}</div>
               )}
             </div>
           </div>

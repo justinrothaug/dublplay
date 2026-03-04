@@ -142,6 +142,13 @@ function avatarColor(name) {
 }
 
 function useProfile() {
+  const [uid] = useState(() => {
+    try {
+      let id = localStorage.getItem("dublplay_uid");
+      if (!id) { id = crypto.randomUUID(); localStorage.setItem("dublplay_uid", id); }
+      return id;
+    } catch { return crypto.randomUUID(); }
+  });
   const [username, setUsername] = useState(() => {
     try { return localStorage.getItem("dublplay_username") || ""; } catch { return ""; }
   });
@@ -155,7 +162,7 @@ function useProfile() {
     } catch {}
   };
   return {
-    username, balance,
+    uid, username, balance,
     setName: name => { setUsername(name); persist(name, balance); },
     deduct: amt => { setBalance(prev => { const nb = prev - amt; persist(username, nb); return nb; }); },
     credit: amt => { setBalance(prev => { const nb = prev + amt; persist(username, nb); return nb; }); },
@@ -238,19 +245,18 @@ function useBets(dateStr) {
     reload: () => {
       if (dateStr) api.getBets(dateStr).then(d => setBets(d.bets || {})).catch(() => {});
     },
-    forGame: (gid, username) => {
+    forGame: (gid, uid) => {
       const stripped = gid.replace(/-\d{8}$/, "");
       const g = bets[stripped] || { away: [], home: [] };
-      const myPick = username ? (
-        (g.away || []).some(e => e.username === username) ? "away" :
-        (g.home || []).some(e => e.username === username) ? "home" : null
+      const myPick = uid ? (
+        (g.away || []).some(e => e.uid === uid) ? "away" :
+        (g.home || []).some(e => e.uid === uid) ? "home" : null
       ) : null;
       return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
     },
-    // Call backend, optimistically update local state, returns action string
-    pick: async (gid, side, username, color, date) => {
+    pick: async (gid, side, uid, username, color, date) => {
       try {
-        const res = await api.placeBet(gid, side, username, color, date);
+        const res = await api.placeBet(gid, side, uid, username, color, date);
         // Update local state with the response
         const stripped = gid.replace(/-\d{8}$/, "");
         setBets(prev => ({ ...prev, [stripped]: res.bets }));
@@ -1160,9 +1166,9 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
-              gameBets={betStore ? betStore.forGame(g.id, profile?.username) : null}
-              onBet={betStore && profile?.username ? async (gid, side) => {
-                const result = await betStore.pick(gid, side, profile.username, profile.color, dateStr);
+              gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
+              onBet={betStore && profile?.uid ? async (gid, side) => {
+                const result = await betStore.pick(gid, side, profile.uid, profile.username, profile.color, dateStr);
                 if (result === "placed") profile.deduct(10);
                 else if (result === "removed") profile.credit(10);
               } : null}

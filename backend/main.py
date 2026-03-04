@@ -1973,13 +1973,14 @@ def calculate_parlay(req: ParlayRequest):
 class BetRequest(BaseModel):
     game_id: str            # e.g. "atl-bos"
     side: str               # "away" or "home"
-    username: str
+    uid: str                # stable user ID from localStorage
+    username: str = ""      # display name (cosmetic, can change)
     color: str = "#555"
     date: Optional[str] = None  # YYYYMMDD, defaults to today
 
 
-def _save_bet_to_firestore(date_str: str, game_id: str, side: str, username: str, color: str) -> dict | None:
-    """Add or toggle a user's bet on a game. Returns the updated bets dict."""
+def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, username: str, color: str) -> dict | None:
+    """Add or toggle a user's bet on a game. Keyed by uid (stable). Returns updated bets."""
     db = _init_firestore()
     if not db:
         return None
@@ -1993,26 +1994,23 @@ def _save_bet_to_firestore(date_str: str, game_id: str, side: str, username: str
 
         away = list(bets.get("away", []))
         home = list(bets.get("home", []))
-        other_side = "home" if side == "away" else "away"
         target = away if side == "away" else home
         other = home if side == "away" else away
+        entry = {"uid": uid, "username": username, "color": color}
 
-        already_on_target = any(e.get("username") == username for e in target)
-        already_on_other = any(e.get("username") == username for e in other)
+        already_on_target = any(e.get("uid") == uid for e in target)
+        already_on_other = any(e.get("uid") == uid for e in other)
 
         action = "placed"
         if already_on_target:
-            # Unselect
-            target[:] = [e for e in target if e.get("username") != username]
+            target[:] = [e for e in target if e.get("uid") != uid]
             action = "removed"
         elif already_on_other:
-            # Switch sides
-            other[:] = [e for e in other if e.get("username") != username]
-            target.append({"username": username, "color": color})
+            other[:] = [e for e in other if e.get("uid") != uid]
+            target.append(entry)
             action = "switched"
         else:
-            # Fresh pick
-            target.append({"username": username, "color": color})
+            target.append(entry)
 
         updated_bets = {"away": away, "home": home}
         try:
@@ -2056,10 +2054,10 @@ def place_bet(req: BetRequest):
     game_id = re.sub(r'-\d{8}$', '', req.game_id)
     if req.side not in ("away", "home"):
         raise HTTPException(status_code=400, detail="side must be 'away' or 'home'")
-    if not req.username.strip():
-        raise HTTPException(status_code=400, detail="username required")
+    if not req.uid.strip():
+        raise HTTPException(status_code=400, detail="uid required")
 
-    result = _save_bet_to_firestore(date_str, game_id, req.side, req.username.strip(), req.color)
+    result = _save_bet_to_firestore(date_str, game_id, req.side, req.uid.strip(), req.username.strip(), req.color)
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to save bet")
     return result
@@ -2069,52 +2067,6 @@ def place_bet(req: BetRequest):
 def get_bets(date_str: str):
     bets = _load_bets_from_firestore(date_str)
     return {"date": date_str, "bets": bets}
-
-
-class RenameRequest(BaseModel):
-    old_username: str
-    new_username: str
-    new_color: str = "#555"
-    date: Optional[str] = None
-
-
-@app.post("/api/bets/rename")
-def rename_bettor(req: RenameRequest):
-    """Rename a user across all bets for a date (used when profile name changes)."""
-    date_str = req.date or datetime.now().strftime("%Y%m%d")
-    db = _init_firestore()
-    if not db:
-        raise HTTPException(status_code=500, detail="Firestore unavailable")
-    try:
-        doc_ref = db.collection(_FS_COL).document(date_str)
-        doc = doc_ref.get()
-        if not doc.exists:
-            return {"updated": 0}
-        games_map = doc.to_dict().get("games", {})
-        updates = {}
-        count = 0
-        for gid, gdata in games_map.items():
-            bets = gdata.get("bets")
-            if not bets:
-                continue
-            changed = False
-            for side in ("away", "home"):
-                entries = list(bets.get(side, []))
-                for i, e in enumerate(entries):
-                    if e.get("username") == req.old_username.strip():
-                        entries[i] = {"username": req.new_username.strip(), "color": req.new_color}
-                        changed = True
-                        count += 1
-                bets[side] = entries
-            if changed:
-                updates[f"games.{gid}.bets"] = bets
-        if updates:
-            updates["updated_at"] = fb_firestore.SERVER_TIMESTAMP
-            doc_ref.update(updates)
-        return {"updated": count}
-    except Exception as e:
-        logging.warning(f"Firestore rename failed: {e}")
-        raise HTTPException(status_code=500, detail="Rename failed")
 
 
 @app.post("/api/analyze")

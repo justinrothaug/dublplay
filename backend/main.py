@@ -1278,75 +1278,25 @@ def build_system_prompt(
             team_ctx = "\nTEAM CONTEXT (ESPN standings + rest):\n" + "\n".join(rows)
 
     return (
-        "You are a sharp NBA betting analyst. Your goal is finding the best BETTING VALUE — "
-        "not just picking winners. Covering the spread and winning outright are DIFFERENT things.\n\n"
-
-        "### PRIORITY #1: ANALYZE THIS SPECIFIC GAME (80% of your reasoning)\n"
-        "Your analysis MUST be rooted in the actual teams playing tonight. For every pick you make, "
-        "your reasoning must name specific teams, players, stats, and matchup dynamics. "
-        "Generic statements like 'big favorites often fail to cover' or 'B2B teams struggle' "
-        "are WORTHLESS without connecting them to THIS game's specifics.\n\n"
-
-        "What good analysis looks like:\n"
-        "• 'PHX ranks 28th in defensive rating (118.2) and OKC averages 121.3 PPG vs bottom-10 defenses this season'\n"
-        "• 'With Giannis out, MIL's offense drops from 116.4 to 108.2 PPG and their ATS record without him is 3-9'\n"
-        "• 'LAL are 7-2 ATS as underdogs this season and DEN is 2-5 ATS as home favorites of 8+'\n\n"
-
-        "What BAD analysis looks like (NEVER do this):\n"
-        "• 'Big favorites of 10+ points often win but fail to cover' ← generic rubric, not analysis\n"
-        "• 'B2B fatigue drags scoring down' ← generic rule with no team-specific connection\n"
-        "• 'This should be a competitive game' ← empty filler\n\n"
-
-        "DATA TO SEARCH FOR (search for ALL of these):\n"
-        "1. ATS RECORDS — against-the-spread records (overall + last 10). #1 signal for spread bets.\n"
-        "2. RECENT FORM — last 5-10 game results + scoring margins for BOTH teams.\n"
-        "3. HEAD-TO-HEAD — season series results between these specific teams.\n"
-        "4. KEY INJURIES — missing starters and their impact on team PPG/defense.\n"
-        "5. PACE & DEFENSIVE RATINGS — each team's offensive/defensive rating and pace.\n"
-        "6. REST & SCHEDULE — B2B, rest days, road trip length.\n\n"
-
-        "### PRIORITY #2: BETTING FRAMEWORK (20% — use as tiebreakers, not primary reasoning)\n"
-        "These rules are secondary context. Only cite them when they DIRECTLY apply AND you've already "
-        "established the game-specific case:\n"
-        "• Spread vs ML: Prefer SPREAD over ML when ML is worse than -200.\n"
-        "• Big spreads (10+): Underdogs cover more often than you'd think. Check the specific ATS records.\n"
-        "• B2B: Road teams on B2B decline 1-3 pts. Both on B2B → lean UNDER.\n"
-        "• B2B props: Guards show biggest stat decline on B2B (fatigue hits perimeter most). Centers hold steadier.\n"
-        "• Letdown: Home faves -10+ after 15+ pt win cover only 42.5%.\n"
-        "• Bounce-back: Road dogs who lost by 16+ cover at 54.9%.\n"
-        "• Double-digit spread overs hit 60.7%.\n"
-        "• Q4 fatigue: Close games see pace drop + 3pt accuracy decline in Q4. Lean UNDER on live O/U in tight Q4 games.\n"
-        "• Home court ≈ 3 pt edge. Secondary factor only.\n"
-        "• 19% of games are decided in Q4 — don't overweight halftime leads for live bets.\n\n"
-
-        "O/U ANALYSIS — must be numbers-driven for THIS game:\n"
-        "• Add Team A's PPG + Team B's PPG → compare to the O/U line.\n"
-        "• Factor pace (both fast? both slow?) and defensive ratings.\n"
-        "• Then layer situational factors (B2B, injuries, etc.) as adjustments.\n"
-        "• Your reasoning MUST cite specific PPG, opp PPG, or defensive rating numbers.\n\n"
-
-        "### DUBL SCORES — FORCE DIFFERENTIATION\n"
-        "Score each pick 1.0-5.0. You MUST spread scores across the full range.\n"
-        "CRITICAL RULE: If you have 4+ picks, they CANNOT all be the same score. "
-        "At least one must be ≤2.5 and at least one must be ≥4.0.\n"
-        "Before scoring, ask: 'What is my STRONGEST edge?' and 'What is the BIGGEST reason this loses?'\n\n"
-        "SCORE BY COUNTING EDGES — not vibes:\n"
-        "  1.0-1.5 = ZERO real edges. Coin flip. You picked a side because you had to.\n"
-        "            (two .500 teams, no ATS trend, no injuries, line looks fair)\n"
-        "  2.0-2.5 = ONE edge (ATS trend OR B2B OR injury — only one factor).\n"
-        "            (team covers 60% ATS, but otherwise even matchup)\n"
-        "  3.0-3.5 = TWO edges that reinforce each other.\n"
-        "            (strong ATS + opponent on B2B, or big injury + home rest advantage)\n"
-        "  4.0-4.5 = THREE+ edges stacking, AND no strong counter-argument.\n"
-        "            (elite ATS + opponent missing starter + home rest + H2H dominance)\n"
-        "  5.0      = Almost NEVER. Everything aligns perfectly.\n\n"
-        "ANTI-PARKING RULES (READ THESE):\n"
-        "• 3.5 is NOT your default. If you cannot name TWO specific edges, the score is ≤2.5.\n"
-        "• O/U: projected total within 3 pts of line → score ≤2.5. Only 3.5+ when projection is 5+ pts off.\n"
-        "• Spread: ATS record 45-55% → score ≤2.5. Only 3.5+ with 58%+ ATS trend.\n"
-        "• If both teams are healthy with similar records and rest → 1.5-2.5. Be honest.\n"
-        "• A 2.0 is not a bad pick — it's an honest one. Users trust honest scores.\n\n"
-
+        "You are an elite NBA betting analyst. Your #1 goal is PICKING WINNERS — not finding value, not optimizing juice. "
+        "A correct pick at -110 beats a 'value' pick that loses. "
+        "Never say obvious things like 'both teams can score' or 'it should be a close game'.\n\n"
+        "PICK SELECTION FRAMEWORK (use this order):\n"
+        "1. PICK THE WINNING SIDE FIRST — before thinking about spread vs ML, determine which team wins this game. "
+        "Use record, recent form (L10), scoring margin, home/away splits, head-to-head, and injuries.\n"
+        "2. THEN CHOOSE THE BET TYPE — once you've picked the winning side:\n"
+        "   • If the team is a small favorite (1-5 pts) or underdog: SPREAD is usually safer.\n"
+        "   • If the team is a big favorite (-300+) and you're very confident: SPREAD (laying points) is better than expensive ML.\n"
+        "   • Only pick ML when the price is reasonable (better than -200) AND you're confident in a straight-up win.\n"
+        "3. AVOID VALUE TRAPS — do NOT pick underdogs just because the + odds look appealing. "
+        "Bad teams lose. A +250 underdog that loses is worse than a -150 favorite that wins.\n\n"
+        "DATA TO SEARCH FOR:\n"
+        "1. RECENT FORM — search for each team's last 5-10 game results. Teams on winning streaks tend to continue.\n"
+        "2. HEAD-TO-HEAD — search for season series results between these teams.\n"
+        "3. ATS RECORDS — search for Against-The-Spread records (overall + last 10). Strong ATS = real covering ability.\n"
+        "4. KEY INJURIES — missing starters dramatically shift win probability. A team missing its best player is a different team.\n"
+        "5. REST & SCHEDULE — B2B, long road trips, and schedule spots matter. Tired teams underperform.\n"
+        "6. HOME COURT — home teams win ~60% in the NBA. Factor this in, especially for strong home teams.\n\n"
         f"LIVE GAMES: {live_str}\n"
         f"TONIGHT: {up_str}\n"
         f"{injury_note}"
@@ -1363,7 +1313,7 @@ def parse_gemini_analysis(text: str) -> dict:
     cleaned = re.sub(r'^[\s*•\-]+', '', cleaned, flags=re.MULTILINE)
     logging.info(f"Parser cleaned text (first 800): {repr(cleaned[:800])}")
 
-    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
+    stoppers = "AWAY_ML:|HOME_ML:|SPREAD_LINE:|OU_LINE:|BEST_BET:|BET_TEAM:|BET_TYPE:|OU_LEAN:|PLAYER_PROP:|PROP_STATUS:|DUBL_BET:|DUBL_OU:|DUBL_SCORE_BET:|DUBL_REASONING_BET:|DUBL_SCORE_OU:|DUBL_REASONING_OU:|$"
 
     def extract(marker: str) -> str | None:
         m = re.search(rf'{marker}:\s*(.*?)(?={stoppers})', cleaned, re.DOTALL | re.IGNORECASE)
@@ -1380,6 +1330,21 @@ def parse_gemini_analysis(text: str) -> dict:
         except ValueError:
             return None
 
+    def extract_combined(marker: str) -> tuple[float | None, str | None]:
+        """Parse combined 'X.X — reasoning' field into (score, reasoning)."""
+        raw = extract(marker)
+        if not raw:
+            return None, None
+        m = re.match(r'([0-9]+(?:\.[0-9]+)?)\s*[—–\-]\s*(.*)', raw, re.DOTALL)
+        if m:
+            try:
+                score = round(min(5.0, max(1.0, float(m.group(1)))), 1)
+                reasoning = m.group(2).strip() or None
+                return score, reasoning
+            except ValueError:
+                pass
+        return None, raw
+
     away_ml     = extract("AWAY_ML")
     home_ml     = extract("HOME_ML")
     spread_line = extract("SPREAD_LINE")
@@ -1393,6 +1358,12 @@ def parse_gemini_analysis(text: str) -> dict:
     )
 
     bet_type_raw = (extract("BET_TYPE") or "").upper()
+
+    # Parse combined DUBL_BET / DUBL_OU fields (new format: "X.X — reasoning")
+    # Falls back to old separate DUBL_SCORE_BET / DUBL_REASONING_BET fields
+    dubl_bet_score, dubl_bet_reason = extract_combined("DUBL_BET")
+    dubl_ou_score, dubl_ou_reason = extract_combined("DUBL_OU")
+
     return {
         "best_bet":           extract("BEST_BET"),
         "bet_team":           ((extract("BET_TEAM") or "").strip().split() or [None])[0],
@@ -1401,10 +1372,10 @@ def parse_gemini_analysis(text: str) -> dict:
         "props":              extract("PLAYER_PROP"),
         "prop_status":        raw_prop_status or None,
         "prop_on_track":      prop_on_track,
-        "dubl_score_bet":     extract_score("DUBL_SCORE_BET"),
-        "dubl_reasoning_bet": extract("DUBL_REASONING_BET"),
-        "dubl_score_ou":      extract_score("DUBL_SCORE_OU"),
-        "dubl_reasoning_ou":  extract("DUBL_REASONING_OU"),
+        "dubl_score_bet":     dubl_bet_score or extract_score("DUBL_SCORE_BET"),
+        "dubl_reasoning_bet": dubl_bet_reason or extract("DUBL_REASONING_BET"),
+        "dubl_score_ou":      dubl_ou_score or extract_score("DUBL_SCORE_OU"),
+        "dubl_reasoning_ou":  dubl_ou_reason or extract("DUBL_REASONING_OU"),
         "lines": {
             "awayOdds": away_ml,
             "homeOdds": home_ml,
@@ -1476,38 +1447,6 @@ def get_effective_key(request_key: str) -> str:
     if not key:
         raise HTTPException(status_code=400, detail="No Gemini API key provided.")
     return key
-
-
-async def _gemini_post_with_retry(
-    url: str,
-    json_body: dict,
-    *,
-    timeout: float = 180,
-    max_retries: int = 2,
-) -> httpx.Response:
-    """POST to Gemini with retry + exponential backoff on timeout/network errors."""
-    last_exc: Exception | None = None
-    for attempt in range(1 + max_retries):
-        try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=15, read=timeout, write=15, pool=15),
-            ) as client:
-                resp = await client.post(url, json=json_body)
-                return resp
-        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
-            last_exc = exc
-            if attempt < max_retries:
-                wait = 2 ** (attempt + 1)  # 2s, 4s
-                logging.warning(
-                    f"Gemini timeout (attempt {attempt + 1}/{1 + max_retries}), "
-                    f"retrying in {wait}s: {exc!r}"
-                )
-                await asyncio.sleep(wait)
-            else:
-                logging.error(
-                    f"Gemini timeout after {1 + max_retries} attempts: {exc!r}"
-                )
-    raise last_exc  # type: ignore[misc]
 
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
@@ -1643,28 +1582,6 @@ async def _full_espn_refresh(date_str: str, date_param: str | None) -> list[dict
 
     # Persist full game state to Firestore for instant loads
     _save_games_to_firestore(date_str, merged)
-
-    # Re-attach cached analysis & pick from Firestore so subsequent users
-    # don't trigger a fresh Gemini call for games already analyzed today.
-    try:
-        db = _init_firestore()
-        if db:
-            doc = db.collection(_FS_COL).document(date_str).get()
-            if doc.exists:
-                fs_games = doc.to_dict().get("games", {})
-                for g in merged:
-                    gid = re.sub(r'-\d{8}$', '', g["id"])
-                    stored = fs_games.get(gid, {})
-                    stored_analysis = stored.get("analysis")
-                    if stored_analysis and stored_analysis.get("best_bet"):
-                        # Only overwrite if the game doesn't already have a REAL analysis
-                        existing = g.get("analysis")
-                        if not existing or not existing.get("best_bet"):
-                            g["analysis"] = stored_analysis
-                    if stored.get("pick") and not g.get("pick"):
-                        g["pick"] = stored["pick"]
-    except Exception as e:
-        logging.warning(f"Firestore analysis merge failed: {e}")
 
     # Auto-score any picks whose games are now final
     _score_picks_for_date(date_str, merged)
@@ -2032,32 +1949,6 @@ async def analyze_game(req: AnalyzeRequest):
     away_ml   = game.get("espn_awayOdds") or sticky.get("awayOdds") or "N/A"
     home_ml   = game.get("espn_homeOdds") or sticky.get("homeOdds") or "N/A"
 
-    # ── Early return: if a pre-game analysis already exists in Firestore and
-    #    the odds haven't moved, return it immediately — no Gemini call needed.
-    if not is_live:
-        try:
-            db = _init_firestore()
-            if db:
-                date_str_check = re.sub(r'.*-(\d{8})$', r'\1', req.game_id) if re.search(r'-\d{8}$', req.game_id) else today_date
-                doc = db.collection(_FS_COL).document(date_str_check).get()
-                if doc.exists:
-                    stored = doc.to_dict().get("games", {}).get(base_game_id, {})
-                    cached_analysis = stored.get("analysis")
-                    if cached_analysis and cached_analysis.get("best_bet"):
-                        snap = cached_analysis.get("_snap", {})
-                        odds_match = (
-                            (snap.get("spread") == spread_ln or spread_ln == "N/A") and
-                            (snap.get("ou") == ou_line or ou_line == "N/A")
-                        )
-                        if odds_match:
-                            logging.info(f"Returning cached analysis for {req.game_id} (odds unchanged)")
-                            return {"analysis": cached_analysis}
-                        else:
-                            logging.info(f"Re-analyzing {req.game_id}: odds changed "
-                                         f"(spread {snap.get('spread')!r}→{spread_ln!r}, ou {snap.get('ou')!r}→{ou_line!r})")
-        except Exception as e:
-            logging.warning(f"Firestore cache check failed for {req.game_id}: {e}")
-
     if is_live:
         prompt = (
             f"Live: {game['awayName']} {game.get('awayScore',0)} @ {game['homeName']} {game.get('homeScore',0)} "
@@ -2069,29 +1960,26 @@ async def analyze_game(req: AnalyzeRequest):
             f"SPREAD_LINE: [current spread from your search, e.g. {game['away']} +5.5]\n"
             "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
-            "Decide which side has the best BETTING VALUE given the current score, momentum, and remaining time. "
-            "Consider: (1) Who wins? (2) Does the trailing team COVER the live spread? "
-            "A team can lose but still cover if the spread is large relative to the actual deficit. "
-            "For large live spreads, consider the underdog side — favorites with big leads often coast and fail to cover. "
-            "19% of NBA games are decided in Q4 — don't overweight halftime leads. "
-            "In close Q4 games, pace drops and 3pt accuracy fades — lean UNDER on live O/U. "
-            "For ML: only pick ML when the price is reasonable (better than -200). Prefer SPREAD over expensive ML. "
+            "FIRST decide which team will WIN this game based on the current score, momentum, and remaining time. "
+            "THEN choose the bet type: use SPREAD if laying points is safer given the lead, use ML only if the price is reasonable (better than -200). "
+            "Do NOT pick an underdog just because the + odds look good — only pick the underdog if you genuinely believe they will win or cover. "
             "Format: 'TEAM LINE — 1-2 sentence live edge reason (score situation, foul trouble, pace).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
-            "OU_LEAN: [Use the OU_LINE you wrote above. ANALYZE THIS GAME: What is the current combined scoring rate projected to the end? "
-            "Factor in each team's PPG vs the other's defensive rating, current game pace, and foul rate. "
-            "Then layer on any situational edge (B2B, double-digit spread, key injury). "
-            "Format: 'OVER/UNDER [that number] — 2-sentence reason: first explain the matchup-specific scoring projection, then note any situational factor']\n"
+            "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, fouls, or scoring rate']\n"
             "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
             "PROP_STATUS: [Search for the player's current stat line in this game. "
             "Is their stat OVER or UNDER pace vs the line? "
             "Format: 'ON TRACK — X [stat] through Q[N]' or 'FADING — X [stat] through Q[N]']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0. Count your edges: 0 edges=1.5, 1 edge=2.0-2.5, 2 edges=3.0-3.5, 3+=4.0+. "
-            "Tight game with no clear edge = 1.5-2.0. Blowout with clear side = 3.5-4.0. Do NOT default to 3.5.]\n"
-            "DUBL_REASONING_BET: [1 sentence: name the specific edges you counted for that score.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0. Projected total within 3 of line = 2.0-2.5. 5+ pts off = 3.5+. Do NOT default to 3.5.]\n"
-            "DUBL_REASONING_OU: [1 sentence: state the projected total vs the line with specific numbers.]"
+            "DUBL_BET: [Score and reasoning together in ONE line. Format: 'X.X — reasoning sentence'. "
+            "The score (1.0-5.0) is your confidence this bet WINS: "
+            "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip. "
+            "The reasoning MUST match the score — 'only option' = 2.0 max, 'dominant' = 4.0+. "
+            "Example: '4.2 — CLE leads by 14 in Q3 with the #2 defense, laying 6.5 is safe.' "
+            "Example: '2.0 — Neither team inspires confidence but HOU has home court.']\n"
+            "DUBL_OU: [Same format: 'X.X — reasoning sentence'. Score is confidence the O/U lean hits. "
+            "Example: '3.5 — Both teams in top 10 pace, combined 118 pts at half projects well over 224.5.']"
         )
     else:
         prompt = (
@@ -2104,40 +1992,31 @@ async def analyze_game(req: AnalyzeRequest):
             f"SPREAD_LINE: [current spread you found, e.g. {game['away']} +5.5]\n"
             "OU_LINE: [current O/U total from your search, e.g. 228.5]\n"
             "BEST_BET: [Pick the AWAY_ML, HOME_ML, or SPREAD_LINE you wrote above — NEVER a player prop. "
-            "Decide which side has the best BETTING VALUE — this is NOT always the team that wins outright. "
-            "Format: 'TEAM LINE — 2-sentence reason.' "
-            "CRITICAL: Both sentences MUST name specific teams/players/stats from your search. "
-            "Example: 'MIL +11.5 — The Bucks are 8-3 ATS as underdogs this season and OKC is 4-7 ATS as double-digit favorites. "
-            "Milwaukee's defense holds opponents to 108.1 PPG (7th) which keeps games close even on the road.' "
-            "NEVER write generic statements like 'big favorites often fail to cover' without team-specific evidence.]\n"
+            "FIRST decide which team will WIN this game — use record, recent form, home court, injuries, and head-to-head. "
+            "The better team with the better recent form playing at home is usually the right pick. "
+            "THEN choose the bet type: prefer SPREAD for big favorites (-250+) since laying points at -110 is cheaper than expensive ML. "
+            "Only pick ML when the price is reasonable (better than -200) and you're confident in a straight-up win. "
+            "Do NOT pick underdogs just because + odds look appealing — bad teams lose more often than the odds suggest. "
+            "Format: 'TEAM LINE — 2-sentence reason (who wins and why, then why this bet type).']\n"
             f"BET_TEAM: [{game['away']} or {game['home']} — abbreviation only]\n"
             "BET_TYPE: [SPREAD or ML — which did you recommend in BEST_BET?]\n"
-            "OU_LEAN: [Use the OU_LINE you wrote above. Your reasoning MUST include actual numbers from your search. "
-            "Format: 'OVER/UNDER [number] — 2-sentence reason.' "
-            "Sentence 1: cite each team's PPG, OPP PPG, or offensive/defensive rating and what the combined projection is vs the line. "
-            "Sentence 2: name the specific situational factor that pushes it further (injury, B2B, pace mismatch). "
-            "Example: 'OVER 224.5 — PHX averages 118.3 PPG and DET allows 117.9 OPP PPG, projecting a 240+ combined pace. "
-            "DET also plays at the 4th-fastest pace (101.2) which will push PHX into more possessions than usual.' "
-            "NEVER write 'double-digit spreads hit overs' or any generic rule as your primary reasoning.]\n"
-            "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason with specific stats']\n"
-            "DUBL_SCORE_BET: [float 1.0-5.0. COUNT YOUR EDGES: "
-            "0 edges (even matchup, no trend) = 1.0-1.5. "
-            "1 edge (just ATS or just B2B) = 2.0-2.5. "
-            "2 reinforcing edges = 3.0-3.5. "
-            "3+ stacking edges with no counter = 4.0-4.5. "
-            "ATS 45-55% alone = max 2.5. Do NOT default to 3.5.]\n"
-            "DUBL_REASONING_BET: [Name the specific edges you counted: 'Edge 1: X. Edge 2: Y.' If only 1 edge, say so.]\n"
-            "DUBL_SCORE_OU: [float 1.0-5.0. "
-            "Projected total within 3 pts of line = max 2.5. "
-            "5+ pts off = 3.0-3.5. "
-            "8+ pts off with pace/injury support = 4.0+. Do NOT default to 3.5.]\n"
-            "DUBL_REASONING_OU: [State the math: 'Team A PPG + Team B PPG = X vs line Y, difference of Z pts.' Then name any situational factor.]"
+            "OU_LEAN: [Use the OU_LINE you wrote above. Format: 'OVER/UNDER [that number] — 1-2 sentence reason citing pace, defensive rank, scoring trend, or injury']\n"
+            "PLAYER_PROP: [Player prop line from your search. Format: 'Player OVER/UNDER X.X Stat — 1 sentence reason']\n"
+            "DUBL_BET: [Score and reasoning together in ONE line. Format: 'X.X — reasoning sentence'. "
+            "The score (1.0-5.0) is your confidence this bet WINS: "
+            "5.0 = dominant team, blowout likely. 4.0 = strong favorite, clear edge. 3.0 = lean, could go either way. "
+            "2.0 = low conviction, picking lesser of two evils. 1.0 = coin flip. "
+            "The reasoning MUST match the score — 'only option' = 2.0 max, 'dominant' = 4.0+. "
+            "Example: '4.2 — BOS is 8-2 L10 at home and OKC is on a B2B, laying 5.5 is the right call.' "
+            "Example: '2.1 — Two bad teams but WAS has home court and a rest edge.']\n"
+            "DUBL_OU: [Same format: 'X.X — reasoning sentence'. Score is confidence the O/U lean hits. "
+            "Example: '3.8 — Both teams top 10 in pace with weak perimeter D, projects over 228.5.']"
         )
 
-    try:
-        resp = await _gemini_post_with_retry(
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
             f"{GEMINI_URL}?key={key}",
-            {
+            json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
@@ -2148,12 +2027,6 @@ async def analyze_game(req: AnalyzeRequest):
                 },
             },
             timeout=180,
-            max_retries=2,
-        )
-    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
-        raise HTTPException(
-            status_code=504,
-            detail="Analysis timed out — Gemini took too long to respond. Please try again.",
         )
     data = resp.json()
     if "error" in data:
@@ -2233,8 +2106,6 @@ async def analyze_game(req: AnalyzeRequest):
     return {"analysis": analysis}
 
 
-
-
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     key = get_effective_key(req.api_key)
@@ -2260,10 +2131,10 @@ async def chat(req: ChatRequest):
         {"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
         for m in req.messages
     ]
-    try:
-        resp = await _gemini_post_with_retry(
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
             f"{GEMINI_URL}?key={key}",
-            {
+            json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": contents,
                 "generationConfig": {
@@ -2273,12 +2144,6 @@ async def chat(req: ChatRequest):
                 },
             },
             timeout=180,
-            max_retries=2,
-        )
-    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
-        raise HTTPException(
-            status_code=504,
-            detail="Chat timed out — Gemini took too long to respond. Please try again.",
         )
     data = resp.json()
     if "error" in data:
@@ -2287,9 +2152,266 @@ async def chat(req: ChatRequest):
     return {"reply": text}
 
 
+# ── FIREBASE AUTH + BETTING (kept for future real-auth use) ───────────────────
+from firebase_admin import auth as fb_auth
+from fastapi import Header
+
+BYPASS_AUTH = os.getenv("BYPASS_AUTH", "").strip().lower() in ("true", "1", "yes")
+_BYPASS_UID = "admin"
+
+# Derive Firebase client config from the service account when possible.
+def _build_firebase_client_config() -> dict:
+    sa_env = os.getenv("FIREBASE_CREDENTIALS", "").strip()
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "")
+    if not project_id and sa_env:
+        try:
+            project_id = json.loads(sa_env).get("project_id", "")
+        except Exception:
+            pass
+    if not project_id and pathlib.Path("firebase-service-account.json").exists():
+        try:
+            with open("firebase-service-account.json") as f:
+                project_id = json.load(f).get("project_id", "")
+        except Exception:
+            pass
+    return {
+        "apiKey": os.getenv("FIREBASE_API_KEY", ""),
+        "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN", f"{project_id}.firebaseapp.com" if project_id else ""),
+        "projectId": project_id,
+        "appId": os.getenv("FIREBASE_APP_ID", ""),
+        "bypass_auth": BYPASS_AUTH,
+    }
+
+FIREBASE_CLIENT_CONFIG = _build_firebase_client_config()
+
+STARTING_BALANCE = 500.0
+DEFAULT_BET_AMOUNT = 10.0
+_USERS_COL = "users"
+_BETS_COL = "bets"
+
+
+def _verify_token(authorization: str) -> dict:
+    """Verify a Firebase ID token, or return bypass admin if BYPASS_AUTH is set."""
+    if BYPASS_AUTH:
+        return {"uid": _BYPASS_UID, "name": "Admin", "picture": ""}
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing auth token")
+    token = authorization[7:]
+    _init_firestore()
+    try:
+        return fb_auth.verify_id_token(token)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid auth token: {e}")
+
+
+def _get_or_create_user(uid: str, display_name: str = "", photo_url: str = "") -> dict:
+    """Get or create a user document in Firestore. Returns user data dict."""
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=500, detail="Firestore unavailable")
+    doc_ref = db.collection(_USERS_COL).document(uid)
+    doc = doc_ref.get()
+    if doc.exists:
+        return doc.to_dict()
+    user_data = {
+        "uid": uid,
+        "display_name": display_name,
+        "photo_url": photo_url,
+        "balance": STARTING_BALANCE,
+        "created_at": fb_firestore.SERVER_TIMESTAMP,
+    }
+    doc_ref.set(user_data)
+    user_data["balance"] = STARTING_BALANCE
+    return user_data
+
+
+@app.get("/api/firebase-config")
+def firebase_config():
+    """Return Firebase client config + bypass_auth flag."""
+    return FIREBASE_CLIENT_CONFIG
+
+
+@app.get("/api/me")
+def get_me(authorization: str = Header("")):
+    """Get current user profile + balance."""
+    decoded = _verify_token(authorization)
+    uid = decoded["uid"]
+    user = _get_or_create_user(
+        uid,
+        display_name=decoded.get("name", ""),
+        photo_url=decoded.get("picture", ""),
+    )
+    return {
+        "uid": uid,
+        "display_name": user.get("display_name", ""),
+        "photo_url": user.get("photo_url", ""),
+        "balance": user.get("balance", STARTING_BALANCE),
+    }
+
+
+class PlaceBetRequest(BaseModel):
+    game_id: str
+    date: str  # YYYYMMDD
+    bet_type: str = "spread"  # "spread" only for now
+    side: str  # team abbreviation e.g. "BOS"
+    line: str  # e.g. "BOS -2.5"
+    odds: str = "-110"  # american odds
+    amount: float = DEFAULT_BET_AMOUNT
+
+
+@app.post("/api/bets")
+def place_bet(req: PlaceBetRequest, authorization: str = Header("")):
+    """Place a spread bet with play money."""
+    decoded = _verify_token(authorization)
+    uid = decoded["uid"]
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=500, detail="Firestore unavailable")
+
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Bet amount must be positive")
+    if req.amount > 100:
+        raise HTTPException(status_code=400, detail="Max bet is $100")
+
+    user_ref = db.collection(_USERS_COL).document(uid)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        _get_or_create_user(uid, decoded.get("name", ""), decoded.get("picture", ""))
+        user_doc = user_ref.get()
+
+    balance = user_doc.to_dict().get("balance", STARTING_BALANCE)
+    if req.amount > balance:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    existing = db.collection(_BETS_COL).where("uid", "==", uid).where(
+        "game_id", "==", req.game_id
+    ).where("bet_type", "==", req.bet_type).where("status", "==", "pending").limit(1).get()
+    if len(list(existing)) > 0:
+        raise HTTPException(status_code=400, detail="You already have a pending bet on this game")
+
+    new_balance = round(balance - req.amount, 2)
+    user_ref.update({"balance": new_balance})
+
+    bet_data = {
+        "uid": uid,
+        "game_id": req.game_id,
+        "date": req.date,
+        "bet_type": req.bet_type,
+        "side": req.side,
+        "line": req.line,
+        "odds": req.odds,
+        "amount": req.amount,
+        "status": "pending",
+        "payout": 0,
+        "created_at": fb_firestore.SERVER_TIMESTAMP,
+    }
+    bet_ref = db.collection(_BETS_COL).document()
+    bet_ref.set(bet_data)
+    bet_data["id"] = bet_ref.id
+    bet_data["balance"] = new_balance
+    return bet_data
+
+
+@app.get("/api/bets")
+def get_bets(date: Optional[str] = None, authorization: str = Header("")):
+    """Get user's bets, optionally filtered by date."""
+    decoded = _verify_token(authorization)
+    uid = decoded["uid"]
+    db = _init_firestore()
+    if not db:
+        return {"bets": []}
+    query = db.collection(_BETS_COL).where("uid", "==", uid)
+    if date:
+        query = query.where("date", "==", date)
+    query = query.limit(50)
+    bets = []
+    for doc in query.stream():
+        b = doc.to_dict()
+        b["id"] = doc.id
+        bets.append(b)
+    return {"bets": bets}
+
+
+@app.post("/api/bets/settle")
+def settle_bets(date: str, authorization: str = Header("")):
+    """Settle all pending bets for a date using final scores."""
+    decoded = _verify_token(authorization)
+    db = _init_firestore()
+    if not db:
+        raise HTTPException(status_code=500, detail="Firestore unavailable")
+    games = _load_games_from_firestore(date)
+    if not games:
+        return {"settled": 0}
+    final_games = {
+        re.sub(r'-\d{8}$', '', g["id"]): g
+        for g in games if g.get("status") == "final"
+    }
+    if not final_games:
+        return {"settled": 0}
+    pending = db.collection(_BETS_COL).where("date", "==", date).where("status", "==", "pending").stream()
+    settled_count = 0
+    for doc in pending:
+        bet = doc.to_dict()
+        game_id = bet["game_id"]
+        base_id = re.sub(r'-\d{8}$', '', game_id)
+        game = final_games.get(base_id) or final_games.get(game_id)
+        if not game:
+            continue
+        home_score = int(game.get("homeScore") or 0)
+        away_score = int(game.get("awayScore") or 0)
+        if home_score == 0 and away_score == 0:
+            continue
+        result = _settle_spread_bet(bet, game, home_score, away_score)
+        payout = 0.0
+        if result == "won":
+            odds_val = int(bet.get("odds", "-110").replace("+", ""))
+            if odds_val > 0:
+                payout = round(bet["amount"] * (odds_val / 100) + bet["amount"], 2)
+            else:
+                payout = round(bet["amount"] * (100 / abs(odds_val)) + bet["amount"], 2)
+        elif result == "push":
+            payout = bet["amount"]
+        doc.reference.update({
+            "status": result, "payout": payout,
+            "settled_at": fb_firestore.SERVER_TIMESTAMP,
+        })
+        if payout > 0:
+            user_ref = db.collection(_USERS_COL).document(bet["uid"])
+            user_doc = user_ref.get()
+            if user_doc.exists:
+                cur_balance = user_doc.to_dict().get("balance", 0)
+                user_ref.update({"balance": round(cur_balance + payout, 2)})
+        settled_count += 1
+    return {"settled": settled_count}
+
+
+def _settle_spread_bet(bet: dict, game: dict, home_score: int, away_score: int) -> str:
+    """Determine if a spread bet won, lost, or pushed."""
+    line_str = bet.get("line", "")
+    side = bet.get("side", "")
+    m = re.match(r'^([A-Z]+)\s*([-+]?\d+\.?\d*)$', line_str.strip().upper())
+    if not m:
+        return "lost"
+    fav_abbr = m.group(1)
+    spread_val = float(m.group(2))
+    home_abbr = (game.get("home") or "").upper()
+    fav_score = home_score if fav_abbr == home_abbr else away_score
+    dog_score = away_score if fav_abbr == home_abbr else home_score
+    actual_margin = fav_score - dog_score
+    needed = abs(spread_val)
+    if actual_margin > needed:
+        fav_covered = True
+    elif actual_margin < needed:
+        fav_covered = False
+    else:
+        return "push"
+    bet_on_fav = side.upper() == fav_abbr
+    return ("won" if fav_covered else "lost") if bet_on_fav else ("won" if not fav_covered else "lost")
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY)}
+    return {"status": "ok", "has_server_key": bool(GEMINI_API_KEY), "bypass_auth": BYPASS_AUTH}
 
 
 USER_STATIC_DIR = pathlib.Path(__file__).parent / "user_static"

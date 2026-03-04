@@ -496,7 +496,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
 
         {/* Content */}
         <div style={{ position:"relative", zIndex:3, padding:`12px 14px ${isLive ? 16 : 4}px`, pointerEvents: isUp && onBet ? "none" : "auto" }}>
-          {/* Top row: avatars left / injury-or-live-prob / avatars right */}
+          {/* Top row: avatars left / POT center / avatars right */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, minHeight:32 }}>
             {/* Away bettors — top left */}
             <div style={{ flexShrink:0, minWidth:40 }}>
@@ -508,16 +508,40 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               )}
             </div>
 
-            {/* Center top: injury alert or live win-prob chips */}
+            {/* Center top: POT badge (always top center) or W/L result or injury */}
             <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"flex-start" }}>
-              {game.injuryAlert && isUp ? (
+              {betSettled ? (() => {
+                const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
+                const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
+                const payout = iWon && winners.length > 0 && losers.length > 0
+                  ? Math.round(potTotal / winners.length * 100) / 100
+                  : iWon ? 10 : 0;
+                return (
+                  <div style={{ display:"inline-flex", alignItems:"center", gap:4,
+                    background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
+                    border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
+                    borderRadius:8, padding:"3px 9px",
+                  }}>
+                    <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
+                      {iWon ? "W" : "L"}
+                    </span>
+                    {iWon && payout ? (
+                      <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
+                    ) : !iWon ? (
+                      <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
+                    ) : null}
+                  </div>
+                );
+              })() : potTotal > 0 ? (
+                <div style={{ display:"inline-flex", alignItems:"center", gap:4,
+                  background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
+                }}>
+                  <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
+                  <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
+                </div>
+              ) : game.injuryAlert && isUp ? (
                 <div style={{ background:"rgba(248,70,70,0.2)", border:"1px solid rgba(248,70,70,0.3)", borderRadius:6, padding:"3px 8px", fontSize:9, color:"#ff9090", fontWeight:600, maxWidth:"80%", textAlign:"center" }}>
                   ⚠ {game.injuryAlert}
-                </div>
-              ) : isLive && (game.awayWinProb != null && game.homeWinProb != null) ? (
-                <div style={{ display:"flex", gap:5, flexShrink:0 }}>
-                  <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
-                  <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
                 </div>
               ) : null}
             </div>
@@ -581,37 +605,13 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
                   )}
                 </>
               )}
-              {/* Pot badge — centered below score/prob */}
-              {betSettled ? (() => {
-                const losers = winningSide === "away" ? (gameBets?.home || []) : (gameBets?.away || []);
-                const winners = winningSide === "away" ? (gameBets?.away || []) : (gameBets?.home || []);
-                const payout = iWon && winners.length > 0 && losers.length > 0
-                  ? Math.round(potTotal / winners.length * 100) / 100
-                  : iWon ? 10 : 0;
-                return (
-                  <div style={{ marginTop:6, display:"inline-flex", alignItems:"center", gap:4,
-                    background: iWon ? "rgba(83,211,55,0.25)" : "rgba(248,70,70,0.25)",
-                    border: `1px solid ${iWon ? T.greenBdr : "rgba(248,70,70,0.4)"}`,
-                    borderRadius:8, padding:"3px 9px",
-                  }}>
-                    <span style={{ fontSize:9, fontWeight:800, letterSpacing:"0.06em", color: iWon ? T.green : T.red }}>
-                      {iWon ? "W" : "L"}
-                    </span>
-                    {iWon && payout ? (
-                      <span style={{ fontSize:11, color:T.green, fontWeight:900 }}>+${payout}</span>
-                    ) : !iWon ? (
-                      <span style={{ fontSize:11, color:T.red, fontWeight:900 }}>-$10</span>
-                    ) : null}
-                  </div>
-                );
-              })() : potTotal > 0 ? (
-                <div style={{ marginTop:6, display:"inline-flex", alignItems:"center", gap:4,
-                  background:"rgba(0,0,0,0.55)", borderRadius:8, padding:"3px 9px",
-                }}>
-                  <span style={{ fontSize:9, color:T.green, fontWeight:800, letterSpacing:"0.06em" }}>POT</span>
-                  <span style={{ fontSize:12, color:T.green, fontWeight:900 }}>${potTotal}</span>
+              {/* Live win-prob chips below score */}
+              {isLive && (game.awayWinProb != null && game.homeWinProb != null) && (
+                <div style={{ display:"flex", gap:5, justifyContent:"center", marginTop:6 }}>
+                  <HeroWinChip pct={game.awayWinProb} abbr={game.away} />
+                  <HeroWinChip pct={game.homeWinProb} abbr={game.home} />
                 </div>
-              ) : null}
+              )}
             </div>
 
             {/* Home */}

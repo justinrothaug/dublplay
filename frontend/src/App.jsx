@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { api } from "./api.js";
+import { initFirebase, googleSignIn, googleSignOut, onAuthChange } from "./firebase.js";
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
 const T = {
@@ -228,7 +229,7 @@ function lineMovement(current, opening, isSpread) {
 }
 
 // ── GAME CARD ─────────────────────────────────────────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, user, userBet, onBet }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -390,6 +391,57 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
           {dispHomeOdds && dispAwayOdds && (
             <OddsCol label="MONEYLINE" value={`${dispAwayOdds} / ${dispHomeOdds}`} highlight={!isFinal} />
           )}
+        </div>
+      )}
+
+      {/* ── Bet buttons (spread only, upcoming games) ── */}
+      {isUp && dispSpread && user && onBet && !userBet && (() => {
+        const m = dispSpread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
+        if (!m) return null;
+        const favAbbr = m[1];
+        const spreadNum = parseFloat(m[2]);
+        const dogAbbr = favAbbr === game.home ? game.away : game.home;
+        const dogLine = `${dogAbbr} +${Math.abs(spreadNum)}`;
+        return (
+          <div style={{ display:"flex", background:"rgba(83,211,55,0.04)", borderTop:`1px solid ${T.border}` }}>
+            <button
+              onClick={() => onBet(game.id, favAbbr, dispSpread, dispAwaySpreadOdds || dispHomeSpreadOdds || "-110", game)}
+              style={{
+                flex:1, padding:"9px 0", textAlign:"center",
+                background:"transparent", border:"none", borderRight:`1px solid ${T.border}`,
+                fontSize:10, fontWeight:700, color:T.green, letterSpacing:"0.04em",
+              }}
+            >BET {dispSpread}</button>
+            <button
+              onClick={() => onBet(game.id, dogAbbr, dogLine, dispHomeSpreadOdds || dispAwaySpreadOdds || "-110", game)}
+              style={{
+                flex:1, padding:"9px 0", textAlign:"center",
+                background:"transparent", border:"none",
+                fontSize:10, fontWeight:700, color:T.green, letterSpacing:"0.04em",
+              }}
+            >BET {dogLine}</button>
+          </div>
+        );
+      })()}
+      {/* Show existing bet badge */}
+      {userBet && (
+        <div style={{
+          display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+          padding:"8px 12px", background:"rgba(83,211,55,0.06)",
+          borderTop:`1px solid ${T.border}`,
+        }}>
+          <span style={{
+            fontSize:9, fontWeight:800, letterSpacing:"0.08em",
+            color: userBet.status === "won" ? T.green : userBet.status === "lost" ? T.red : userBet.status === "push" ? T.gold : T.text2,
+          }}>
+            {userBet.status === "pending" ? "BET PLACED" : userBet.status.toUpperCase()}
+          </span>
+          <span style={{ fontSize:10, fontWeight:700, color:T.text }}>
+            {userBet.side} {userBet.line.replace(userBet.side, "").trim()}
+          </span>
+          <span style={{ fontSize:10, color:T.text3 }}>${userBet.amount}</span>
+          {userBet.status === "won" && <span style={{ fontSize:10, fontWeight:700, color:T.green }}>+${(userBet.payout - userBet.amount).toFixed(2)}</span>}
+          {userBet.status === "lost" && <span style={{ fontSize:10, fontWeight:700, color:T.red }}>-${userBet.amount.toFixed(2)}</span>}
         </div>
       )}
 
@@ -832,7 +884,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, user, userBets, onBet }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -912,6 +964,12 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               favorites={favorites}
               onFavorite={onFavorite}
               pickRecord={pickRecord}
+              user={user}
+              userBet={userBets?.find(b => {
+                const baseId = g.id.replace(/-\d{8}$/, "");
+                return b.game_id === baseId || b.game_id === g.id;
+              })}
+              onBet={onBet}
             />
           );
         })}
@@ -1984,6 +2042,67 @@ export default function App() {
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
   const accuribetRef = useRef({}); // client-side ACCURIBET predictions (bypasses Cloudflare)
 
+  // ── AUTH STATE ──
+  const [user, setUser] = useState(null); // Firebase user object
+  const [userProfile, setUserProfile] = useState(null); // { uid, display_name, photo_url, balance }
+  const [authReady, setAuthReady] = useState(false);
+  const [userBets, setUserBets] = useState([]); // bets for current date
+  const [betSlip, setBetSlip] = useState(null); // { gameId, side, line, odds, game }
+
+  // Initialize Firebase Auth on mount
+  useEffect(() => {
+    initFirebase().then(() => {
+      const unsub = onAuthChange((fbUser) => {
+        setUser(fbUser);
+        setAuthReady(true);
+        if (fbUser) {
+          api.getMe().then(setUserProfile).catch(console.error);
+        } else {
+          setUserProfile(null);
+        }
+      });
+      return unsub;
+    }).catch(() => setAuthReady(true));
+  }, []);
+
+  // Load user bets when date or user changes
+  useEffect(() => {
+    if (!user) { setUserBets([]); return; }
+    const dateKey = selectedDate || todayStr;
+    api.getBets(dateKey).then(d => setUserBets(d.bets || [])).catch(() => setUserBets([]));
+  }, [user, selectedDate, games]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSignIn = async () => {
+    try { await googleSignIn(); } catch (e) { console.error("Sign-in failed:", e); }
+  };
+  const handleSignOut = async () => {
+    try { await googleSignOut(); } catch (e) { console.error("Sign-out failed:", e); }
+  };
+  const refreshProfile = useCallback(() => {
+    if (user) api.getMe().then(setUserProfile).catch(console.error);
+  }, [user]);
+  const handlePlaceBet = async () => {
+    if (!betSlip || !user) return;
+    try {
+      const result = await api.placeBet({
+        game_id: betSlip.gameId,
+        date: selectedDate || todayStr,
+        bet_type: "spread",
+        side: betSlip.side,
+        line: betSlip.line,
+        odds: betSlip.odds || "-110",
+        amount: betSlip.amount || 10,
+      });
+      setUserProfile(prev => prev ? { ...prev, balance: result.balance } : prev);
+      setBetSlip(null);
+      // Refresh bets list
+      const dateKey = selectedDate || todayStr;
+      api.getBets(dateKey).then(d => setUserBets(d.bets || [])).catch(() => {});
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   // Use local date parts to avoid UTC rollover (toISOString returns UTC, wrong after 4pm PT etc.)
   const fmtLocal = (d) => {
     const y = d.getFullYear();
@@ -2205,6 +2324,44 @@ export default function App() {
             <span style={{ fontSize:20 }}>🏀</span>
             <span style={{ color:T.green, fontWeight:800, fontSize:17, letterSpacing:"0.04em" }}>dublplay</span>
           </div>
+          {/* Auth / Balance — right side */}
+          <div style={{ marginLeft:"auto", flexShrink:0, display:"flex", alignItems:"center", gap:8, paddingRight:16 }}>
+            {user ? (
+              <>
+                {userProfile && (
+                  <span style={{
+                    background: T.greenDim, border: `1px solid ${T.greenBdr}`,
+                    borderRadius: 6, padding: "3px 8px",
+                    fontSize: 11, fontWeight: 800, color: T.green,
+                  }}>
+                    ${userProfile.balance?.toFixed(0) ?? "500"}
+                  </span>
+                )}
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    style={{ width: 28, height: 28, borderRadius: "50%", cursor: "pointer", border: `2px solid ${T.border}` }}
+                    onClick={handleSignOut}
+                    title="Sign out"
+                  />
+                ) : (
+                  <button onClick={handleSignOut} style={{
+                    background: "transparent", border: `1px solid ${T.border}`,
+                    borderRadius: 6, padding: "4px 8px", color: T.text2, fontSize: 9,
+                    fontWeight: 700, letterSpacing: "0.06em",
+                  }}>OUT</button>
+                )}
+              </>
+            ) : authReady ? (
+              <button onClick={handleSignIn} style={{
+                background: T.green, color: "#080d1a", border: "none",
+                borderRadius: 8, padding: "6px 14px", fontSize: 10,
+                fontWeight: 800, letterSpacing: "0.06em",
+              }}>SIGN IN</button>
+            ) : null}
+          </div>
           {/* Date strip — scrollable, fills remaining width */}
           <div className="date-strip" style={{
             flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch",
@@ -2278,6 +2435,9 @@ export default function App() {
             favorites={favorites}
             onFavorite={favorites}
             picksMap={picksMap}
+            user={user}
+            userBets={userBets}
+            onBet={(gameId, side, line, odds, game) => setBetSlip({ gameId, side, line, odds: odds || "-110", amount: 10, game })}
           />
         </>
       )}
@@ -2305,6 +2465,71 @@ export default function App() {
 
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
+
+      {/* ── Bet Slip Modal ── */}
+      {betSlip && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:999,
+          background:"rgba(0,0,0,0.7)", display:"flex",
+          alignItems:"flex-end", justifyContent:"center",
+        }} onClick={() => setBetSlip(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background:T.card, borderRadius:"20px 20px 0 0",
+            padding:"24px 20px 32px", width:"100%", maxWidth:400,
+            border:`1px solid ${T.border}`, borderBottom:"none",
+            animation:"slideUp 0.2s ease",
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <span style={{ fontSize:14, fontWeight:800, color:T.text, letterSpacing:"0.04em" }}>PLACE BET</span>
+              <button onClick={() => setBetSlip(null)} style={{ background:"none", border:"none", color:T.text3, fontSize:18 }}>✕</button>
+            </div>
+            <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:12, padding:14, marginBottom:16 }}>
+              <div style={{ fontSize:10, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>SPREAD</div>
+              <div style={{ fontSize:16, fontWeight:800, color:T.text }}>{betSlip.side} {betSlip.line.replace(betSlip.side, "").trim()}</div>
+              <div style={{ fontSize:11, color:T.text2, marginTop:4 }}>
+                {betSlip.game ? `${betSlip.game.awayName} @ ${betSlip.game.homeName}` : betSlip.gameId}
+                <span style={{ color:T.text3, marginLeft:8 }}>{betSlip.odds}</span>
+              </div>
+            </div>
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:10, color:T.text3, letterSpacing:"0.08em", fontWeight:700, marginBottom:8 }}>WAGER</div>
+              <div style={{ display:"flex", gap:6 }}>
+                {[5, 10, 25, 50].map(amt => (
+                  <button key={amt} onClick={() => setBetSlip(s => ({ ...s, amount: amt }))} style={{
+                    flex:1, padding:"10px 0", borderRadius:8, fontSize:12, fontWeight:700,
+                    background: betSlip.amount === amt ? T.green : "rgba(255,255,255,0.06)",
+                    color: betSlip.amount === amt ? "#080d1a" : T.text2,
+                    border: `1px solid ${betSlip.amount === amt ? T.green : T.border}`,
+                  }}>${amt}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, fontSize:11, color:T.text2 }}>
+              <span>To Win</span>
+              <span style={{ fontWeight:700, color:T.green }}>
+                ${(() => {
+                  const o = parseInt(betSlip.odds?.replace("+",""), 10);
+                  if (isNaN(o)) return "0.00";
+                  const profit = o > 0 ? (betSlip.amount * o / 100) : (betSlip.amount * 100 / Math.abs(o));
+                  return profit.toFixed(2);
+                })()}
+              </span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, fontSize:11, color:T.text2 }}>
+              <span>Balance after</span>
+              <span style={{ color:T.text3 }}>
+                ${((userProfile?.balance ?? 500) - betSlip.amount).toFixed(2)}
+              </span>
+            </div>
+            <button onClick={handlePlaceBet} style={{
+              width:"100%", background:T.green, color:"#080d1a", border:"none",
+              borderRadius:10, padding:14, fontSize:13, fontWeight:800, letterSpacing:"0.06em",
+            }}>
+              PLACE ${betSlip.amount} BET
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

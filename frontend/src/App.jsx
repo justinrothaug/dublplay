@@ -144,6 +144,7 @@ function parseGeminiText(text) {
 const AVATAR_COLORS = ["#f84646","#53d337","#4a90d9","#f5a623","#9b59b6",
                        "#1abc9c","#e74c3c","#3498db","#e67e22","#2ecc71"];
 function avatarColor(name) {
+  if (!name) return AVATAR_COLORS[0];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
@@ -818,6 +819,33 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
             const homeCount = (gameBets?.home || []).length;
             const awayPot = awayCount * 10;
             const homePot = homeCount * 10;
+
+            // For final games, show who won the pot
+            if (isFinal && gameBets?.total > 0) {
+              const r = calcFinalResults(game, lockedOdds);
+              if (r?.spreadResult) {
+                const favIsHome = r.spreadResult.favAbbr === game.home;
+                const winningSide = r.spreadResult.hit === "push" ? "push"
+                  : r.spreadResult.hit === "fav" ? (favIsHome ? "home" : "away")
+                  : (favIsHome ? "away" : "home");
+                if (winningSide === "push") {
+                  return <span style={{ fontSize:12, fontWeight:700, color:T.text3 }}>Push — bets returned</span>;
+                }
+                const winners = gameBets?.[winningSide] || [];
+                const winnerNames = winners.map(e => e.username || "?").join(", ");
+                const losers = winningSide === "away" ? homeCount : awayCount;
+                const winPerPerson = winners.length > 0 ? Math.round((losers * 10) / winners.length) : 0;
+                const iWon = winners.some(e => e.uid === profile?.uid);
+                return (
+                  <span style={{ fontSize:12, fontWeight:700, color: iWon ? T.green : T.red }}>
+                    {iWon ? `You won +$${winPerPerson}` : winnerNames ? `${winnerNames} won` : "Settled"}
+                  </span>
+                );
+              }
+              // No spread data — just show pot settled
+              return <span style={{ fontSize:12, fontWeight:700, color:T.text3 }}>Final</span>;
+            }
+
             const potentialWin = myPick === "away" && awayCount > 0 ? Math.round(homePot / awayCount)
               : myPick === "home" && homeCount > 0 ? Math.round(awayPot / homeCount)
               : null;
@@ -825,11 +853,11 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               <span style={{ fontSize:12, fontWeight:700, color:T.green }}>
                 To win: ${potentialWin}
               </span>
-            ) : (
+            ) : !isFinal ? (
               <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
                 Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
               </span>
-            );
+            ) : null;
           })()}
         </div>
 
@@ -845,7 +873,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   display:"flex", alignItems:"center", justifyContent:"center",
                   fontSize:10, fontWeight:800, color:"#fff",
                   border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
-                }}>{e.username[0].toUpperCase()}</div>
+                }}>{(e.username || "?")[0].toUpperCase()}</div>
                 {e.lockedSpread && (
                   <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
                     {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
@@ -864,7 +892,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   display:"flex", alignItems:"center", justifyContent:"center",
                   fontSize:10, fontWeight:800, color:"#fff",
                   border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
-                }}>{e.username[0].toUpperCase()}</div>
+                }}>{(e.username || "?")[0].toUpperCase()}</div>
                 {e.lockedSpread && (
                   <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
                     {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
@@ -1545,7 +1573,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:9, fontWeight:800, color:"#fff",
               border:"1.5px solid rgba(255,255,255,0.3)",
-            }}>{e.username[0].toUpperCase()}</div>
+            }}>{(e.username || "?")[0].toUpperCase()}</div>
             {shortLine && <div style={{ fontSize:7, fontWeight:800, color:"#000", lineHeight:1, whiteSpace:"nowrap" }}>{shortLine}</div>}
           </div>
         );
@@ -3486,6 +3514,8 @@ export default function App() {
       .forEach(g => {
         setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: mergeAccuribet(g.analysis, g, accuribetRef.current) });
       });
+    // For past dates, only load cached analysis — don't call analyze API
+    const isPastDate = (selectedDate || todayStr) < todayStr;
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
@@ -3494,7 +3524,7 @@ export default function App() {
           const snap = g.analysis._snap;
           // Re-analyze pre-game games when spread or O/U changed since last analysis.
           // Live re-analysis is handled separately by effect #5.
-          const oddsStale = snap && g.status !== "live" && (
+          const oddsStale = !isPastDate && snap && g.status !== "live" && (
             (g.spread && snap.spread !== "N/A" && snap.spread !== g.spread) ||
             (g.ou     && snap.ou     !== "N/A" && snap.ou     !== g.ou)
           );
@@ -3504,6 +3534,8 @@ export default function App() {
           }
           // Odds moved — fall through and re-run Gemini with fresh lines
         }
+        // Don't call analyze API for past dates — ESPN data may not be available
+        if (isPastDate) return;
         // Already attempted this session — don't call Gemini again
         if (analyzedPreGameRef.current.has(g.id)) return;
         analyzedPreGameRef.current.add(g.id);
@@ -3684,7 +3716,7 @@ export default function App() {
                 display:"inline-flex", alignItems:"center", justifyContent:"center",
                 width:30, height:30, borderRadius:"50%",
                 background: profile.color, fontSize:14, fontWeight:800, color:"#fff",
-              }}>{profile.username[0].toUpperCase()}</span>
+              }}>{(profile.username || "?")[0].toUpperCase()}</span>
             ) : "☰"}
           </button>
           <span

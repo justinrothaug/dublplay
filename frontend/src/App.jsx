@@ -996,6 +996,29 @@ function PickGameCard({ pick, game, onGameClick, onRemove }) {
         </div>
       </div>
 
+      {/* ── Odds strip (same as Explore cards) ── */}
+      {(() => {
+        const rawOu = L.ou || game.ou;
+        const dispSpread = game.spread || L.spread;
+        const dispOu = rawOu ? String(rawOu).replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
+        const showOdds = dispSpread || dispOu || dispHomeOdds;
+        return showOdds ? (
+          <div style={{ display:"flex", background:"#0f0d0a" }}>
+            {dispSpread && (
+              <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
+                movement={lineMovement(dispSpread, game.opening_spread, true)} />
+            )}
+            {dispOu && (
+              <OddsCol label="TOTAL" value={`${dispOu}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
+                movement={lineMovement(dispOu, game.opening_ou)} />
+            )}
+            {dispHomeOdds && dispAwayOdds && (
+              <OddsCol label="MONEYLINE" value={`${dispAwayOdds} / ${dispHomeOdds}`} highlight={!isFinal} />
+            )}
+          </div>
+        ) : null;
+      })()}
+
       {/* Bottom strip: pick label | status | DUBL score */}
       <div style={{
         display:"flex", alignItems:"center", gap:6, padding:"8px 16px",

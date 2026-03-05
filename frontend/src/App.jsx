@@ -502,28 +502,6 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       {isFinal ? (() => {
         const r = calcFinalResults(game);
         if (!r) return null;
-        const myPick = gameBets?.myPick;
-        // Find user's bet entry to check lockedSpread
-        const myEntry = myPick && profile?.uid
-          ? (myPick === "away" ? gameBets?.away : gameBets?.home || []).find(e => e.uid === profile.uid)
-          : null;
-        // Did user's spread bet cover?
-        let spreadHit = null;
-        if (myPick && r.spreadResult) {
-          // User bet on a side — check if that side covered
-          const betIsHome = myPick === "home";
-          const betTeam = betIsHome ? game.home : game.away;
-          const isFav = betTeam === r.spreadResult.favAbbr;
-          spreadHit = r.spreadResult.hit === "push" ? "push" : (isFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
-        }
-        // Did user's ML bet win?
-        let mlHit = null;
-        if (myPick) {
-          const betTeam = myPick === "home" ? game.home : game.away;
-          mlHit = betTeam === r.mlWinner;
-        }
-        const icon = (hit) => hit === "push" ? " 🟰" : hit === true ? " ✓" : hit === false ? " ✗" : "";
-        const hitColor = (hit) => hit === true ? T.green : hit === false ? T.red : T.text;
         return (
           <div style={{
             display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -536,11 +514,10 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.spreadResult.hit === "push" ? "PUSH" : "COVER"}
                 </div>
-                <div style={{ color: spreadHit != null ? hitColor(spreadHit) : (r.spreadResult.hit === "push" ? T.text3 : T.text) }}>
+                <div style={{ color: r.spreadResult.hit === "push" ? T.text3 : T.text }}>
                   {r.spreadResult.hit === "fav" ? `${r.spreadResult.favAbbr} ${r.spreadResult.line}` :
                    r.spreadResult.hit === "dog" ? `${r.spreadResult.dogAbbr} +${Math.abs(r.spreadResult.line)}` :
                    dispSpread}
-                  {spreadHit != null && <span style={{ color:hitColor(spreadHit) }}>{icon(spreadHit)}</span>}
                 </div>
               </div>
             )}
@@ -556,10 +533,7 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
             )}
             <div style={{ textAlign:"center", flex:1, borderLeft: (r.spreadResult || r.totalResult) ? `1px solid ${T.border}` : "none" }}>
               <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>WINNER</div>
-              <div style={{ color: mlHit != null ? hitColor(mlHit) : T.text }}>
-                {r.mlWinner} by {r.margin}
-                {mlHit != null && <span style={{ color:hitColor(mlHit) }}>{icon(mlHit)}</span>}
-              </div>
+              <div style={{ color:T.text }}>{r.mlWinner} by {r.margin}</div>
             </div>
           </div>
         );
@@ -594,27 +568,53 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       )}
 
       {/* Bottom row: pick badges + vol */}
+      {(() => {
+        // Compute AI pick hit/miss for final games
+        let bestBetHit = null;
+        let ouHitCard = null;
+        if (isFinal) {
+          const r = calcFinalResults(game);
+          if (r) {
+            const betTeam = aiOverride?.bet_team;
+            if (betTeam) {
+              if (r.spreadResult) {
+                const bettingFav = betTeam === r.spreadResult.favAbbr;
+                bestBetHit = r.spreadResult.hit === "push" ? "push" : (bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
+              } else {
+                bestBetHit = betTeam === r.mlWinner;
+              }
+            }
+            if (aiOverride?.ou && r.totalResult) {
+              const leanedOver = /over/i.test(aiOverride.ou);
+              ouHitCard = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
+            }
+          }
+        }
+        const hitIcon = (h) => h === "push" ? " 🟰" : h === true ? " ✓" : h === false ? " ✗" : "";
+        const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
+        return (
       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
         {/* Best bet pick */}
         {aiOverride?.best_bet && aiOverride.dubl_score_bet != null && (() => {
           const betLine = aiOverride.best_bet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
           const label = `✦ ${aiOverride.bet_team || "?"}${betLine ? ` ${betLine}` : ""}`;
           const sc = aiOverride.dubl_score_bet;
-          const ec2 = edgeColor(sc);
+          const ec2 = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.gold) : edgeColor(sc);
+          const badgeColor = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.green) : T.green;
           return (
             <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
               <span style={{
                 fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-                color:T.green, background:`${T.green}12`, border:`1px solid ${T.green}33`,
+                color:badgeColor, background:`${badgeColor}12`, border:`1px solid ${badgeColor}33`,
                 borderRadius:6, padding:"3px 8px",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-              }}>{label}</span>
-              <div style={{
+              }}>{label}{hitIcon(bestBetHit)}</span>
+              {!isFinal && <div style={{
                 width:22, height:22, borderRadius:"50%", flexShrink:0,
                 border:`2px solid ${ec2}`, background:`${ec2}12`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 fontSize:9, fontWeight:800, color:ec2,
-              }}>{sc}</div>
+              }}>{sc}</div>}
             </div>
           );
         })()}
@@ -625,21 +625,22 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
           const ouNum = ouMatch?.[2] || "";
           const label = `◉ ${ouDir} ${ouNum}`;
           const sc = aiOverride.dubl_score_ou;
-          const ec2 = edgeColor(sc);
+          const ec2 = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : edgeColor(sc);
+          const badgeColor = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : T.gold;
           return (
             <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
               <span style={{
                 fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-                color:T.gold, background:`${T.gold}12`, border:`1px solid ${T.gold}33`,
+                color:badgeColor, background:`${badgeColor}12`, border:`1px solid ${badgeColor}33`,
                 borderRadius:6, padding:"3px 8px",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-              }}>{label}</span>
-              <div style={{
+              }}>{label}{hitIcon(ouHitCard)}</span>
+              {!isFinal && <div style={{
                 width:22, height:22, borderRadius:"50%", flexShrink:0,
                 border:`2px solid ${ec2}`, background:`${ec2}12`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 fontSize:9, fontWeight:800, color:ec2,
-              }}>{sc}</div>
+              }}>{sc}</div>}
             </div>
           );
         })()}
@@ -648,6 +649,8 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
           <span style={{ fontSize:11, color:T.text3, fontWeight:500, flexShrink:0, marginLeft:"auto" }}>${potTotal} vol</span>
         )}
       </div>
+        );
+      })()}
     </div>
   );
 }

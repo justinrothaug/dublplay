@@ -798,7 +798,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
 }
 
 // ── KALSHI-STYLE VERTICAL GAME LIST ──────────────────────────────────────────
-function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile }) {
+function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile, loading }) {
   const liveGames = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames = games.filter(g => g.status === "final");
@@ -834,7 +834,20 @@ function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcoming
         ))}
       </div>
 
-      {ordered.length === 0 && (
+      {ordered.length === 0 && loading && (
+        <div style={{ textAlign:"center", padding:"60px 20px" }}>
+          <span style={{
+            display:"inline-block", width:32, height:32,
+            border:"3px solid rgba(0,0,0,0.08)",
+            borderTopColor:T.green,
+            borderRadius:"50%",
+            animation:"spin 0.8s linear infinite",
+          }} />
+          <div style={{ fontSize:13, color:T.text3, marginTop:12 }}>Loading games...</div>
+        </div>
+      )}
+
+      {ordered.length === 0 && !loading && (
         <div style={{ textAlign:"center", padding:"60px 20px", color:T.text3 }}>
           <div style={{ fontSize:40, marginBottom:12 }}>🏀</div>
           <div style={{ fontSize:14 }}>No games scheduled</div>
@@ -2924,6 +2937,7 @@ export default function App() {
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [gamesLoading, setGamesLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
   const [picksData, setPicksData] = useState(null); // picks for the selected date
@@ -2973,6 +2987,7 @@ export default function App() {
     if (!initialLoadDone.current) setDataLoaded(false);
     setGames([]);
     setAiOverrides({});
+    setGamesLoading(true);
     analyzedPreGameRef.current.clear();
     Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
       .then(([g, ab]) => {
@@ -2980,9 +2995,10 @@ export default function App() {
         setGames(g.games);
         setDataLoaded(true);
         initialLoadDone.current = true;
+        setGamesLoading(false);
         setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date());
       })
-      .catch(console.error);
+      .catch(e => { console.error(e); setGamesLoading(false); });
   }, [apiKey, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 3) Auto-poll scores + bets when live games are active (every 30s)
@@ -3288,6 +3304,7 @@ export default function App() {
           upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
           betStore={betStore}
           profile={profile}
+          loading={gamesLoading}
         />
       )}
 

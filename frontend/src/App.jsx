@@ -502,6 +502,28 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       {isFinal ? (() => {
         const r = calcFinalResults(game);
         if (!r) return null;
+        const myPick = gameBets?.myPick;
+        // Find user's bet entry to check lockedSpread
+        const myEntry = myPick && profile?.uid
+          ? (myPick === "away" ? gameBets?.away : gameBets?.home || []).find(e => e.uid === profile.uid)
+          : null;
+        // Did user's spread bet cover?
+        let spreadHit = null;
+        if (myPick && r.spreadResult) {
+          // User bet on a side — check if that side covered
+          const betIsHome = myPick === "home";
+          const betTeam = betIsHome ? game.home : game.away;
+          const isFav = betTeam === r.spreadResult.favAbbr;
+          spreadHit = r.spreadResult.hit === "push" ? "push" : (isFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
+        }
+        // Did user's ML bet win?
+        let mlHit = null;
+        if (myPick) {
+          const betTeam = myPick === "home" ? game.home : game.away;
+          mlHit = betTeam === r.mlWinner;
+        }
+        const icon = (hit) => hit === "push" ? " 🟰" : hit === true ? " ✓" : hit === false ? " ✗" : "";
+        const hitColor = (hit) => hit === true ? T.green : hit === false ? T.red : T.text;
         return (
           <div style={{
             display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -514,10 +536,11 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.spreadResult.hit === "push" ? "PUSH" : "COVER"}
                 </div>
-                <div style={{ color: r.spreadResult.hit === "push" ? T.text3 : T.text }}>
+                <div style={{ color: spreadHit != null ? hitColor(spreadHit) : (r.spreadResult.hit === "push" ? T.text3 : T.text) }}>
                   {r.spreadResult.hit === "fav" ? `${r.spreadResult.favAbbr} ${r.spreadResult.line}` :
                    r.spreadResult.hit === "dog" ? `${r.spreadResult.dogAbbr} +${Math.abs(r.spreadResult.line)}` :
                    dispSpread}
+                  {spreadHit != null && <span style={{ color:hitColor(spreadHit) }}>{icon(spreadHit)}</span>}
                 </div>
               </div>
             )}
@@ -533,7 +556,10 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
             )}
             <div style={{ textAlign:"center", flex:1, borderLeft: (r.spreadResult || r.totalResult) ? `1px solid ${T.border}` : "none" }}>
               <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>WINNER</div>
-              <div style={{ color:T.text }}>{r.mlWinner} by {r.margin}</div>
+              <div style={{ color: mlHit != null ? hitColor(mlHit) : T.text }}>
+                {r.mlWinner} by {r.margin}
+                {mlHit != null && <span style={{ color:hitColor(mlHit) }}>{icon(mlHit)}</span>}
+              </div>
             </div>
           </div>
         );

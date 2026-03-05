@@ -538,7 +538,6 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
 
 // ── KALSHI-STYLE GAME DETAIL VIEW ────────────────────────────────────────────
 function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile }) {
-  const [detailTab, setDetailTab] = useState("lines");
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const isUp = game.status === "upcoming";
@@ -564,19 +563,19 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
     onBet(game.id, side, dispSpread || "", ml || "");
   };
 
-  // Parse spread line number and teams
-  const spreadNum = (() => {
+  // Parse spread into per-team lines (e.g. "ORL -9.5" → away gets +9.5, home gets -9.5)
+  const spreadParsed = (() => {
     if (!dispSpread) return null;
     const m = dispSpread.match(/([A-Z]{2,4})\s*([+-]?\d+\.?\d*)/);
-    return m ? { team: m[1], line: parseFloat(m[2]) } : null;
-  })();
-
-  // Compute spread Yes/No probabilities
-  const spreadYesProb = (() => {
-    if (!game.homeSpreadOdds && !game.awaySpreadOdds) return null;
-    // "Yes" = favorite covers
-    const favOdds = game.homeSpreadOdds || game.awaySpreadOdds;
-    return oddsToImpliedProb(favOdds);
+    if (!m) return null;
+    const favTeam = m[1];
+    const favLine = parseFloat(m[2]);
+    const awayLine = favTeam === game.away ? favLine : -favLine;
+    const homeLine = favTeam === game.home ? favLine : -favLine;
+    return {
+      away: awayLine > 0 ? `+${awayLine}` : String(awayLine),
+      home: homeLine > 0 ? `+${homeLine}` : String(homeLine),
+    };
   })();
 
   return (
@@ -636,10 +635,10 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           </div>
         )}
 
-        {/* Pot + volume bar */}
+        {/* Pot + balance bar */}
         <div style={{
           display:"flex", justifyContent:"space-between", alignItems:"center",
-          padding:"10px 14px", marginBottom:16,
+          padding:"10px 14px", marginBottom:12,
           background:T.cardAlt, borderRadius:10, border:`1px solid ${T.border}`,
         }}>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -656,6 +655,33 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
             <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
               Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
             </span>
+          )}
+        </div>
+
+        {/* Odds strip: Spread | O/U | ML — compact above the betting area */}
+        <div style={{
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"8px 0", marginBottom:12,
+          borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+          fontSize:11, color:T.text2, fontWeight:600,
+        }}>
+          {dispSpread && (
+            <div style={{ textAlign:"center", flex:1 }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
+              <div>{dispSpread}</div>
+            </div>
+          )}
+          {dispOu && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
+              <div>{dispOu}</div>
+            </div>
+          )}
+          {(dispAwayOdds || dispHomeOdds) && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
+              <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
+            </div>
           )}
         </div>
 
@@ -701,7 +727,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           </div>
         </div>
 
-        {/* Team pick buttons (Kalshi-style) — clicking places a $10 bet */}
+        {/* Team pick buttons — clicking places a $10 spread bet */}
         <div style={{ display:"flex", gap:10, marginBottom:4 }}>
           <button
             onClick={() => handleSidePick("away")}
@@ -733,10 +759,14 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           </button>
         </div>
 
-        {/* Multipliers under buttons */}
+        {/* Spread line under each button */}
         <div style={{ display:"flex", gap:10, marginBottom:8, textAlign:"center" }}>
-          <div style={{ flex:1, fontSize:13, color:T.text3 }}>{awayMult ? `${awayMult}x` : ""}</div>
-          <div style={{ flex:1, fontSize:13, color:T.text3 }}>{homeMult ? `${homeMult}x` : ""}</div>
+          <div style={{ flex:1, fontSize:13, color:T.text3, fontWeight:600 }}>
+            {spreadParsed ? spreadParsed.away : ""}
+          </div>
+          <div style={{ flex:1, fontSize:13, color:T.text3, fontWeight:600 }}>
+            {spreadParsed ? spreadParsed.home : ""}
+          </div>
         </div>
 
         {/* Bet hint */}
@@ -748,173 +778,20 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           </div>
         )}
 
-        {/* Tab: Game Lines / Analysis */}
-        <div style={{ display:"flex", gap:0, marginBottom:20, borderBottom:`2px solid ${T.border}` }}>
-          {[
-            { id:"lines", label:"Game Lines" },
-            { id:"analysis", label:"Analysis" },
-          ].map(t => (
-            <button key={t.id} onClick={() => setDetailTab(t.id)} style={{
-              background:"transparent", border:"none",
-              borderBottom: detailTab === t.id ? "2px solid #1a1a1a" : "2px solid transparent",
-              color: detailTab === t.id ? T.text : T.text3,
-              padding:"12px 20px", fontSize:14, fontWeight: detailTab === t.id ? 700 : 500,
-              cursor:"pointer", marginBottom:-2,
-            }}>{t.label}</button>
-          ))}
+        {/* Analysis section — no tabs, always shown */}
+        <div style={{ marginTop:8 }}>
+          {isFinal
+            ? <FinalResultsPanel game={game} aiOverride={aiOverride} pickRecord={pickRecord} />
+            : <AnalysisPanel
+                analysis={analysis}
+                isLive={isLive}
+                loading={loadingRefresh}
+                game={game}
+                favorites={favorites}
+                onFavorite={onFavorite}
+              />
+          }
         </div>
-
-        {detailTab === "lines" && (
-          <div>
-            {/* Spread section */}
-            {dispSpread && (
-              <div style={{ marginBottom:24 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                  <span style={{ fontSize:18, fontWeight:800, color:T.text }}>Spread</span>
-                </div>
-
-                {spreadNum && (
-                  <div style={{ marginBottom:16 }}>
-                    <div style={{ fontSize:14, color:T.text, fontWeight:600, marginBottom:12 }}>
-                      {spreadNum.team === game.home ? (game.homeName || game.home) : (game.awayName || game.away)} wins by over{" "}
-                      <span style={{ color:T.green, textDecoration:"underline dotted", cursor:"pointer" }}>
-                        {Math.abs(spreadNum.line)}
-                      </span>{" "}
-                      Points
-                    </div>
-
-                    {/* Yes/No rows */}
-                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
-                        <div>
-                          <span style={{ fontSize:14, fontWeight:600, color:T.text }}>Yes</span>
-                          <div style={{ height:2, width:60, background:T.green, borderRadius:1, marginTop:4 }} />
-                        </div>
-                        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                          <span style={{ fontSize:13, color:T.text2 }}>
-                            {oddsToMultiplier(game.homeSpreadOdds || game.awaySpreadOdds || "-110")}x
-                          </span>
-                          <span style={{
-                            border:`1px solid ${T.greenBdr}`, borderRadius:20,
-                            padding:"4px 14px", fontSize:13, fontWeight:600, color:T.green,
-                          }}>
-                            {spreadYesProb || 50}%
-                          </span>
-                        </div>
-                      </div>
-                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0" }}>
-                        <div>
-                          <span style={{ fontSize:14, fontWeight:600, color:T.text }}>No</span>
-                          <div style={{ height:2, width:60, background:"#4488cc", borderRadius:1, marginTop:4 }} />
-                        </div>
-                        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                          <span style={{ fontSize:13, color:T.text2 }}>
-                            {oddsToMultiplier(game.awaySpreadOdds || game.homeSpreadOdds || "+100")}x
-                          </span>
-                          <span style={{
-                            border:`1px solid ${T.border}`, borderRadius:20,
-                            padding:"4px 14px", fontSize:13, fontWeight:600, color:T.text2,
-                          }}>
-                            {spreadYesProb ? (100 - spreadYesProb) : 50}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Point Total section */}
-            {dispOu && (
-              <div style={{ marginBottom:24, paddingTop:16, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontSize:18, fontWeight:800, color:T.text, marginBottom:12 }}>Point Total</div>
-                <div style={{ fontSize:14, color:T.text, fontWeight:600, marginBottom:12 }}>
-                  Combined points over{" "}
-                  <span style={{ color:T.green, textDecoration:"underline dotted" }}>{dispOu}</span>
-                </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
-                    <div>
-                      <span style={{ fontSize:14, fontWeight:600, color:T.text }}>Over {dispOu}</span>
-                      <div style={{ height:2, width:60, background:T.green, borderRadius:1, marginTop:4 }} />
-                    </div>
-                    <span style={{
-                      border:`1px solid ${T.greenBdr}`, borderRadius:20,
-                      padding:"4px 14px", fontSize:13, fontWeight:600, color:T.green,
-                    }}>
-                      {oddsToMultiplier("-110")}x
-                    </span>
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0" }}>
-                    <div>
-                      <span style={{ fontSize:14, fontWeight:600, color:T.text }}>Under {dispOu}</span>
-                      <div style={{ height:2, width:60, background:"#4488cc", borderRadius:1, marginTop:4 }} />
-                    </div>
-                    <span style={{
-                      border:`1px solid ${T.border}`, borderRadius:20,
-                      padding:"4px 14px", fontSize:13, fontWeight:600, color:T.text2,
-                    }}>
-                      {oddsToMultiplier("-110")}x
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Moneyline section */}
-            {dispAwayOdds && dispHomeOdds && (
-              <div style={{ marginBottom:24, paddingTop:16, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontSize:18, fontWeight:800, color:T.text, marginBottom:12 }}>Moneyline</div>
-                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      <TeamBadge abbr={game.away} size={28} />
-                      <span style={{ fontSize:14, fontWeight:600, color:T.text }}>{game.awayName || game.away}</span>
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                      <span style={{ fontSize:13, color:T.text2 }}>{awayMult}x</span>
-                      <span style={{
-                        border:`1px solid ${T.greenBdr}`, borderRadius:20,
-                        padding:"4px 14px", fontSize:13, fontWeight:600, color:T.green,
-                      }}>{awayProb}%</span>
-                    </div>
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0" }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      <TeamBadge abbr={game.home} size={28} />
-                      <span style={{ fontSize:14, fontWeight:600, color:T.text }}>{game.homeName || game.home}</span>
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                      <span style={{ fontSize:13, color:T.text2 }}>{homeMult}x</span>
-                      <span style={{
-                        border:`1px solid ${T.greenBdr}`, borderRadius:20,
-                        padding:"4px 14px", fontSize:13, fontWeight:600, color:T.green,
-                      }}>{homeProb}%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Analysis tab */}
-        {detailTab === "analysis" && (
-          <div>
-            {isFinal
-              ? <FinalResultsPanel game={game} aiOverride={aiOverride} pickRecord={pickRecord} />
-              : <AnalysisPanel
-                  analysis={analysis}
-                  isLive={isLive}
-                  loading={loadingRefresh}
-                  game={game}
-                  favorites={favorites}
-                  onFavorite={onFavorite}
-                />
-            }
-          </div>
-        )}
       </div>
     </div>
   );

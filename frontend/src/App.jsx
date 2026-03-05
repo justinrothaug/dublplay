@@ -1063,7 +1063,7 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
     if (a.ou && a.dubl_score_ou != null)
       picks.push({ type:"ou", score:a.dubl_score_ou, text:a.ou, game:g, reasoning:a.dubl_reasoning_ou, aiOverride:a });
   }
-  const top = picks.sort((a,b) => b.score - a.score).slice(0, 6);
+  const topAll = picks.sort((a,b) => b.score - a.score).slice(0, 6);
 
   // Saved picks — user-bookmarked
   const favPicks = (favorites?.picks || [])
@@ -1075,29 +1075,15 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
     })
     .filter(Boolean);
 
+  // Deduplicate: remove top picks whose game is already in saved picks
+  const favGameIds = new Set(favPicks.map(p => p.game.id));
+  const top = topAll.filter(p => !favGameIds.has(p.game.id));
+
   return (
     <div style={{ maxWidth:480, margin:"0 auto", padding:"0 16px 120px" }}>
-      {/* Top AI picks */}
-      {top.length > 0 && (
-        <div style={{ padding:"20px 0 0" }}>
-          <span style={{ fontSize:20, fontWeight:800, color:T.text }}>Top Picks</span>
-          <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Best bets ranked by DUBL Score</p>
-          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {top.map(pick => (
-              <PickGameCard
-                key={`${pick.game.id}-${pick.type}`}
-                pick={pick}
-                game={pick.game}
-                onGameClick={onGameClick}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Saved picks */}
+      {/* Saved picks — shown first */}
       {favPicks.length > 0 && (
-        <div style={{ padding:"24px 0 0" }}>
+        <div style={{ padding:"20px 0 0" }}>
           <span style={{ fontSize:20, fontWeight:800, color:T.text }}>My Picks</span>
           <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Your saved picks</p>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -1108,6 +1094,24 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
                 game={pick.game}
                 onGameClick={onGameClick}
                 onRemove={() => onFavorite.remove(pick.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top AI picks — after My Picks, excluding duplicates */}
+      {top.length > 0 && (
+        <div style={{ padding:"24px 0 0" }}>
+          <span style={{ fontSize:20, fontWeight:800, color:T.text }}>Top Picks</span>
+          <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Best bets ranked by DUBL Score</p>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {top.map(pick => (
+              <PickGameCard
+                key={`${pick.game.id}-${pick.type}`}
+                pick={pick}
+                game={pick.game}
+                onGameClick={onGameClick}
               />
             ))}
           </div>

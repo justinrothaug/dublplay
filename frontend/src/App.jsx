@@ -3290,6 +3290,7 @@ export default function App() {
   const [picksData, setPicksData] = useState(null); // picks for the selected date
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null); // null = list view, game obj = detail view
   const profile = useProfile();
   const favorites = useFavoritePicks();
@@ -3567,48 +3568,57 @@ export default function App() {
               }}>{profile.username[0].toUpperCase()}</span>
             ) : "☰"}
           </button>
-          <span style={{ color:T.red, fontWeight:900, fontSize:20, letterSpacing:"-0.02em", marginLeft:8 }}>
+          <span
+            onClick={() => { setShowStats(v => { if (!v) setTimeout(() => setShowStats(false), 3000); return !v; }); }}
+            style={{ color:T.red, fontWeight:900, fontSize:20, letterSpacing:"-0.02em", marginLeft:8, cursor:"pointer", position:"relative" }}
+          >
             dublplay
-          </span>
-          <div style={{ flex:1 }} />
-          {/* Hit stats badge */}
-          {(() => {
-            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0, hitsBet4 = 0, totalBet4 = 0, hitsOu4 = 0, totalOu4 = 0 } = overallStats || {};
-            if (totalBet === 0 && totalOu === 0) return null;
-            const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
-            const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
-            const betPct4 = totalBet4 > 0 ? Math.round(hitsBet4 / totalBet4 * 100) : null;
-            const ouPct4  = totalOu4  > 0 ? Math.round(hitsOu4  / totalOu4  * 100) : null;
-            const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
-            return (
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1 }}>
-                <span style={{ fontSize:10, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
-                  {betPct !== null && (
-                    <span style={{ color:c(betPct) }}>{hitsBet}-{totalBet - hitsBet} Bets ({betPct}%)</span>
-                  )}
-                  {betPct !== null && ouPct !== null && (
-                    <span style={{ color:T.text3 }}>|</span>
-                  )}
-                  {ouPct !== null && (
-                    <span style={{ color:c(ouPct) }}>{hitsOu}-{totalOu - hitsOu} O/U ({ouPct}%)</span>
-                  )}
-                </span>
-                {(betPct4 !== null || ouPct4 !== null) && (
-                  <span style={{ fontSize:9, fontWeight:800, whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:4 }}>
-                    {betPct4 !== null && (
-                      <span style={{ color:c(betPct4) }}>★ {hitsBet4}-{totalBet4 - hitsBet4} ({betPct4}%)</span>
+            {/* Stats tooltip */}
+            {showStats && (() => {
+              const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0, hitsBet4 = 0, totalBet4 = 0, hitsOu4 = 0, totalOu4 = 0 } = overallStats || {};
+              if (totalBet === 0 && totalOu === 0) return null;
+              const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
+              const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
+              const betPct4 = totalBet4 > 0 ? Math.round(hitsBet4 / totalBet4 * 100) : null;
+              const ouPct4  = totalOu4  > 0 ? Math.round(hitsOu4  / totalOu4  * 100) : null;
+              const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
+              return (
+                <div onClick={e => e.stopPropagation()} style={{
+                  position:"absolute", top:"calc(100% + 8px)", left:0,
+                  background:T.card, borderRadius:12, padding:"12px 16px",
+                  boxShadow:"0 4px 20px rgba(0,0,0,0.15)", border:`1px solid ${T.border}`,
+                  zIndex:100, whiteSpace:"nowrap",
+                  animation:"fadeIn 0.2s ease",
+                }}>
+                  <div style={{ fontSize:10, fontWeight:700, display:"flex", gap:6, alignItems:"center" }}>
+                    {betPct !== null && (
+                      <span style={{ color:c(betPct) }}>{hitsBet}-{totalBet - hitsBet} Bets ({betPct}%)</span>
                     )}
-                    {betPct4 !== null && ouPct4 !== null && (
+                    {betPct !== null && ouPct !== null && (
                       <span style={{ color:T.text3 }}>|</span>
                     )}
-                    {ouPct4 !== null && (
-                      <span style={{ color:c(ouPct4) }}>★ {hitsOu4}-{totalOu4 - hitsOu4} ({ouPct4}%)</span>
+                    {ouPct !== null && (
+                      <span style={{ color:c(ouPct) }}>{hitsOu}-{totalOu - hitsOu} O/U ({ouPct}%)</span>
                     )}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
+                  </div>
+                  {(betPct4 !== null || ouPct4 !== null) && (
+                    <div style={{ fontSize:9, fontWeight:800, display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
+                      {betPct4 !== null && (
+                        <span style={{ color:c(betPct4) }}>★ {hitsBet4}-{totalBet4 - hitsBet4} ({betPct4}%)</span>
+                      )}
+                      {betPct4 !== null && ouPct4 !== null && (
+                        <span style={{ color:T.text3 }}>|</span>
+                      )}
+                      {ouPct4 !== null && (
+                        <span style={{ color:c(ouPct4) }}>★ {hitsOu4}-{totalOu4 - hitsOu4} ({ouPct4}%)</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </span>
+          <div style={{ flex:1 }} />
         </div>
       </div>
 

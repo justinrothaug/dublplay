@@ -498,69 +498,29 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
         )}
       </div>
 
-      {/* Odds strip (upcoming/live) or AI pick results strip (final) */}
+      {/* Odds strip (upcoming/live) or Results strip (final) */}
       {isFinal ? (() => {
         const r = calcFinalResults(game);
         if (!r) return null;
-        // Show AI pick results with HIT/MISS instead of generic COVER/UNDER/WINNER
-        const pBet = aiOverride?.best_bet || pickRecord?.best_bet;
+        // Compute AI pick hit/miss to show ✓/✗ on the results strip
         const pBetTeam = aiOverride?.bet_team || pickRecord?.bet_team;
         const pOu = aiOverride?.ou || pickRecord?.ou;
-        let betHit = null;
+        let betHit = null; // did AI spread pick hit?
         if (pickRecord?.result_bet != null) {
           betHit = pickRecord.result_bet === "HIT" ? true : pickRecord.result_bet === "MISS" ? false : "push";
         } else if (pBetTeam && r.spreadResult) {
           const bettingFav = pBetTeam === r.spreadResult.favAbbr;
           betHit = r.spreadResult.hit === "push" ? "push" : (bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
-        } else if (pBetTeam) {
-          betHit = pBetTeam === r.mlWinner;
         }
-        let ouHit = null;
+        let ouHit = null; // did AI O/U pick hit?
         if (pickRecord?.result_ou != null) {
           ouHit = pickRecord.result_ou === "HIT" ? true : pickRecord.result_ou === "MISS" ? false : "push";
         } else if (pOu && r.totalResult) {
           const leanedOver = /over/i.test(pOu);
           ouHit = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
         }
-        const hitClr = (h) => h === "push" ? T.gold : h === true ? T.green : h === false ? T.red : T.text3;
-        const hitLabel = (h) => h === "push" ? "PUSH" : h === true ? "HIT ✓" : h === false ? "MISS ✗" : "";
-        // If we have AI picks, show them as the strip; otherwise fall back to COVER/UNDER/WINNER
-        if (pBet || pOu) {
-          const betLine = pBet?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
-          const ouMatch = pOu?.match(/^(over|under)\s+([\d.]+)/i);
-          const ouDir = ouMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
-          const ouNum = ouMatch?.[2] || "";
-          return (
-            <div style={{
-              display:"flex", justifyContent:"space-between", alignItems:"center",
-              padding:"8px 0", marginBottom:8,
-              borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
-              fontSize:11, fontWeight:600,
-            }}>
-              {pBet && (
-                <div style={{ textAlign:"center", flex:1 }}>
-                  <div style={{ fontSize:9, color:hitClr(betHit), fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
-                    {hitLabel(betHit) || "BEST BET"}
-                  </div>
-                  <div style={{ color: hitClr(betHit) }}>✦ {pBetTeam || "?"}{betLine ? ` ${betLine}` : ""}</div>
-                </div>
-              )}
-              {pOu && (
-                <div style={{ textAlign:"center", flex:1, borderLeft: pBet ? `1px solid ${T.border}` : "none" }}>
-                  <div style={{ fontSize:9, color:hitClr(ouHit), fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
-                    {hitLabel(ouHit) || "O/U"}
-                  </div>
-                  <div style={{ color: hitClr(ouHit) }}>◉ {ouDir} {ouNum}</div>
-                </div>
-              )}
-              <div style={{ textAlign:"center", flex:1, borderLeft: (pBet || pOu) ? `1px solid ${T.border}` : "none" }}>
-                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>WINNER</div>
-                <div style={{ color:T.text }}>{r.mlWinner} by {r.margin}</div>
-              </div>
-            </div>
-          );
-        }
-        // Fallback: no AI picks available, show raw results
+        const hitMark = (h) => h === "push" ? " 🟰" : h === true ? " ✓" : h === false ? " ✗" : "";
+        const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
         return (
           <div style={{
             display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -573,10 +533,10 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.spreadResult.hit === "push" ? "PUSH" : "COVER"}
                 </div>
-                <div style={{ color: r.spreadResult.hit === "push" ? T.text3 : T.text }}>
+                <div style={{ color: hitClr(betHit) || (r.spreadResult.hit === "push" ? T.text3 : T.text) }}>
                   {r.spreadResult.hit === "fav" ? `${r.spreadResult.favAbbr} ${r.spreadResult.line}` :
                    r.spreadResult.hit === "dog" ? `${r.spreadResult.dogAbbr} +${Math.abs(r.spreadResult.line)}` :
-                   dispSpread}
+                   dispSpread}{hitMark(betHit)}
                 </div>
               </div>
             )}
@@ -585,8 +545,8 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.totalResult.hit}
                 </div>
-                <div style={{ color:T.text }}>
-                  {r.totalResult.combined} ({dispOu})
+                <div style={{ color: hitClr(ouHit) || T.text }}>
+                  {r.totalResult.combined} ({dispOu}){hitMark(ouHit)}
                 </div>
               </div>
             )}

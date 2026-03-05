@@ -658,33 +658,6 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           )}
         </div>
 
-        {/* Odds strip: Spread | O/U | ML — compact above the betting area */}
-        <div style={{
-          display:"flex", justifyContent:"space-between", alignItems:"center",
-          padding:"8px 0", marginBottom:12,
-          borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
-          fontSize:11, color:T.text2, fontWeight:600,
-        }}>
-          {dispSpread && (
-            <div style={{ textAlign:"center", flex:1 }}>
-              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
-              <div>{dispSpread}</div>
-            </div>
-          )}
-          {dispOu && (
-            <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
-              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
-              <div>{dispOu}</div>
-            </div>
-          )}
-          {(dispAwayOdds || dispHomeOdds) && (
-            <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
-              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
-              <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
-            </div>
-          )}
-        </div>
-
         {/* Bettor avatars above team buttons */}
         <div style={{ display:"flex", gap:10, marginBottom:6 }}>
           {/* Away bettors */}
@@ -777,6 +750,33 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               : "Tap a team to place a $10 bet"}
           </div>
         )}
+
+        {/* Odds strip: Spread | O/U | ML — right above analysis */}
+        <div style={{
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"8px 0", marginBottom:12,
+          borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+          fontSize:11, color:T.text2, fontWeight:600,
+        }}>
+          {dispSpread && (
+            <div style={{ textAlign:"center", flex:1 }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
+              <div>{dispSpread}</div>
+            </div>
+          )}
+          {dispOu && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
+              <div>{dispOu}</div>
+            </div>
+          )}
+          {(dispAwayOdds || dispHomeOdds) && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
+              <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
+            </div>
+          )}
+        </div>
 
         {/* Analysis section — no tabs, always shown */}
         <div style={{ marginTop:8 }}>

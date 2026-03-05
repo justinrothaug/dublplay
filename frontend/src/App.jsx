@@ -44,11 +44,15 @@ const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
 // ── FINAL GAME RESULT CALCULATOR ──────────────────────────────────────────────
 // Given a final game, returns what actually hit: spread, total, moneyline
-function calcFinalResults(game) {
+function calcFinalResults(game, lockedOdds) {
   if (game.status !== "final") return null;
   const home = game.homeScore ?? 0;
   const away = game.awayScore ?? 0;
   const combined = home + away;
+
+  // Use locked odds from the AI pick when available, fall back to game odds
+  const effectiveSpread = lockedOdds?.spread || game.spread;
+  const effectiveOu = lockedOdds?.ou || game.ou;
 
   // Moneyline
   const mlWinner = home > away ? game.home : game.away;
@@ -57,11 +61,11 @@ function calcFinalResults(game) {
 
   // Total (O/U)
   let totalResult = null;
-  if (game.ou) {
-    const line = parseFloat(game.ou);
+  if (effectiveOu) {
+    const line = parseFloat(effectiveOu);
     if (!isNaN(line)) {
       totalResult = {
-        label: `${game.ou} O/U`,
+        label: `${effectiveOu} O/U`,
         combined,
         hit: combined > line ? "OVER" : combined < line ? "UNDER" : "PUSH",
       };
@@ -70,8 +74,8 @@ function calcFinalResults(game) {
 
   // Spread — parse "DET -16.5" or "BOS -2.5"
   let spreadResult = null;
-  if (game.spread) {
-    const m = game.spread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
+  if (effectiveSpread) {
+    const m = effectiveSpread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
     if (m) {
       const favAbbr = m[1];
       const line    = parseFloat(m[2]); // negative = favored
@@ -140,6 +144,7 @@ function parseGeminiText(text) {
 const AVATAR_COLORS = ["#f84646","#53d337","#4a90d9","#f5a623","#9b59b6",
                        "#1abc9c","#e74c3c","#3498db","#e67e22","#2ecc71"];
 function avatarColor(name) {
+  if (!name) return AVATAR_COLORS[0];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
@@ -395,7 +400,7 @@ function oddsToImpliedProb(oddsStr) {
 }
 
 // ── KALSHI-STYLE GAME CARD (list view) ───────────────────────────────────────
-function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
+function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }) {
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const L = aiOverride?.lines || {};
@@ -407,9 +412,13 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
   const homeProb = game.homeWinProb || oddsToImpliedProb(dispHomeOdds);
   const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
-  const dispSpread = game.spread || L.spread;
-  const rawOu = L.ou || game.ou;
+  // For final games, prefer locked odds from AI pick so result strip matches bet chips
+  const lockedSpread = pickRecord?.spread_line || L.spread;
+  const lockedOu = pickRecord?.ou_line || L.ou;
+  const dispSpread = (isFinal ? lockedSpread : game.spread) || L.spread || game.spread;
+  const rawOu = (isFinal ? lockedOu : L.ou) || L.ou || game.ou;
   const dispOu = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
+  const lockedOdds = isFinal ? { spread: lockedSpread || game.spread, ou: dispOu } : null;
 
   // Volume approximation from pot data
   const gameBets = betStore ? betStore.forGame(game.id, profile?.uid) : null;
@@ -500,8 +509,27 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
 
       {/* Odds strip (upcoming/live) or Results strip (final) */}
       {isFinal ? (() => {
-        const r = calcFinalResults(game);
+        const r = calcFinalResults(game, lockedOdds);
         if (!r) return null;
+        // Compute AI pick hit/miss to show ✓/✗ on the results strip
+        const pBetTeam = aiOverride?.bet_team || pickRecord?.bet_team;
+        const pOu = aiOverride?.ou || pickRecord?.ou;
+        let betHit = null; // did AI spread pick hit?
+        if (pickRecord?.result_bet != null) {
+          betHit = pickRecord.result_bet === "HIT" ? true : pickRecord.result_bet === "MISS" ? false : "push";
+        } else if (pBetTeam && r.spreadResult) {
+          const bettingFav = pBetTeam === r.spreadResult.favAbbr;
+          betHit = r.spreadResult.hit === "push" ? "push" : (bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
+        }
+        let ouHit = null; // did AI O/U pick hit?
+        if (pickRecord?.result_ou != null) {
+          ouHit = pickRecord.result_ou === "HIT" ? true : pickRecord.result_ou === "MISS" ? false : "push";
+        } else if (pOu && r.totalResult) {
+          const leanedOver = /over/i.test(pOu);
+          ouHit = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
+        }
+        const hitMark = (h) => h === "push" ? " 🟰" : h === true ? " ✓" : h === false ? " ✗" : "";
+        const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
         return (
           <div style={{
             display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -514,10 +542,10 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.spreadResult.hit === "push" ? "PUSH" : "COVER"}
                 </div>
-                <div style={{ color: r.spreadResult.hit === "push" ? T.text3 : T.text }}>
+                <div style={{ color: hitClr(betHit) || (r.spreadResult.hit === "push" ? T.text3 : T.text) }}>
                   {r.spreadResult.hit === "fav" ? `${r.spreadResult.favAbbr} ${r.spreadResult.line}` :
                    r.spreadResult.hit === "dog" ? `${r.spreadResult.dogAbbr} +${Math.abs(r.spreadResult.line)}` :
-                   dispSpread}
+                   dispSpread}{hitMark(betHit)}
                 </div>
               </div>
             )}
@@ -526,8 +554,8 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
                 <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
                   {r.totalResult.hit}
                 </div>
-                <div style={{ color:T.text }}>
-                  {r.totalResult.combined} ({dispOu})
+                <div style={{ color: hitClr(ouHit) || T.text }}>
+                  {r.totalResult.combined} ({dispOu}){hitMark(ouHit)}
                 </div>
               </div>
             )}
@@ -568,52 +596,91 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       )}
 
       {/* Bottom row: pick badges + vol */}
+      {(() => {
+        // Compute AI pick hit/miss for final games
+        let bestBetHit = null;
+        let ouHitCard = null;
+        if (isFinal) {
+          const r = calcFinalResults(game, lockedOdds);
+          if (r) {
+            // Use pickRecord for hit/miss when aiOverride isn't loaded
+            const betTeam = aiOverride?.bet_team || pickRecord?.bet_team;
+            if (pickRecord?.result_bet != null) {
+              bestBetHit = pickRecord.result_bet === "HIT" ? true : pickRecord.result_bet === "MISS" ? false : "push";
+            } else if (betTeam) {
+              if (r.spreadResult) {
+                const bettingFav = betTeam === r.spreadResult.favAbbr;
+                bestBetHit = r.spreadResult.hit === "push" ? "push" : (bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
+              } else {
+                bestBetHit = betTeam === r.mlWinner;
+              }
+            }
+            const ouPick = aiOverride?.ou || pickRecord?.ou;
+            if (pickRecord?.result_ou != null) {
+              ouHitCard = pickRecord.result_ou === "HIT" ? true : pickRecord.result_ou === "MISS" ? false : "push";
+            } else if (ouPick && r.totalResult) {
+              const leanedOver = /over/i.test(ouPick);
+              ouHitCard = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
+            }
+          }
+        }
+        // Resolve pick display: prefer aiOverride, fall back to pickRecord
+        const dispBestBet = aiOverride?.best_bet || pickRecord?.best_bet;
+        const dispBetTeam = aiOverride?.bet_team || pickRecord?.bet_team;
+        const dispBetScore = aiOverride?.dubl_score_bet ?? pickRecord?.dubl_score_bet;
+        const dispOuPick = aiOverride?.ou || pickRecord?.ou;
+        const dispOuScore = aiOverride?.dubl_score_ou ?? pickRecord?.dubl_score_ou;
+        const hitIcon = (h) => h === "push" ? " 🟰" : h === true ? " ✓" : h === false ? " ✗" : "";
+        const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
+        return (
       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
         {/* Best bet pick */}
-        {aiOverride?.best_bet && aiOverride.dubl_score_bet != null && (() => {
-          const betLine = aiOverride.best_bet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
-          const label = `✦ ${aiOverride.bet_team || "?"}${betLine ? ` ${betLine}` : ""}`;
-          const sc = aiOverride.dubl_score_bet;
-          const ec2 = edgeColor(sc);
+        {dispBestBet && dispBetScore != null && (() => {
+          const betLine = dispBestBet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
+          const label = `✦ ${dispBetTeam || "?"}${betLine ? ` ${betLine}` : ""}`;
+          const sc = dispBetScore;
+          const ec2 = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.gold) : edgeColor(sc);
+          const badgeColor = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.green) : T.green;
           return (
             <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
               <span style={{
                 fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-                color:T.green, background:`${T.green}12`, border:`1px solid ${T.green}33`,
+                color:badgeColor, background:`${badgeColor}12`, border:`1px solid ${badgeColor}33`,
                 borderRadius:6, padding:"3px 8px",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-              }}>{label}</span>
-              <div style={{
+              }}>{label}{hitIcon(bestBetHit)}</span>
+              {!isFinal && <div style={{
                 width:22, height:22, borderRadius:"50%", flexShrink:0,
                 border:`2px solid ${ec2}`, background:`${ec2}12`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 fontSize:9, fontWeight:800, color:ec2,
-              }}>{sc}</div>
+              }}>{sc}</div>}
             </div>
           );
         })()}
         {/* O/U pick */}
-        {aiOverride?.ou && aiOverride.dubl_score_ou != null && (() => {
-          const ouMatch = aiOverride.ou.match(/^(over|under)\s+([\d.]+)/i);
+        {dispOuPick && dispOuScore != null && (() => {
+          const ouMatch = dispOuPick.match(/^(over|under)\s+([\d.]+)/i);
           const ouDir = ouMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
           const ouNum = ouMatch?.[2] || "";
           const label = `◉ ${ouDir} ${ouNum}`;
-          const sc = aiOverride.dubl_score_ou;
-          const ec2 = edgeColor(sc);
+          const sc = dispOuScore;
+          const ec2 = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : edgeColor(sc);
+          const badgeColor = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : T.gold;
           return (
             <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
               <span style={{
                 fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-                color:T.gold, background:`${T.gold}12`, border:`1px solid ${T.gold}33`,
+                color:badgeColor, background:`${badgeColor}12`, border:`1px solid ${badgeColor}33`,
                 borderRadius:6, padding:"3px 8px",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-              }}>{label}</span>
-              <div style={{
+              }}>{label}{hitIcon(ouHitCard)}</span>
+              {!isFinal && <div style={{
                 width:22, height:22, borderRadius:"50%", flexShrink:0,
                 border:`2px solid ${ec2}`, background:`${ec2}12`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 fontSize:9, fontWeight:800, color:ec2,
-              }}>{sc}</div>
+              }}>{sc}</div>}
             </div>
           );
         })()}
@@ -622,6 +689,8 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
           <span style={{ fontSize:11, color:T.text3, fontWeight:500, flexShrink:0, marginLeft:"auto" }}>${potTotal} vol</span>
         )}
       </div>
+        );
+      })()}
     </div>
   );
 }
@@ -632,9 +701,13 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
   const isFinal = game.status === "final";
   const isUp = game.status === "upcoming";
   const L = aiOverride?.lines || {};
-  const dispSpread = game.spread || L.spread;
-  const rawOu = L.ou || game.ou;
+  // For final games, prefer locked odds from AI pick so results are consistent
+  const lockedSpread = pickRecord?.spread_line || L.spread;
+  const lockedOu = pickRecord?.ou_line || L.ou;
+  const dispSpread = (isFinal ? lockedSpread : game.spread) || L.spread || game.spread;
+  const rawOu = (isFinal ? lockedOu : L.ou) || L.ou || game.ou;
   const dispOu = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
+  const lockedOdds = isFinal ? { spread: lockedSpread || game.spread, ou: dispOu } : null;
   const dispAwayOdds = L.awayOdds || game.awayOdds;
   const dispHomeOdds = L.homeOdds || game.homeOdds;
   const awayMult = oddsToMultiplier(dispAwayOdds);
@@ -746,6 +819,33 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
             const homeCount = (gameBets?.home || []).length;
             const awayPot = awayCount * 10;
             const homePot = homeCount * 10;
+
+            // For final games, show who won the pot
+            if (isFinal && gameBets?.total > 0) {
+              const r = calcFinalResults(game, lockedOdds);
+              if (r?.spreadResult) {
+                const favIsHome = r.spreadResult.favAbbr === game.home;
+                const winningSide = r.spreadResult.hit === "push" ? "push"
+                  : r.spreadResult.hit === "fav" ? (favIsHome ? "home" : "away")
+                  : (favIsHome ? "away" : "home");
+                if (winningSide === "push") {
+                  return <span style={{ fontSize:12, fontWeight:700, color:T.text3 }}>Push — bets returned</span>;
+                }
+                const winners = gameBets?.[winningSide] || [];
+                const winnerNames = winners.map(e => e.username || "?").join(", ");
+                const losers = winningSide === "away" ? homeCount : awayCount;
+                const winPerPerson = winners.length > 0 ? Math.round((losers * 10) / winners.length) : 0;
+                const iWon = winners.some(e => e.uid === profile?.uid);
+                return (
+                  <span style={{ fontSize:12, fontWeight:700, color: iWon ? T.green : T.red }}>
+                    {iWon ? `You won +$${winPerPerson}` : winnerNames ? `${winnerNames} won` : "Settled"}
+                  </span>
+                );
+              }
+              // No spread data — just show pot settled
+              return <span style={{ fontSize:12, fontWeight:700, color:T.text3 }}>Final</span>;
+            }
+
             const potentialWin = myPick === "away" && awayCount > 0 ? Math.round(homePot / awayCount)
               : myPick === "home" && homeCount > 0 ? Math.round(awayPot / homeCount)
               : null;
@@ -753,11 +853,11 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               <span style={{ fontSize:12, fontWeight:700, color:T.green }}>
                 To win: ${potentialWin}
               </span>
-            ) : (
+            ) : !isFinal ? (
               <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
                 Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
               </span>
-            );
+            ) : null;
           })()}
         </div>
 
@@ -773,7 +873,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   display:"flex", alignItems:"center", justifyContent:"center",
                   fontSize:10, fontWeight:800, color:"#fff",
                   border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
-                }}>{e.username[0].toUpperCase()}</div>
+                }}>{(e.username || "?")[0].toUpperCase()}</div>
                 {e.lockedSpread && (
                   <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
                     {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
@@ -792,7 +892,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   display:"flex", alignItems:"center", justifyContent:"center",
                   fontSize:10, fontWeight:800, color:"#fff",
                   border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
-                }}>{e.username[0].toUpperCase()}</div>
+                }}>{(e.username || "?")[0].toUpperCase()}</div>
                 {e.lockedSpread && (
                   <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
                     {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
@@ -891,12 +991,14 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
             <div style={{ textAlign:"center", flex:1 }}>
               <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
               <div>{dispSpread}</div>
+              {(() => { const m = lineMovement(dispSpread, game.opening_spread, true); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
             </div>
           )}
           {dispOu && (
             <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
               <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
               <div>{dispOu}</div>
+              {(() => { const m = lineMovement(dispOu, game.opening_ou); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
             </div>
           )}
           {(dispAwayOdds || dispHomeOdds) && (
@@ -927,7 +1029,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
 }
 
 // ── KALSHI-STYLE VERTICAL GAME LIST ──────────────────────────────────────────
-function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile, loading }) {
+function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile, loading, picksMap }) {
   const liveGames = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames = games.filter(g => g.status === "final");
@@ -951,16 +1053,20 @@ function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcoming
 
       {/* Game cards */}
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-        {ordered.map(g => (
+        {ordered.map(g => {
+          const baseId = g.id.replace(/-\d{8}$/, "");
+          return (
           <KalshiCard
             key={g.id}
             game={g}
             aiOverride={aiOverrides[g.id]}
+            pickRecord={picksMap ? (picksMap[baseId] || picksMap[g.id]) : null}
             onClick={onGameClick}
             betStore={betStore}
             profile={profile}
           />
-        ))}
+          );
+        })}
       </div>
 
       {ordered.length === 0 && loading && (
@@ -1040,7 +1146,8 @@ function PickGameCard({ pick, game, onGameClick, onRemove, onSave }) {
   // Final result hit/miss
   let finalHit = null;
   if (isFinal) {
-    const r = calcFinalResults(game);
+    const lockedOdds = { spread: L.spread || game.spread, ou: L.ou || game.ou };
+    const r = calcFinalResults(game, lockedOdds);
     if (r) {
       if (isBet) {
         if (pick.betIsSpread && r.spreadResult) {
@@ -1228,7 +1335,7 @@ function PickGameCard({ pick, game, onGameClick, onRemove, onSave }) {
   );
 }
 
-function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, onGameClick }) {
+function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, onGameClick, loading }) {
   // Top picks — auto-generated from AI analysis
   const picks = [];
   for (const g of games) {
@@ -1314,7 +1421,20 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
         </div>
       )}
 
-      {top.length === 0 && favPicks.length === 0 && (
+      {top.length === 0 && favPicks.length === 0 && loading && (
+        <div style={{ textAlign:"center", padding:"60px 20px" }}>
+          <span style={{
+            display:"inline-block", width:32, height:32,
+            border:"3px solid rgba(0,0,0,0.08)",
+            borderTopColor:T.green,
+            borderRadius:"50%",
+            animation:"spin 0.8s linear infinite",
+          }} />
+          <div style={{ fontSize:13, color:T.text3, marginTop:12 }}>Loading picks...</div>
+        </div>
+      )}
+
+      {top.length === 0 && favPicks.length === 0 && !loading && (
         <div style={{ textAlign:"center", padding:"80px 20px", color:T.text3 }}>
           <div style={{ fontSize:40, marginBottom:12 }}>📋</div>
           <div style={{ fontSize:14 }}>No picks yet — check back when games are analyzed</div>
@@ -1453,7 +1573,7 @@ function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, fav
               display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:9, fontWeight:800, color:"#fff",
               border:"1.5px solid rgba(255,255,255,0.3)",
-            }}>{e.username[0].toUpperCase()}</div>
+            }}>{(e.username || "?")[0].toUpperCase()}</div>
             {shortLine && <div style={{ fontSize:7, fontWeight:800, color:"#000", lineHeight:1, whiteSpace:"nowrap" }}>{shortLine}</div>}
           </div>
         );
@@ -1949,7 +2069,9 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 
 // ── FINAL RESULTS PANEL ───────────────────────────────────────────────────────
 function FinalResultsPanel({ game, aiOverride, pickRecord }) {
-  const r = calcFinalResults(game);
+  const L = aiOverride?.lines || {};
+  const lockedOdds = { spread: pickRecord?.spread_line || L.spread || game.spread, ou: pickRecord?.ou_line || L.ou || game.ou };
+  const r = calcFinalResults(game, lockedOdds);
   if (!r) return null;
 
   const analysis = aiOverride || game.analysis;
@@ -3281,6 +3403,7 @@ export default function App() {
   const [props, setProps] = useState([]);
   const [loadingIds, setLoadingIds] = useState(new Set());
   const [aiOverrides, setAiOverrides] = useState({});
+  const aiCacheRef = useRef({}); // per-date cache: { "20260305": { gameId: override } }
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -3288,6 +3411,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
   const [picksData, setPicksData] = useState(null); // picks for the selected date
+  const [picksLoading, setPicksLoading] = useState(true); // loading state for picks tab
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -3329,18 +3453,33 @@ export default function App() {
 
   // 2) Load games whenever apiKey or selectedDate changes
   const initialLoadDone = useRef(false);
+  const prevDateKeyRef = useRef(null);
   useEffect(() => {
     if (apiKey === null) return;
+    const newDateKey = selectedDate || todayStr;
+    // Save current overrides to per-date cache before switching
+    const prevKey = prevDateKeyRef.current;
+    if (prevKey) {
+      setAiOverrides(cur => { aiCacheRef.current[prevKey] = cur; return cur; });
+    }
+    prevDateKeyRef.current = newDateKey;
     // Only show full-screen loader on first load; date switches just swap in-place
     if (!initialLoadDone.current) setDataLoaded(false);
     setGames([]);
-    setAiOverrides({});
+    // Restore cached overrides for this date, or start empty
+    setAiOverrides(aiCacheRef.current[newDateKey] || {});
     setGamesLoading(true);
     analyzedPreGameRef.current.clear();
-    Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
+    const dateKey = selectedDate || todayStr;
+    const isPastDate = dateKey < todayStr;
+    Promise.all([api.getGames(dateKey), fetchAccuribetPredictions()])
       .then(([g, ab]) => {
         accuribetRef.current = ab || {};
-        setGames(g.games);
+        // Force past-date games to "final" — server cache may still say "live"
+        const fixedGames = isPastDate
+          ? g.games.map(gm => gm.status === "live" ? { ...gm, status: "final" } : gm)
+          : g.games;
+        setGames(fixedGames);
         setDataLoaded(true);
         initialLoadDone.current = true;
         setGamesLoading(false);
@@ -3352,9 +3491,11 @@ export default function App() {
   // 3) Auto-poll scores + bets when live games are active (every 30s)
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
-    if (!hasLive || apiKey === null) return;
+    const pollDate = selectedDate || todayStr;
+    // Never poll for past dates — all games are final
+    if (!hasLive || apiKey === null || pollDate < todayStr) return;
     const interval = setInterval(() => {
-      api.getGames(selectedDate || todayStr)
+      api.getGames(pollDate)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
       betStore.reload();
@@ -3368,6 +3509,13 @@ export default function App() {
   //    attempted this session (so Gemini doesn't re-run on every page load / date change).
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
+    // Load cached analysis for final games (no re-analysis needed)
+    games.filter(g => g.status === "final" && g.analysis && g.analysis.best_bet)
+      .forEach(g => {
+        setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: mergeAccuribet(g.analysis, g, accuribetRef.current) });
+      });
+    // For past dates, only load cached analysis — don't call analyze API
+    const isPastDate = (selectedDate || todayStr) < todayStr;
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
@@ -3376,7 +3524,7 @@ export default function App() {
           const snap = g.analysis._snap;
           // Re-analyze pre-game games when spread or O/U changed since last analysis.
           // Live re-analysis is handled separately by effect #5.
-          const oddsStale = snap && g.status !== "live" && (
+          const oddsStale = !isPastDate && snap && g.status !== "live" && (
             (g.spread && snap.spread !== "N/A" && snap.spread !== g.spread) ||
             (g.ou     && snap.ou     !== "N/A" && snap.ou     !== g.ou)
           );
@@ -3386,6 +3534,8 @@ export default function App() {
           }
           // Odds moved — fall through and re-run Gemini with fresh lines
         }
+        // Don't call analyze API for past dates — ESPN data may not be available
+        if (isPastDate) return;
         // Already attempted this session — don't call Gemini again
         if (analyzedPreGameRef.current.has(g.id)) return;
         analyzedPreGameRef.current.add(g.id);
@@ -3425,9 +3575,10 @@ export default function App() {
   //    Re-runs when games change so hit stats update as games go final.
   useEffect(() => {
     const dateKey = selectedDate || todayStr;
+    setPicksLoading(true);
     api.getPicks(dateKey)
-      .then(d => setPicksData(d))
-      .catch(() => setPicksData(null));
+      .then(d => { setPicksData(d); setPicksLoading(false); })
+      .catch(() => { setPicksData(null); setPicksLoading(false); });
   }, [selectedDate, games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 7) Load past 7 days + today to compute overall rolling hit stats.
@@ -3565,7 +3716,7 @@ export default function App() {
                 display:"inline-flex", alignItems:"center", justifyContent:"center",
                 width:30, height:30, borderRadius:"50%",
                 background: profile.color, fontSize:14, fontWeight:800, color:"#fff",
-              }}>{profile.username[0].toUpperCase()}</span>
+              }}>{(profile.username || "?")[0].toUpperCase()}</span>
             ) : "☰"}
           </button>
           <span
@@ -3656,6 +3807,7 @@ export default function App() {
           betStore={betStore}
           profile={profile}
           loading={gamesLoading}
+          picksMap={picksMap}
         />
       )}
 
@@ -3667,6 +3819,7 @@ export default function App() {
           favorites={favorites}
           onFavorite={favorites}
           onGameClick={g => setSelectedGame(g)}
+          loading={gamesLoading || picksLoading}
         />
       )}
 

@@ -507,12 +507,14 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
           <div style={{ textAlign:"center", flex:1 }}>
             <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
             <div>{dispSpread}</div>
+            {(() => { const m = lineMovement(dispSpread, game.opening_spread, true); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
           </div>
         )}
         {dispOu && (
           <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
             <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
             <div>{dispOu}</div>
+            {(() => { const m = lineMovement(dispOu, game.opening_ou); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
           </div>
         )}
         {(dispAwayOdds || dispHomeOdds) && (
@@ -3597,7 +3599,7 @@ const Loader = () => {
       <img
         src="/static/loading.png"
         alt="DublPlay"
-        style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}
+        style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"contain", background:"#0f0d1a" }}
       />
       <div style={{
         position:"relative", display:"flex", flexDirection:"column",

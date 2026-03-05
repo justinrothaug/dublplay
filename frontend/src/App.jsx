@@ -455,46 +455,42 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         <TeamBadge abbr={game.away} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.awayName || TEAM_FULL[game.away] || game.away}</div>
-          <div style={{ height:3, width: "60%", maxWidth:140, background:awayC, borderRadius:2, marginTop:3, opacity:0.7 }} />
         </div>
         {(isLive || isFinal) && (
           <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>
             {game.awayScore}
           </span>
         )}
-        {awayMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{awayMult}x</span>}
-        {awayProb != null && (
-          <span style={{
-            border:`1px solid ${T.greenBdr}`,
-            borderRadius:20, padding:"4px 12px",
-            fontSize:13, fontWeight:600, color:T.green,
-            minWidth:50, textAlign:"center",
-          }}>{awayProb}%</span>
-        )}
       </div>
 
       {/* Home team row */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
         <TeamBadge abbr={game.home} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.homeName || TEAM_FULL[game.home] || game.home}</div>
-          <div style={{ height:3, width: "60%", maxWidth:140, background:homeC, borderRadius:2, marginTop:3, opacity:0.7 }} />
         </div>
         {(isLive || isFinal) && (
           <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>
             {game.homeScore}
           </span>
         )}
-        {homeMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{homeMult}x</span>}
-        {homeProb != null && (
-          <span style={{
-            border:`1px solid ${T.greenBdr}`,
-            borderRadius:20, padding:"4px 12px",
-            fontSize:13, fontWeight:600, color:T.green,
-            minWidth:50, textAlign:"center",
-          }}>{homeProb}%</span>
-        )}
       </div>
+
+      {/* Win probability bar */}
+      {awayProb != null && homeProb != null && (
+        <div style={{ marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:6, marginBottom:5 }}>
+            <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>{game.away}</span>
+            <span style={{ fontSize:13, fontWeight:800, color: awayProb >= homeProb ? T.text : T.text2 }}>{awayProb}%</span>
+            <span style={{ fontSize:10, color:T.text3 }}>·</span>
+            <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>{game.home}</span>
+            <span style={{ fontSize:13, fontWeight:800, color: homeProb >= awayProb ? T.text : T.text2 }}>{homeProb}%</span>
+          </div>
+          <div style={{ height:5, borderRadius:3, background:"rgba(0,0,0,0.06)", overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${awayProb}%`, background:awayC, borderRadius:3, transition:"width 0.6s" }} />
+          </div>
+        </div>
+      )}
 
       {/* Odds strip: Spread | O/U | ML odds */}
       <div style={{
@@ -1010,17 +1006,9 @@ function PickGameCard({ pick, game, onGameClick, onRemove }) {
           <TeamBadge abbr={game.away} size={36} />
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.awayName || TEAM_FULL[game.away] || game.away}</div>
-            <div style={{ height:3, width:"60%", maxWidth:140, background:awayC, borderRadius:2, marginTop:3, opacity:0.7 }} />
           </div>
           {(isLive || isFinal) && (
             <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>{game.awayScore}</span>
-          )}
-          {awayMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{awayMult}x</span>}
-          {awayProb != null && (
-            <span style={{
-              border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
-              fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
-            }}>{awayProb}%</span>
           )}
         </div>
 
@@ -1029,19 +1017,27 @@ function PickGameCard({ pick, game, onGameClick, onRemove }) {
           <TeamBadge abbr={game.home} size={36} />
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.homeName || TEAM_FULL[game.home] || game.home}</div>
-            <div style={{ height:3, width:"60%", maxWidth:140, background:homeC, borderRadius:2, marginTop:3, opacity:0.7 }} />
           </div>
           {(isLive || isFinal) && (
             <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>{game.homeScore}</span>
           )}
-          {homeMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{homeMult}x</span>}
-          {homeProb != null && (
-            <span style={{
-              border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
-              fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
-            }}>{homeProb}%</span>
-          )}
         </div>
+
+        {/* Win probability bar */}
+        {awayProb != null && homeProb != null && (
+          <div style={{ marginTop:8 }}>
+            <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:6, marginBottom:5 }}>
+              <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>{game.away}</span>
+              <span style={{ fontSize:13, fontWeight:800, color: awayProb >= homeProb ? T.text : T.text2 }}>{awayProb}%</span>
+              <span style={{ fontSize:10, color:T.text3 }}>·</span>
+              <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>{game.home}</span>
+              <span style={{ fontSize:13, fontWeight:800, color: homeProb >= awayProb ? T.text : T.text2 }}>{homeProb}%</span>
+            </div>
+            <div style={{ height:5, borderRadius:3, background:"rgba(0,0,0,0.06)", overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${awayProb}%`, background:awayC, borderRadius:3, transition:"width 0.6s" }} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Odds strip (light theme, matching Explore cards) ── */}

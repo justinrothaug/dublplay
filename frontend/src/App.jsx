@@ -523,14 +523,60 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         )}
       </div>
 
-      {/* Bottom row: volume + Spread and Total link */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          {potTotal > 0 && (
-            <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>${potTotal} vol</span>
-          )}
-        </div>
-        <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>Spread and Total</span>
+      {/* Bottom row: pick badges + vol */}
+      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+        {/* Best bet pick */}
+        {aiOverride?.best_bet && aiOverride.dubl_score_bet != null && (() => {
+          const betLine = aiOverride.best_bet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
+          const label = `✦ ${aiOverride.bet_team || "?"}${betLine ? ` ${betLine}` : ""}`;
+          const sc = aiOverride.dubl_score_bet;
+          const ec2 = edgeColor(sc);
+          return (
+            <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
+              <span style={{
+                fontSize:10, fontWeight:700, letterSpacing:"0.04em",
+                color:T.green, background:`${T.green}12`, border:`1px solid ${T.green}33`,
+                borderRadius:6, padding:"3px 8px",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+              }}>{label}</span>
+              <div style={{
+                width:22, height:22, borderRadius:"50%", flexShrink:0,
+                border:`2px solid ${ec2}`, background:`${ec2}12`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:9, fontWeight:800, color:ec2,
+              }}>{sc}</div>
+            </div>
+          );
+        })()}
+        {/* O/U pick */}
+        {aiOverride?.ou && aiOverride.dubl_score_ou != null && (() => {
+          const ouMatch = aiOverride.ou.match(/^(over|under)\s+([\d.]+)/i);
+          const ouDir = ouMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
+          const ouNum = ouMatch?.[2] || "";
+          const label = `◉ ${ouDir} ${ouNum}`;
+          const sc = aiOverride.dubl_score_ou;
+          const ec2 = edgeColor(sc);
+          return (
+            <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0 }}>
+              <span style={{
+                fontSize:10, fontWeight:700, letterSpacing:"0.04em",
+                color:T.gold, background:`${T.gold}12`, border:`1px solid ${T.gold}33`,
+                borderRadius:6, padding:"3px 8px",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+              }}>{label}</span>
+              <div style={{
+                width:22, height:22, borderRadius:"50%", flexShrink:0,
+                border:`2px solid ${ec2}`, background:`${ec2}12`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:9, fontWeight:800, color:ec2,
+              }}>{sc}</div>
+            </div>
+          );
+        })()}
+        {/* Vol on the right */}
+        {potTotal > 0 && (
+          <span style={{ fontSize:11, color:T.text3, fontWeight:500, flexShrink:0, marginLeft:"auto" }}>${potTotal} vol</span>
+        )}
       </div>
     </div>
   );

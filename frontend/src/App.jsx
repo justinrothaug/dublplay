@@ -948,7 +948,7 @@ function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcoming
 
 // ── KALSHI-STYLE MY BETS TAB ─────────────────────────────────────────────────
 // Pick card: KalshiCard-style game card with pick/status/score bottom strip
-function PickGameCard({ pick, game, onGameClick, onRemove }) {
+function PickGameCard({ pick, game, onGameClick, onRemove, onSave }) {
   const isBet = pick.type === "bet";
   const isOu = pick.type === "ou";
   const isLive = game.status === "live";
@@ -1171,13 +1171,18 @@ function PickGameCard({ pick, game, onGameClick, onRemove }) {
           }}>{pick.score}</div>
         )}
 
-        {/* Remove button for saved picks */}
-        {onRemove && (
+        {/* Star: filled if saved (tap to remove), outline if unsaved (tap to save) */}
+        {onRemove ? (
           <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
             background:"none", border:"none", fontSize:15, color:T.gold, cursor:"pointer",
             padding:"0 2px", flexShrink:0,
           }}>★</button>
-        )}
+        ) : onSave ? (
+          <button onClick={e => { e.stopPropagation(); onSave(); }} style={{
+            background:"none", border:"none", fontSize:15, color:T.text3, cursor:"pointer",
+            padding:"0 2px", flexShrink:0,
+          }}>☆</button>
+        ) : null}
       </div>
     </div>
   );
@@ -1238,14 +1243,33 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
           <span style={{ fontSize:20, fontWeight:800, color:T.text }}>Top Picks</span>
           <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Best bets ranked by DUBL Score</p>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {top.map(pick => (
+            {top.map(pick => {
+              const pickId = `${pick.game.id}-${pick.type}`;
+              return (
               <PickGameCard
-                key={`${pick.game.id}-${pick.type}`}
+                key={pickId}
                 pick={pick}
                 game={pick.game}
                 onGameClick={onGameClick}
+                onSave={onFavorite ? () => onFavorite.add({
+                  id: pickId, type: pick.type,
+                  label: pick.type === "bet" ? "BEST BET" : pick.type === "ou" ? "O/U" : "PROP",
+                  icon: pick.type === "bet" ? "✦" : pick.type === "ou" ? "◉" : "▸",
+                  color: pick.type === "bet" ? T.green : pick.type === "ou" ? T.gold : "#a78bfa",
+                  text: pick.text, score: pick.score, reasoning: pick.reasoning,
+                  betTeam: pick.betTeam || null, betIsSpread: !!pick.betIsSpread,
+                  matchup: `${pick.game.away} @ ${pick.game.home}`,
+                  gameId: pick.game.id, savedAt: Date.now(),
+                  gameSnapshot: {
+                    away: pick.game.away, home: pick.game.home,
+                    awayName: pick.game.awayName, homeName: pick.game.homeName,
+                    ou: pick.game.ou, awayOdds: pick.game.awayOdds, homeOdds: pick.game.homeOdds,
+                    homeSpreadOdds: pick.game.homeSpreadOdds, awaySpreadOdds: pick.game.awaySpreadOdds,
+                  },
+                }) : undefined}
               />
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

@@ -455,7 +455,7 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         <TeamBadge abbr={game.away} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.awayName || TEAM_FULL[game.away] || game.away}</div>
-          {awayProb != null && (
+          {!isFinal && awayProb != null && (
             <div style={{ height:3, borderRadius:2, background:"rgba(0,0,0,0.06)", marginTop:3, overflow:"hidden" }}>
               <div style={{ height:"100%", width:`${awayProb}%`, background:awayC, borderRadius:2, transition:"width 0.6s" }} />
             </div>
@@ -466,7 +466,7 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
             {game.awayScore}
           </span>
         )}
-        {awayProb != null && (
+        {!isFinal && awayProb != null && (
           <span style={{
             border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
             fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
@@ -479,7 +479,7 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         <TeamBadge abbr={game.home} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.homeName || TEAM_FULL[game.home] || game.home}</div>
-          {homeProb != null && (
+          {!isFinal && homeProb != null && (
             <div style={{ height:3, borderRadius:2, background:"rgba(0,0,0,0.06)", marginTop:3, overflow:"hidden" }}>
               <div style={{ height:"100%", width:`${homeProb}%`, background:homeC, borderRadius:2, transition:"width 0.6s" }} />
             </div>
@@ -490,7 +490,7 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
             {game.homeScore}
           </span>
         )}
-        {homeProb != null && (
+        {!isFinal && homeProb != null && (
           <span style={{
             border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
             fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
@@ -498,34 +498,74 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         )}
       </div>
 
-      {/* Odds strip: Spread | O/U | ML odds */}
-      <div style={{
-        display:"flex", justifyContent:"space-between", alignItems:"center",
-        padding:"8px 0", marginBottom:8,
-        borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
-        fontSize:11, color:T.text2, fontWeight:600,
-      }}>
-        {dispSpread && (
-          <div style={{ textAlign:"center", flex:1 }}>
-            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
-            <div>{dispSpread}</div>
-            {(() => { const m = lineMovement(dispSpread, game.opening_spread, true); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
+      {/* Odds strip (upcoming/live) or Results strip (final) */}
+      {isFinal ? (() => {
+        const r = calcFinalResults(game);
+        if (!r) return null;
+        return (
+          <div style={{
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+            padding:"8px 0", marginBottom:8,
+            borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+            fontSize:11, fontWeight:600,
+          }}>
+            {r.spreadResult && (
+              <div style={{ textAlign:"center", flex:1 }}>
+                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
+                  {r.spreadResult.hit === "push" ? "PUSH" : "COVER"}
+                </div>
+                <div style={{ color: r.spreadResult.hit === "push" ? T.text3 : T.text }}>
+                  {r.spreadResult.hit === "fav" ? `${r.spreadResult.favAbbr} ${r.spreadResult.line}` :
+                   r.spreadResult.hit === "dog" ? `${r.spreadResult.dogAbbr} +${Math.abs(r.spreadResult.line)}` :
+                   dispSpread}
+                </div>
+              </div>
+            )}
+            {r.totalResult && (
+              <div style={{ textAlign:"center", flex:1, borderLeft: r.spreadResult ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>
+                  {r.totalResult.hit}
+                </div>
+                <div style={{ color:T.text }}>
+                  {r.totalResult.combined} ({dispOu})
+                </div>
+              </div>
+            )}
+            <div style={{ textAlign:"center", flex:1, borderLeft: (r.spreadResult || r.totalResult) ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>WINNER</div>
+              <div style={{ color:T.text }}>{r.mlWinner} by {r.margin}</div>
+            </div>
           </div>
-        )}
-        {dispOu && (
-          <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
-            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
-            <div>{dispOu}</div>
-            {(() => { const m = lineMovement(dispOu, game.opening_ou); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
-          </div>
-        )}
-        {(dispAwayOdds || dispHomeOdds) && (
-          <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
-            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
-            <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
-          </div>
-        )}
-      </div>
+        );
+      })() : (
+        <div style={{
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"8px 0", marginBottom:8,
+          borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+          fontSize:11, color:T.text2, fontWeight:600,
+        }}>
+          {dispSpread && (
+            <div style={{ textAlign:"center", flex:1 }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
+              <div>{dispSpread}</div>
+              {(() => { const m = lineMovement(dispSpread, game.opening_spread, true); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
+            </div>
+          )}
+          {dispOu && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
+              <div>{dispOu}</div>
+              {(() => { const m = lineMovement(dispOu, game.opening_ou); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
+            </div>
+          )}
+          {(dispAwayOdds || dispHomeOdds) && (
+            <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
+              <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Bottom row: pick badges + vol */}
       <div style={{ display:"flex", alignItems:"center", gap:6 }}>

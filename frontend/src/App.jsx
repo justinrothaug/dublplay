@@ -451,18 +451,18 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       </div>
 
       {/* Away team row */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
         <TeamBadge abbr={game.away} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.awayName || TEAM_FULL[game.away] || game.away}</div>
           <div style={{ height:3, width: "60%", maxWidth:140, background:awayC, borderRadius:2, marginTop:3, opacity:0.7 }} />
         </div>
         {(isLive || isFinal) && (
-          <span style={{ fontSize:18, fontWeight:800, color:T.text, marginRight:8, minWidth:28, textAlign:"right" }}>
+          <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>
             {game.awayScore}
           </span>
         )}
-        {awayMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:40, textAlign:"right" }}>{awayMult}x</span>}
+        {awayMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{awayMult}x</span>}
         {awayProb != null && (
           <span style={{
             border:`1px solid ${T.greenBdr}`,
@@ -474,18 +474,18 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
       </div>
 
       {/* Home team row */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
         <TeamBadge abbr={game.home} size={36} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.homeName || TEAM_FULL[game.home] || game.home}</div>
           <div style={{ height:3, width: "60%", maxWidth:140, background:homeC, borderRadius:2, marginTop:3, opacity:0.7 }} />
         </div>
         {(isLive || isFinal) && (
-          <span style={{ fontSize:18, fontWeight:800, color:T.text, marginRight:8, minWidth:28, textAlign:"right" }}>
+          <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>
             {game.homeScore}
           </span>
         )}
-        {homeMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:40, textAlign:"right" }}>{homeMult}x</span>}
+        {homeMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{homeMult}x</span>}
         {homeProb != null && (
           <span style={{
             border:`1px solid ${T.greenBdr}`,
@@ -496,25 +496,48 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         )}
       </div>
 
-      {/* Bottom row: volume + spread/total link */}
+      {/* Odds strip: Spread | O/U | ML odds */}
+      <div style={{
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        padding:"8px 0", marginBottom:8,
+        borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+        fontSize:11, color:T.text2, fontWeight:600,
+      }}>
+        {dispSpread && (
+          <div style={{ textAlign:"center", flex:1 }}>
+            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
+            <div>{dispSpread}</div>
+          </div>
+        )}
+        {dispOu && (
+          <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
+            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
+            <div>{dispOu}</div>
+          </div>
+        )}
+        {(dispAwayOdds || dispHomeOdds) && (
+          <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
+            <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
+            <div>{dispAwayOdds || "—"} / {dispHomeOdds || "—"}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom row: volume + Spread and Total link */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
           {potTotal > 0 && (
             <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>${potTotal} vol</span>
           )}
         </div>
-        {(dispSpread || dispOu) && (
-          <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>
-            {dispSpread ? "Spread" : ""}{dispSpread && dispOu ? " and " : ""}{dispOu ? "Total" : ""}
-          </span>
-        )}
+        <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>Spread and Total</span>
       </div>
     </div>
   );
 }
 
 // ── KALSHI-STYLE GAME DETAIL VIEW ────────────────────────────────────────────
-function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds }) {
+function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile }) {
   const [detailTab, setDetailTab] = useState("lines");
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
@@ -613,20 +636,73 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
           </div>
         )}
 
-        {/* Volume */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0 16px" }}>
-          <span style={{ fontSize:12, color:T.text3 }}>
-            {gameBets?.total ? `$${gameBets.total} vol` : ""}
-          </span>
-          {!isLive && !isFinal && game.time && (
-            <span style={{ fontSize:12, color:T.text3 }}>
-              {new Date(game.time).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}
+        {/* Pot + volume bar */}
+        <div style={{
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"10px 14px", marginBottom:16,
+          background:T.cardAlt, borderRadius:10, border:`1px solid ${T.border}`,
+        }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            {gameBets?.total > 0 && (
+              <span style={{ fontSize:12, fontWeight:700, color:T.green }}>${gameBets.total} pot</span>
+            )}
+            {!isLive && !isFinal && game.time && (
+              <span style={{ fontSize:11, color:T.text3 }}>
+                {new Date(game.time).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}
+              </span>
+            )}
+          </div>
+          {profile?.username && (
+            <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
+              Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
             </span>
           )}
         </div>
 
-        {/* Team pick buttons (Kalshi-style) */}
-        <div style={{ display:"flex", gap:10, marginBottom:16 }}>
+        {/* Bettor avatars above team buttons */}
+        <div style={{ display:"flex", gap:10, marginBottom:6 }}>
+          {/* Away bettors */}
+          <div style={{ flex:1, display:"flex", justifyContent:"center", gap:4, flexWrap:"wrap", minHeight:28 }}>
+            {(gameBets?.away || []).map((e, i) => (
+              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                <div style={{
+                  width:24, height:24, borderRadius:"50%",
+                  background: avatarColor(e.username),
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:10, fontWeight:800, color:"#fff",
+                  border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
+                }}>{e.username[0].toUpperCase()}</div>
+                {e.lockedSpread && (
+                  <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
+                    {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {/* Home bettors */}
+          <div style={{ flex:1, display:"flex", justifyContent:"center", gap:4, flexWrap:"wrap", minHeight:28 }}>
+            {(gameBets?.home || []).map((e, i) => (
+              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                <div style={{
+                  width:24, height:24, borderRadius:"50%",
+                  background: avatarColor(e.username),
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:10, fontWeight:800, color:"#fff",
+                  border: e.uid === profile?.uid ? `2px solid ${T.green}` : "2px solid #ddd",
+                }}>{e.username[0].toUpperCase()}</div>
+                {e.lockedSpread && (
+                  <div style={{ fontSize:7, fontWeight:800, color:T.text3, lineHeight:1 }}>
+                    {e.lockedSpread.replace(/^[A-Z]{2,4}\s*/, "")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Team pick buttons (Kalshi-style) — clicking places a $10 bet */}
+        <div style={{ display:"flex", gap:10, marginBottom:4 }}>
           <button
             onClick={() => handleSidePick("away")}
             style={{
@@ -658,30 +734,21 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
         </div>
 
         {/* Multipliers under buttons */}
-        <div style={{ display:"flex", gap:10, marginBottom:20, textAlign:"center" }}>
+        <div style={{ display:"flex", gap:10, marginBottom:8, textAlign:"center" }}>
           <div style={{ flex:1, fontSize:13, color:T.text3 }}>{awayMult ? `${awayMult}x` : ""}</div>
           <div style={{ flex:1, fontSize:13, color:T.text3 }}>{homeMult ? `${homeMult}x` : ""}</div>
         </div>
 
-        {/* COMBO button placeholder */}
-        <button style={{
-          width:"100%", padding:"12px", borderRadius:12,
-          background:"transparent", border:`1px solid ${T.border}`,
-          color:T.text3, fontSize:13, fontWeight:600,
-          display:"flex", alignItems:"center", justifyContent:"center", gap:6,
-          marginBottom:16, cursor:"pointer",
-        }} onClick={() => onPickOdds && onPickOdds(dispAwayOdds || "-110")}>
-          💰 Calculate Payout
-        </button>
+        {/* Bet hint */}
+        {isUp && onBet && (
+          <div style={{ textAlign:"center", fontSize:11, color:T.text3, marginBottom:16 }}>
+            {myPick
+              ? `You picked ${myPick === "away" ? game.away : game.home} · tap again to remove`
+              : "Tap a team to place a $10 bet"}
+          </div>
+        )}
 
-        {/* Player and team stats link */}
-        <div style={{ textAlign:"center", marginBottom:24 }}>
-          <span style={{ fontSize:13, color:T.text2, fontWeight:500 }}>
-            📊 Player and team stats
-          </span>
-        </div>
-
-        {/* Tab: Game Lines / Player Props */}
+        {/* Tab: Game Lines / Analysis */}
         <div style={{ display:"flex", gap:0, marginBottom:20, borderBottom:`2px solid ${T.border}` }}>
           {[
             { id:"lines", label:"Game Lines" },
@@ -3235,6 +3302,7 @@ export default function App() {
           else if (result === "removed") profile.credit(10);
         } : null}
         username={profile?.username}
+        profile={profile}
         onPickOdds={odds => setCalcSeed(odds)}
       />
     );
@@ -3265,14 +3333,39 @@ export default function App() {
           <div style={{ flex:1 }} />
           {/* Hit stats badge */}
           {(() => {
-            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0 } = overallStats || {};
+            const { hitsBet = 0, totalBet = 0, hitsOu = 0, totalOu = 0, hitsBet4 = 0, totalBet4 = 0, hitsOu4 = 0, totalOu4 = 0 } = overallStats || {};
             if (totalBet === 0 && totalOu === 0) return null;
             const betPct = totalBet > 0 ? Math.round(hitsBet / totalBet * 100) : null;
             const ouPct  = totalOu  > 0 ? Math.round(hitsOu  / totalOu  * 100) : null;
+            const betPct4 = totalBet4 > 0 ? Math.round(hitsBet4 / totalBet4 * 100) : null;
+            const ouPct4  = totalOu4  > 0 ? Math.round(hitsOu4  / totalOu4  * 100) : null;
+            const c = pct => pct >= 60 ? T.green : pct >= 50 ? T.gold : T.red;
             return (
-              <div style={{ display:"flex", gap:8, fontSize:10, fontWeight:700, alignItems:"center" }}>
-                {betPct !== null && <span style={{ color: betPct >= 55 ? T.green : T.text3 }}>{betPct}% Bets</span>}
-                {ouPct !== null && <span style={{ color: ouPct >= 55 ? T.green : T.text3 }}>{ouPct}% O/U</span>}
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1 }}>
+                <span style={{ fontSize:10, fontWeight:700, whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }}>
+                  {betPct !== null && (
+                    <span style={{ color:c(betPct) }}>{hitsBet}-{totalBet - hitsBet} Bets ({betPct}%)</span>
+                  )}
+                  {betPct !== null && ouPct !== null && (
+                    <span style={{ color:T.text3 }}>|</span>
+                  )}
+                  {ouPct !== null && (
+                    <span style={{ color:c(ouPct) }}>{hitsOu}-{totalOu - hitsOu} O/U ({ouPct}%)</span>
+                  )}
+                </span>
+                {(betPct4 !== null || ouPct4 !== null) && (
+                  <span style={{ fontSize:9, fontWeight:800, whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:4 }}>
+                    {betPct4 !== null && (
+                      <span style={{ color:c(betPct4) }}>★ {hitsBet4}-{totalBet4 - hitsBet4} ({betPct4}%)</span>
+                    )}
+                    {betPct4 !== null && ouPct4 !== null && (
+                      <span style={{ color:T.text3 }}>|</span>
+                    )}
+                    {ouPct4 !== null && (
+                      <span style={{ color:c(ouPct4) }}>★ {hitsOu4}-{totalOu4 - hitsOu4} ({ouPct4}%)</span>
+                    )}
+                  </span>
+                )}
               </div>
             );
           })()}

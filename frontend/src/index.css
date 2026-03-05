@@ -3,8 +3,8 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: #13151a;
-  color: #fff;
+  background: #f5f5f5;
+  color: #1a1a1a;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -19,22 +19,26 @@ div[style*="scrollSnapType"]::-webkit-scrollbar { display: none; }
 .date-strip { -ms-overflow-style: none; scrollbar-width: none; }
 .date-strip::-webkit-scrollbar { display: none; }
 
+/* Hide scrollbar on category tabs */
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+
 /* Thin scrollbar for tables/chat */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 
 input, textarea, button { font-family: inherit; }
-input:focus, textarea:focus { outline: none; box-shadow: 0 0 0 2px rgba(83,211,55,0.25); border-color: rgba(83,211,55,0.5) !important; }
+input:focus, textarea:focus { outline: none; box-shadow: 0 0 0 2px rgba(26,141,79,0.2); border-color: rgba(26,141,79,0.4) !important; }
 
 button { cursor: pointer; transition: filter 0.12s, opacity 0.12s, transform 0.1s; }
-button:hover:not(:disabled) { filter: brightness(1.1); }
-button:active:not(:disabled) { transform: scale(0.96); }
+button:hover:not(:disabled) { filter: brightness(0.95); }
+button:active:not(:disabled) { transform: scale(0.97); }
 button:disabled { cursor: not-allowed; }
 
 /* Row hover for tables */
-tbody tr:hover { background: rgba(255,255,255,0.018) !important; }
+tbody tr:hover { background: rgba(0,0,0,0.02) !important; }
 
 /* Touch-friendly tap highlight removal */
 * { -webkit-tap-highlight-color: transparent; }
@@ -43,3 +47,4 @@ tbody tr:hover { background: rgba(255,255,255,0.018) !important; }
 @keyframes fadeUp  { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
 @keyframes spin    { to{transform:rotate(360deg)} }
 @keyframes slideUp { from{opacity:0;transform:translateY(100%)} to{opacity:1;transform:translateY(0)} }
+@keyframes slideIn { from{opacity:0;transform:translateX(30px)} to{opacity:1;transform:translateX(0)} }

@@ -572,9 +572,6 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
         // Compute AI pick hit/miss for final games
         let bestBetHit = null;
         let ouHitCard = null;
-        // Compute user's own pick hit/miss
-        const myPick = gameBets?.myPick; // "away" | "home" | null
-        let myPickHit = null;
         if (isFinal) {
           const r = calcFinalResults(game);
           if (r) {
@@ -597,11 +594,6 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
               const leanedOver = /over/i.test(ouPick);
               ouHitCard = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
             }
-            // User's moneyline pick
-            if (myPick) {
-              const pickedTeam = myPick === "away" ? game.away : game.home;
-              myPickHit = pickedTeam === r.mlWinner;
-            }
           }
         }
         // Resolve pick display: prefer aiOverride, fall back to pickRecord
@@ -614,18 +606,6 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
         const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
         return (
       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-        {/* User's own pick hit/miss */}
-        {isFinal && myPick && myPickHit !== null && (() => {
-          const pickedTeam = myPick === "away" ? game.away : game.home;
-          const clr = myPickHit ? T.green : T.red;
-          return (
-            <span style={{
-              fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-              color:clr, background:`${clr}12`, border:`1px solid ${clr}33`,
-              borderRadius:6, padding:"3px 8px", flexShrink:0,
-            }}>{pickedTeam} {myPickHit ? "✓" : "✗"}</span>
-          );
-        })()}
         {/* Best bet pick */}
         {dispBestBet && dispBetScore != null && (() => {
           const betLine = dispBestBet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";

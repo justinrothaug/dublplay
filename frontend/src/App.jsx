@@ -775,7 +775,16 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   transition: "all 0.15s",
                 }}
               >
-                {game.away}
+                <span style={{ display:"inline-flex", alignItems:"center", gap:6, justifyContent:"center" }}>
+                  {game.away}
+                  {myPick === "away" && (
+                    <span style={{
+                      width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.25)",
+                      display:"inline-flex", alignItems:"center", justifyContent:"center",
+                      fontSize:11, lineHeight:1,
+                    }}>✓</span>
+                  )}
+                </span>
               </button>
               <button
                 onClick={() => handleSidePick("home")}
@@ -791,7 +800,16 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
                   transition: "all 0.15s",
                 }}
               >
-                {game.home}
+                <span style={{ display:"inline-flex", alignItems:"center", gap:6, justifyContent:"center" }}>
+                  {game.home}
+                  {myPick === "home" && (
+                    <span style={{
+                      width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.25)",
+                      display:"inline-flex", alignItems:"center", justifyContent:"center",
+                      fontSize:11, lineHeight:1,
+                    }}>✓</span>
+                  )}
+                </span>
               </button>
             </div>
           );

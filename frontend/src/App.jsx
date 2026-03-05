@@ -695,11 +695,24 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               </span>
             )}
           </div>
-          {profile?.username && (
-            <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
-              Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
-            </span>
-          )}
+          {profile?.username && (() => {
+            const awayCount = (gameBets?.away || []).length;
+            const homeCount = (gameBets?.home || []).length;
+            const awayPot = awayCount * 10;
+            const homePot = homeCount * 10;
+            const potentialWin = myPick === "away" && awayCount > 0 ? Math.round(homePot / awayCount)
+              : myPick === "home" && homeCount > 0 ? Math.round(awayPot / homeCount)
+              : null;
+            return potentialWin != null ? (
+              <span style={{ fontSize:12, fontWeight:700, color:T.green }}>
+                To win: ${potentialWin}
+              </span>
+            ) : (
+              <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
+                Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
+              </span>
+            );
+          })()}
         </div>
 
         {/* Bettor avatars above team buttons */}
@@ -745,36 +758,44 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
         </div>
 
         {/* Team pick buttons — clicking places a $10 spread bet */}
-        <div style={{ display:"flex", gap:10, marginBottom:4 }}>
-          <button
-            onClick={() => handleSidePick("away")}
-            style={{
-              flex:1, padding:"14px 16px", borderRadius:12,
-              background: myPick === "away" ? awayC : T.accentBg,
-              border: myPick === "away" ? `2px solid ${awayC}` : "2px solid transparent",
-              color: "#fff", fontSize:15, fontWeight:700,
-              cursor: isUp ? "pointer" : "default",
-              opacity: isUp ? 1 : 0.7,
-              textAlign:"center",
-            }}
-          >
-            {game.away}
-          </button>
-          <button
-            onClick={() => handleSidePick("home")}
-            style={{
-              flex:1, padding:"14px 16px", borderRadius:12,
-              background: myPick === "home" ? homeC : T.teal,
-              border: myPick === "home" ? `2px solid ${homeC}` : "2px solid transparent",
-              color: "#fff", fontSize:15, fontWeight:700,
-              cursor: isUp ? "pointer" : "default",
-              opacity: isUp ? 1 : 0.7,
-              textAlign:"center",
-            }}
-          >
-            {game.home}
-          </button>
-        </div>
+        {(() => {
+          return (
+            <div style={{ display:"flex", gap:10, marginBottom:4 }}>
+              <button
+                onClick={() => handleSidePick("away")}
+                style={{
+                  flex:1, padding:"14px 16px", borderRadius:12,
+                  background: myPick === "away" ? awayC : T.accentBg,
+                  border: myPick === "away" ? `3px solid #fff` : "3px solid transparent",
+                  boxShadow: myPick === "away" ? `0 0 0 2px ${awayC}, 0 4px 12px rgba(0,0,0,0.3)` : "none",
+                  color: "#fff", fontSize:15, fontWeight:700,
+                  cursor: isUp ? "pointer" : "default",
+                  opacity: isUp ? 1 : 0.7,
+                  textAlign:"center",
+                  transition: "all 0.15s",
+                }}
+              >
+                {game.away}
+              </button>
+              <button
+                onClick={() => handleSidePick("home")}
+                style={{
+                  flex:1, padding:"14px 16px", borderRadius:12,
+                  background: myPick === "home" ? homeC : T.teal,
+                  border: myPick === "home" ? `3px solid #fff` : "3px solid transparent",
+                  boxShadow: myPick === "home" ? `0 0 0 2px ${homeC}, 0 4px 12px rgba(0,0,0,0.3)` : "none",
+                  color: "#fff", fontSize:15, fontWeight:700,
+                  cursor: isUp ? "pointer" : "default",
+                  opacity: isUp ? 1 : 0.7,
+                  textAlign:"center",
+                  transition: "all 0.15s",
+                }}
+              >
+                {game.home}
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Spread line under each button */}
         <div style={{ display:"flex", gap:10, marginBottom:8, textAlign:"center" }}>

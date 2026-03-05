@@ -1042,24 +1042,38 @@ function PickGameCard({ pick, game, onGameClick, onRemove }) {
         </div>
       </div>
 
-      {/* ── Odds strip (same as Explore cards) ── */}
+      {/* ── Odds strip (light theme, matching Explore cards) ── */}
       {(() => {
         const rawOu = L.ou || game.ou;
         const dispSpread = game.spread || L.spread;
         const dispOu = rawOu ? String(rawOu).replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
         const showOdds = dispSpread || dispOu || dispHomeOdds;
         return showOdds ? (
-          <div style={{ display:"flex", background:"#0f0d0a" }}>
+          <div style={{
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+            padding:"8px 18px", margin:0,
+            borderTop:`1px solid ${T.border}`, borderBottom:`1px solid ${T.border}`,
+            fontSize:11, color:T.text2, fontWeight:600,
+          }}>
             {dispSpread && (
-              <OddsCol label="SPREAD" value={dispSpread} highlight={!isFinal}
-                movement={lineMovement(dispSpread, game.opening_spread, true)} />
+              <div style={{ textAlign:"center", flex:1 }}>
+                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>SPREAD</div>
+                <div>{dispSpread}</div>
+                {(() => { const m = lineMovement(dispSpread, game.opening_spread, true); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
+              </div>
             )}
             {dispOu && (
-              <OddsCol label="TOTAL" value={`${dispOu}${isLive && game.ouDir ? ` ${game.ouDir}` : ""}`} highlight={!isFinal}
-                movement={lineMovement(dispOu, game.opening_ou)} />
+              <div style={{ textAlign:"center", flex:1, borderLeft: dispSpread ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>O/U</div>
+                <div>{dispOu}{isLive && game.ouDir ? ` ${game.ouDir}` : ""}</div>
+                {(() => { const m = lineMovement(dispOu, game.opening_ou); return m ? <div style={{ fontSize:9, color:m.color, marginTop:2 }}>{m.text}</div> : null; })()}
+              </div>
             )}
             {dispHomeOdds && dispAwayOdds && (
-              <OddsCol label="MONEYLINE" value={`${dispAwayOdds} / ${dispHomeOdds}`} highlight={!isFinal} />
+              <div style={{ textAlign:"center", flex:1, borderLeft: (dispSpread || dispOu) ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ fontSize:9, color:T.text3, fontWeight:700, letterSpacing:"0.05em", marginBottom:2 }}>ML</div>
+                <div>{dispAwayOdds} / {dispHomeOdds}</div>
+              </div>
             )}
           </div>
         ) : null;

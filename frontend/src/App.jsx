@@ -44,11 +44,15 @@ const hitColor  = p => p >= 75 ? T.green : p >= 55 ? T.gold : T.red;
 
 // ── FINAL GAME RESULT CALCULATOR ──────────────────────────────────────────────
 // Given a final game, returns what actually hit: spread, total, moneyline
-function calcFinalResults(game) {
+function calcFinalResults(game, lockedOdds) {
   if (game.status !== "final") return null;
   const home = game.homeScore ?? 0;
   const away = game.awayScore ?? 0;
   const combined = home + away;
+
+  // Use locked odds from the AI pick when available, fall back to game odds
+  const effectiveSpread = lockedOdds?.spread || game.spread;
+  const effectiveOu = lockedOdds?.ou || game.ou;
 
   // Moneyline
   const mlWinner = home > away ? game.home : game.away;
@@ -57,11 +61,11 @@ function calcFinalResults(game) {
 
   // Total (O/U)
   let totalResult = null;
-  if (game.ou) {
-    const line = parseFloat(game.ou);
+  if (effectiveOu) {
+    const line = parseFloat(effectiveOu);
     if (!isNaN(line)) {
       totalResult = {
-        label: `${game.ou} O/U`,
+        label: `${effectiveOu} O/U`,
         combined,
         hit: combined > line ? "OVER" : combined < line ? "UNDER" : "PUSH",
       };
@@ -70,8 +74,8 @@ function calcFinalResults(game) {
 
   // Spread — parse "DET -16.5" or "BOS -2.5"
   let spreadResult = null;
-  if (game.spread) {
-    const m = game.spread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
+  if (effectiveSpread) {
+    const m = effectiveSpread.match(/^([A-Z]+)\s*([-+]?\d+\.?\d*)$/);
     if (m) {
       const favAbbr = m[1];
       const line    = parseFloat(m[2]); // negative = favored
@@ -407,9 +411,13 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
   const homeProb = game.homeWinProb || oddsToImpliedProb(dispHomeOdds);
   const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
   const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
-  const dispSpread = game.spread || L.spread;
-  const rawOu = L.ou || game.ou;
+  // For final games, prefer locked odds from AI pick so result strip matches bet chips
+  const lockedSpread = pickRecord?.spread_line || L.spread;
+  const lockedOu = pickRecord?.ou_line || L.ou;
+  const dispSpread = (isFinal ? lockedSpread : game.spread) || L.spread || game.spread;
+  const rawOu = (isFinal ? lockedOu : L.ou) || L.ou || game.ou;
   const dispOu = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
+  const lockedOdds = isFinal ? { spread: lockedSpread || game.spread, ou: dispOu } : null;
 
   // Volume approximation from pot data
   const gameBets = betStore ? betStore.forGame(game.id, profile?.uid) : null;
@@ -500,7 +508,7 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
 
       {/* Odds strip (upcoming/live) or Results strip (final) */}
       {isFinal ? (() => {
-        const r = calcFinalResults(game);
+        const r = calcFinalResults(game, lockedOdds);
         if (!r) return null;
         // Compute AI pick hit/miss to show ✓/✗ on the results strip
         const pBetTeam = aiOverride?.bet_team || pickRecord?.bet_team;
@@ -592,7 +600,7 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
         let bestBetHit = null;
         let ouHitCard = null;
         if (isFinal) {
-          const r = calcFinalResults(game);
+          const r = calcFinalResults(game, lockedOdds);
           if (r) {
             // Use pickRecord for hit/miss when aiOverride isn't loaded
             const betTeam = aiOverride?.bet_team || pickRecord?.bet_team;
@@ -692,9 +700,13 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
   const isFinal = game.status === "final";
   const isUp = game.status === "upcoming";
   const L = aiOverride?.lines || {};
-  const dispSpread = game.spread || L.spread;
-  const rawOu = L.ou || game.ou;
+  // For final games, prefer locked odds from AI pick so results are consistent
+  const lockedSpread = pickRecord?.spread_line || L.spread;
+  const lockedOu = pickRecord?.ou_line || L.ou;
+  const dispSpread = (isFinal ? lockedSpread : game.spread) || L.spread || game.spread;
+  const rawOu = (isFinal ? lockedOu : L.ou) || L.ou || game.ou;
   const dispOu = rawOu ? rawOu.replace(/^(over\/under|over|under)\s*/i, "") : rawOu;
+  const lockedOdds = isFinal ? { spread: lockedSpread || game.spread, ou: dispOu } : null;
   const dispAwayOdds = L.awayOdds || game.awayOdds;
   const dispHomeOdds = L.homeOdds || game.homeOdds;
   const awayMult = oddsToMultiplier(dispAwayOdds);
@@ -1106,7 +1118,8 @@ function PickGameCard({ pick, game, onGameClick, onRemove, onSave }) {
   // Final result hit/miss
   let finalHit = null;
   if (isFinal) {
-    const r = calcFinalResults(game);
+    const lockedOdds = { spread: L.spread || game.spread, ou: L.ou || game.ou };
+    const r = calcFinalResults(game, lockedOdds);
     if (r) {
       if (isBet) {
         if (pick.betIsSpread && r.spreadResult) {
@@ -1294,7 +1307,7 @@ function PickGameCard({ pick, game, onGameClick, onRemove, onSave }) {
   );
 }
 
-function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, onGameClick }) {
+function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, onGameClick, loading }) {
   // Top picks — auto-generated from AI analysis
   const picks = [];
   for (const g of games) {
@@ -1380,7 +1393,20 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
         </div>
       )}
 
-      {top.length === 0 && favPicks.length === 0 && (
+      {top.length === 0 && favPicks.length === 0 && loading && (
+        <div style={{ textAlign:"center", padding:"60px 20px" }}>
+          <span style={{
+            display:"inline-block", width:32, height:32,
+            border:"3px solid rgba(0,0,0,0.08)",
+            borderTopColor:T.green,
+            borderRadius:"50%",
+            animation:"spin 0.8s linear infinite",
+          }} />
+          <div style={{ fontSize:13, color:T.text3, marginTop:12 }}>Loading picks...</div>
+        </div>
+      )}
+
+      {top.length === 0 && favPicks.length === 0 && !loading && (
         <div style={{ textAlign:"center", padding:"80px 20px", color:T.text3 }}>
           <div style={{ fontSize:40, marginBottom:12 }}>📋</div>
           <div style={{ fontSize:14 }}>No picks yet — check back when games are analyzed</div>
@@ -2015,7 +2041,9 @@ function AnalysisPanel({ analysis, isLive, loading, game, favorites, onFavorite 
 
 // ── FINAL RESULTS PANEL ───────────────────────────────────────────────────────
 function FinalResultsPanel({ game, aiOverride, pickRecord }) {
-  const r = calcFinalResults(game);
+  const L = aiOverride?.lines || {};
+  const lockedOdds = { spread: pickRecord?.spread_line || L.spread || game.spread, ou: pickRecord?.ou_line || L.ou || game.ou };
+  const r = calcFinalResults(game, lockedOdds);
   if (!r) return null;
 
   const analysis = aiOverride || game.analysis;
@@ -3355,6 +3383,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(null); // null = today
   const [calcSeed, setCalcSeed] = useState(null); // null = closed, string = pre-filled odds
   const [picksData, setPicksData] = useState(null); // picks for the selected date
+  const [picksLoading, setPicksLoading] = useState(true); // loading state for picks tab
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -3413,10 +3442,16 @@ export default function App() {
     setAiOverrides(aiCacheRef.current[newDateKey] || {});
     setGamesLoading(true);
     analyzedPreGameRef.current.clear();
-    Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
+    const dateKey = selectedDate || todayStr;
+    const isPastDate = dateKey < todayStr;
+    Promise.all([api.getGames(dateKey), fetchAccuribetPredictions()])
       .then(([g, ab]) => {
         accuribetRef.current = ab || {};
-        setGames(g.games);
+        // Force past-date games to "final" — server cache may still say "live"
+        const fixedGames = isPastDate
+          ? g.games.map(gm => gm.status === "live" ? { ...gm, status: "final" } : gm)
+          : g.games;
+        setGames(fixedGames);
         setDataLoaded(true);
         initialLoadDone.current = true;
         setGamesLoading(false);
@@ -3428,9 +3463,11 @@ export default function App() {
   // 3) Auto-poll scores + bets when live games are active (every 30s)
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
-    if (!hasLive || apiKey === null) return;
+    const pollDate = selectedDate || todayStr;
+    // Never poll for past dates — all games are final
+    if (!hasLive || apiKey === null || pollDate < todayStr) return;
     const interval = setInterval(() => {
-      api.getGames(selectedDate || todayStr)
+      api.getGames(pollDate)
         .then(g => { setGames(g.games); setLastUpdated(g.odds_updated_at ? new Date(g.odds_updated_at) : new Date()); })
         .catch(console.error);
       betStore.reload();
@@ -3506,9 +3543,10 @@ export default function App() {
   //    Re-runs when games change so hit stats update as games go final.
   useEffect(() => {
     const dateKey = selectedDate || todayStr;
+    setPicksLoading(true);
     api.getPicks(dateKey)
-      .then(d => setPicksData(d))
-      .catch(() => setPicksData(null));
+      .then(d => { setPicksData(d); setPicksLoading(false); })
+      .catch(() => { setPicksData(null); setPicksLoading(false); });
   }, [selectedDate, games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 7) Load past 7 days + today to compute overall rolling hit stats.
@@ -3749,6 +3787,7 @@ export default function App() {
           favorites={favorites}
           onFavorite={favorites}
           onGameClick={g => setSelectedGame(g)}
+          loading={gamesLoading || picksLoading}
         />
       )}
 

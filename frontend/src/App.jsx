@@ -395,7 +395,7 @@ function oddsToImpliedProb(oddsStr) {
 }
 
 // ── KALSHI-STYLE GAME CARD (list view) ───────────────────────────────────────
-function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
+function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }) {
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const L = aiOverride?.lines || {};
@@ -572,11 +572,17 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
         // Compute AI pick hit/miss for final games
         let bestBetHit = null;
         let ouHitCard = null;
+        // Compute user's own pick hit/miss
+        const myPick = gameBets?.myPick; // "away" | "home" | null
+        let myPickHit = null;
         if (isFinal) {
           const r = calcFinalResults(game);
           if (r) {
-            const betTeam = aiOverride?.bet_team;
-            if (betTeam) {
+            // Use pickRecord for hit/miss when aiOverride isn't loaded
+            const betTeam = aiOverride?.bet_team || pickRecord?.bet_team;
+            if (pickRecord?.result_bet != null) {
+              bestBetHit = pickRecord.result_bet === "HIT" ? true : pickRecord.result_bet === "MISS" ? false : "push";
+            } else if (betTeam) {
               if (r.spreadResult) {
                 const bettingFav = betTeam === r.spreadResult.favAbbr;
                 bestBetHit = r.spreadResult.hit === "push" ? "push" : (bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog");
@@ -584,21 +590,47 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
                 bestBetHit = betTeam === r.mlWinner;
               }
             }
-            if (aiOverride?.ou && r.totalResult) {
-              const leanedOver = /over/i.test(aiOverride.ou);
+            const ouPick = aiOverride?.ou || pickRecord?.ou;
+            if (pickRecord?.result_ou != null) {
+              ouHitCard = pickRecord.result_ou === "HIT" ? true : pickRecord.result_ou === "MISS" ? false : "push";
+            } else if (ouPick && r.totalResult) {
+              const leanedOver = /over/i.test(ouPick);
               ouHitCard = r.totalResult.hit === "PUSH" ? "push" : (leanedOver ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER");
+            }
+            // User's moneyline pick
+            if (myPick) {
+              const pickedTeam = myPick === "away" ? game.away : game.home;
+              myPickHit = pickedTeam === r.mlWinner;
             }
           }
         }
+        // Resolve pick display: prefer aiOverride, fall back to pickRecord
+        const dispBestBet = aiOverride?.best_bet || pickRecord?.best_bet;
+        const dispBetTeam = aiOverride?.bet_team || pickRecord?.bet_team;
+        const dispBetScore = aiOverride?.dubl_score_bet ?? pickRecord?.dubl_score_bet;
+        const dispOuPick = aiOverride?.ou || pickRecord?.ou;
+        const dispOuScore = aiOverride?.dubl_score_ou ?? pickRecord?.dubl_score_ou;
         const hitIcon = (h) => h === "push" ? " 🟰" : h === true ? " ✓" : h === false ? " ✗" : "";
         const hitClr = (h) => h === true ? T.green : h === false ? T.red : null;
         return (
       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+        {/* User's own pick hit/miss */}
+        {isFinal && myPick && myPickHit !== null && (() => {
+          const pickedTeam = myPick === "away" ? game.away : game.home;
+          const clr = myPickHit ? T.green : T.red;
+          return (
+            <span style={{
+              fontSize:10, fontWeight:700, letterSpacing:"0.04em",
+              color:clr, background:`${clr}12`, border:`1px solid ${clr}33`,
+              borderRadius:6, padding:"3px 8px", flexShrink:0,
+            }}>{pickedTeam} {myPickHit ? "✓" : "✗"}</span>
+          );
+        })()}
         {/* Best bet pick */}
-        {aiOverride?.best_bet && aiOverride.dubl_score_bet != null && (() => {
-          const betLine = aiOverride.best_bet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
-          const label = `✦ ${aiOverride.bet_team || "?"}${betLine ? ` ${betLine}` : ""}`;
-          const sc = aiOverride.dubl_score_bet;
+        {dispBestBet && dispBetScore != null && (() => {
+          const betLine = dispBestBet.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "";
+          const label = `✦ ${dispBetTeam || "?"}${betLine ? ` ${betLine}` : ""}`;
+          const sc = dispBetScore;
           const ec2 = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.gold) : edgeColor(sc);
           const badgeColor = isFinal && bestBetHit != null ? (hitClr(bestBetHit) || T.green) : T.green;
           return (
@@ -619,12 +651,12 @@ function KalshiCard({ game, aiOverride, onClick, betStore, profile }) {
           );
         })()}
         {/* O/U pick */}
-        {aiOverride?.ou && aiOverride.dubl_score_ou != null && (() => {
-          const ouMatch = aiOverride.ou.match(/^(over|under)\s+([\d.]+)/i);
+        {dispOuPick && dispOuScore != null && (() => {
+          const ouMatch = dispOuPick.match(/^(over|under)\s+([\d.]+)/i);
           const ouDir = ouMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
           const ouNum = ouMatch?.[2] || "";
           const label = `◉ ${ouDir} ${ouNum}`;
-          const sc = aiOverride.dubl_score_ou;
+          const sc = dispOuScore;
           const ec2 = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : edgeColor(sc);
           const badgeColor = isFinal && ouHitCard != null ? (hitClr(ouHitCard) || T.gold) : T.gold;
           return (
@@ -958,7 +990,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
 }
 
 // ── KALSHI-STYLE VERTICAL GAME LIST ──────────────────────────────────────────
-function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile, loading }) {
+function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcomingLabel, betStore, profile, loading, picksMap }) {
   const liveGames = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames = games.filter(g => g.status === "final");
@@ -982,16 +1014,20 @@ function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcoming
 
       {/* Game cards */}
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-        {ordered.map(g => (
+        {ordered.map(g => {
+          const baseId = g.id.replace(/-\d{8}$/, "");
+          return (
           <KalshiCard
             key={g.id}
             game={g}
             aiOverride={aiOverrides[g.id]}
+            pickRecord={picksMap ? (picksMap[baseId] || picksMap[g.id]) : null}
             onClick={onGameClick}
             betStore={betStore}
             profile={profile}
           />
-        ))}
+          );
+        })}
       </div>
 
       {ordered.length === 0 && loading && (
@@ -3312,6 +3348,7 @@ export default function App() {
   const [props, setProps] = useState([]);
   const [loadingIds, setLoadingIds] = useState(new Set());
   const [aiOverrides, setAiOverrides] = useState({});
+  const aiCacheRef = useRef({}); // per-date cache: { "20260305": { gameId: override } }
   const [parlay, setParlay] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -3360,12 +3397,21 @@ export default function App() {
 
   // 2) Load games whenever apiKey or selectedDate changes
   const initialLoadDone = useRef(false);
+  const prevDateKeyRef = useRef(null);
   useEffect(() => {
     if (apiKey === null) return;
+    const newDateKey = selectedDate || todayStr;
+    // Save current overrides to per-date cache before switching
+    const prevKey = prevDateKeyRef.current;
+    if (prevKey) {
+      setAiOverrides(cur => { aiCacheRef.current[prevKey] = cur; return cur; });
+    }
+    prevDateKeyRef.current = newDateKey;
     // Only show full-screen loader on first load; date switches just swap in-place
     if (!initialLoadDone.current) setDataLoaded(false);
     setGames([]);
-    setAiOverrides({});
+    // Restore cached overrides for this date, or start empty
+    setAiOverrides(aiCacheRef.current[newDateKey] || {});
     setGamesLoading(true);
     analyzedPreGameRef.current.clear();
     Promise.all([api.getGames(selectedDate || todayStr), fetchAccuribetPredictions()])
@@ -3399,6 +3445,11 @@ export default function App() {
   //    attempted this session (so Gemini doesn't re-run on every page load / date change).
   useEffect(() => {
     if (!dataLoaded || apiKey === null || apiKey === "__no_server__") return;
+    // Load cached analysis for final games (no re-analysis needed)
+    games.filter(g => g.status === "final" && g.analysis && g.analysis.best_bet)
+      .forEach(g => {
+        setAiOverrides(prev => prev[g.id] ? prev : { ...prev, [g.id]: mergeAccuribet(g.analysis, g, accuribetRef.current) });
+      });
     games
       .filter(g => g.status !== "final")
       .forEach(g => {
@@ -3687,6 +3738,7 @@ export default function App() {
           betStore={betStore}
           profile={profile}
           loading={gamesLoading}
+          picksMap={picksMap}
         />
       )}
 

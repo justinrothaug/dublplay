@@ -858,27 +858,220 @@ function KalshiGameList({ games, aiOverrides, onGameClick, lastUpdated, upcoming
 }
 
 // ── KALSHI-STYLE MY BETS TAB ─────────────────────────────────────────────────
+// Pick card: KalshiCard-style game card with pick/status/score bottom strip
+function PickGameCard({ pick, game, onGameClick, onRemove }) {
+  const isBet = pick.type === "bet";
+  const isOu = pick.type === "ou";
+  const isLive = game.status === "live";
+  const isFinal = game.status === "final";
+  const color = isBet ? T.green : isOu ? T.gold : "#a78bfa";
+  const ec = pick.score != null ? edgeColor(pick.score) : T.text3;
+  const L = pick.aiOverride?.lines || {};
+  const dispAwayOdds = L.awayOdds || game.awayOdds;
+  const dispHomeOdds = L.homeOdds || game.homeOdds;
+  const awayMult = oddsToMultiplier(dispAwayOdds);
+  const homeMult = oddsToMultiplier(dispHomeOdds);
+  const awayProb = game.awayWinProb || oddsToImpliedProb(dispAwayOdds);
+  const homeProb = game.homeWinProb || oddsToImpliedProb(dispHomeOdds);
+  const awayC = TEAM_COLORS[game.away] || "#1a3a6e";
+  const homeC = TEAM_COLORS[game.home] || "#6e1a1a";
+
+  // Build short pick label (e.g. "✦ DAL +8.5" or "◉ O 228.5")
+  const betLine = isBet ? (pick.text?.match(/([+-]\d+(?:\.\d+)?)/)?.[1] || "") : "";
+  const ouMatch = isOu ? pick.text?.match(/^(over|under)\s+([\d.]+)/i) : null;
+  const ouDir = ouMatch?.[1]?.toLowerCase() === "under" ? "U" : "O";
+  const ouLineNum = ouMatch?.[2] || game.ou || "";
+  const pickLabel = isBet
+    ? `✦ ${pick.betTeam || "?"}${betLine ? ` ${betLine}` : ""}`
+    : isOu
+    ? `◉ ${ouDir} ${ouLineNum}`
+    : `▸ ${(pick.text?.split(" ").slice(0,3).join(" ") || "PROP")}`;
+
+  // Live tracking status
+  let statusText = null;
+  let statusColor = T.text3;
+  if (isLive) {
+    if (isBet && pick.betTeam) {
+      const isBettingHome = pick.betTeam === game.home;
+      const margin = (isBettingHome ? (game.homeScore||0) : (game.awayScore||0))
+                   - (isBettingHome ? (game.awayScore||0) : (game.homeScore||0));
+      statusText = margin > 0 ? "LEAD" : margin < 0 ? "TRAIL" : "TIED";
+      statusColor = margin > 0 ? T.green : margin < 0 ? T.red : T.gold;
+    } else if (isOu) {
+      const pace = calcLivePace(game);
+      const isOver = ouDir === "O";
+      if (pace) {
+        const onTrack = isOver ? pace.projected > pace.ouLine : pace.projected < pace.ouLine;
+        statusText = onTrack ? "TRACK" : "FADE";
+        statusColor = onTrack ? T.green : T.red;
+      }
+    }
+  }
+
+  // Final result hit/miss
+  let finalHit = null;
+  if (isFinal) {
+    const r = calcFinalResults(game);
+    if (r) {
+      if (isBet) {
+        if (pick.betIsSpread && r.spreadResult) {
+          const bettingFav = pick.betTeam === r.spreadResult.favAbbr;
+          const h = bettingFav ? r.spreadResult.hit === "fav" : r.spreadResult.hit === "dog";
+          finalHit = r.spreadResult.hit === "push" ? "push" : h;
+        } else if (pick.betTeam) {
+          finalHit = pick.betTeam === r.mlWinner;
+        }
+      } else if (isOu && r.totalResult) {
+        finalHit = r.totalResult.hit === "PUSH" ? "push" : (ouDir === "O") ? r.totalResult.hit === "OVER" : r.totalResult.hit === "UNDER";
+      }
+    }
+  }
+
+  const fmtTime = t => t ? new Date(t).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
+
+  return (
+    <div
+      onClick={() => onGameClick(game)}
+      style={{
+        background:T.card, borderRadius:16, overflow:"hidden",
+        cursor:"pointer", border:`1px solid ${T.border}`,
+        boxShadow:"0 1px 3px rgba(0,0,0,0.04)",
+      }}
+    >
+      {/* Main card body — same layout as KalshiCard */}
+      <div style={{ padding:"16px 18px 12px" }}>
+        {/* Time + category */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <span style={{ fontSize:12, color:T.text3, fontWeight:500 }}>
+            {isLive ? (
+              <span style={{ display:"inline-flex", alignItems:"center", gap:5 }}>
+                <span style={{ width:6, height:6, borderRadius:"50%", background:T.red, display:"inline-block", animation:"pulse 1.2s infinite" }} />
+                <span style={{ color:T.red, fontWeight:700 }}>LIVE · Q{game.quarter} {game.clock}</span>
+              </span>
+            ) : isFinal ? (
+              <span style={{ color:T.text3, fontWeight:600 }}>Final</span>
+            ) : (
+              fmtTime(game.time)
+            )}
+          </span>
+          <span style={{ fontSize:11, color:T.text3, fontWeight:500 }}>Pro Basketball (M)</span>
+        </div>
+
+        {/* Away team row */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+          <TeamBadge abbr={game.away} size={36} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.awayName || TEAM_FULL[game.away] || game.away}</div>
+            <div style={{ height:3, width:"60%", maxWidth:140, background:awayC, borderRadius:2, marginTop:3, opacity:0.7 }} />
+          </div>
+          {(isLive || isFinal) && (
+            <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>{game.awayScore}</span>
+          )}
+          {awayMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{awayMult}x</span>}
+          {awayProb != null && (
+            <span style={{
+              border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
+              fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
+            }}>{awayProb}%</span>
+          )}
+        </div>
+
+        {/* Home team row */}
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <TeamBadge abbr={game.home} size={36} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:15, fontWeight:700, color:T.text }}>{game.homeName || TEAM_FULL[game.home] || game.home}</div>
+            <div style={{ height:3, width:"60%", maxWidth:140, background:homeC, borderRadius:2, marginTop:3, opacity:0.7 }} />
+          </div>
+          {(isLive || isFinal) && (
+            <span style={{ fontSize:18, fontWeight:800, color:T.text, minWidth:24, textAlign:"right" }}>{game.homeScore}</span>
+          )}
+          {homeMult && <span style={{ fontSize:13, color:T.text2, fontWeight:600, minWidth:44, textAlign:"right" }}>{homeMult}x</span>}
+          {homeProb != null && (
+            <span style={{
+              border:`1px solid ${T.greenBdr}`, borderRadius:20, padding:"4px 12px",
+              fontSize:13, fontWeight:600, color:T.green, minWidth:50, textAlign:"center",
+            }}>{homeProb}%</span>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom strip: pick label | status | DUBL score */}
+      <div style={{
+        display:"flex", alignItems:"center", gap:6, padding:"8px 16px",
+        background:T.cardAlt, borderTop:`1px solid ${T.border}`,
+      }}>
+        {/* Pick badge */}
+        <span style={{
+          fontSize:10, fontWeight:700, letterSpacing:"0.04em",
+          color, background:`${color}12`, border:`1px solid ${color}33`,
+          borderRadius:6, padding:"3px 8px",
+          flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+        }}>{pickLabel}</span>
+
+        {/* Live status badge */}
+        {isLive && statusText && (
+          <span style={{
+            fontSize:9, fontWeight:800, letterSpacing:"0.04em",
+            color:statusColor, background:`${statusColor}12`, border:`1px solid ${statusColor}33`,
+            borderRadius:6, padding:"3px 7px", flexShrink:0,
+          }}>{statusText}</span>
+        )}
+
+        {/* Final hit/miss badge */}
+        {isFinal && finalHit !== null && (
+          <span style={{
+            fontSize:9, fontWeight:800, letterSpacing:"0.04em",
+            color: finalHit === "push" ? T.gold : finalHit ? T.green : T.red,
+            background: `${finalHit === "push" ? T.gold : finalHit ? T.green : T.red}12`,
+            border: `1px solid ${finalHit === "push" ? T.gold : finalHit ? T.green : T.red}33`,
+            borderRadius:6, padding:"3px 7px", flexShrink:0,
+          }}>{finalHit === "push" ? "PUSH" : finalHit ? "HIT" : "MISS"}</span>
+        )}
+
+        {/* DUBL score circle */}
+        {pick.score != null && (
+          <div style={{
+            width:26, height:26, borderRadius:"50%", flexShrink:0,
+            border:`2px solid ${ec}`, background:`${ec}12`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:10, fontWeight:800, color:ec,
+          }}>{pick.score}</div>
+        )}
+
+        {/* Remove button for saved picks */}
+        {onRemove && (
+          <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{
+            background:"none", border:"none", fontSize:15, color:T.gold, cursor:"pointer",
+            padding:"0 2px", flexShrink:0,
+          }}>★</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, onGameClick }) {
-  // Top picks
+  // Top picks — auto-generated from AI analysis
   const picks = [];
   for (const g of games) {
     if (g.status === "final") continue;
     const a = aiOverrides[g.id];
     if (!a) continue;
     if (a.best_bet && a.dubl_score_bet != null)
-      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, betIsSpread:a.bet_is_spread, game:g, reasoning:a.dubl_reasoning_bet });
+      picks.push({ type:"bet", score:a.dubl_score_bet, text:a.best_bet, betTeam:a.bet_team, betIsSpread:a.bet_is_spread, game:g, reasoning:a.dubl_reasoning_bet, aiOverride:a });
     if (a.ou && a.dubl_score_ou != null)
-      picks.push({ type:"ou", score:a.dubl_score_ou, text:a.ou, game:g, reasoning:a.dubl_reasoning_ou });
+      picks.push({ type:"ou", score:a.dubl_score_ou, text:a.ou, game:g, reasoning:a.dubl_reasoning_ou, aiOverride:a });
   }
   const top = picks.sort((a,b) => b.score - a.score).slice(0, 6);
 
-  // Saved picks
+  // Saved picks — user-bookmarked
   const favPicks = (favorites?.picks || [])
     .map(p => {
       const basePickId = p.gameId.replace(/-\d{8}$/, "");
       const game = games.find(g => g.id === p.gameId || g.id.replace(/-\d{8}$/, "") === basePickId);
       if (!game) return null;
-      return { ...p, game };
+      return { ...p, game, aiOverride: aiOverrides[game.id] };
     })
     .filter(Boolean);
 
@@ -889,44 +1082,15 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
         <div style={{ padding:"20px 0 0" }}>
           <span style={{ fontSize:20, fontWeight:800, color:T.text }}>Top Picks</span>
           <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Best bets ranked by DUBL Score</p>
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {top.map((pick, i) => {
-              const isBet = pick.type === "bet";
-              const color = isBet ? T.green : T.gold;
-              const ec = edgeColor(pick.score);
-              return (
-                <div key={`${pick.game.id}-${pick.type}`}
-                  onClick={() => onGameClick(pick.game)}
-                  style={{
-                    background:T.card, borderRadius:14, padding:"14px 16px",
-                    border:`1px solid ${T.border}`, cursor:"pointer",
-                    boxShadow:"0 1px 3px rgba(0,0,0,0.04)",
-                  }}
-                >
-                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <div style={{
-                      width:32, height:32, borderRadius:"50%",
-                      border:`2px solid ${ec}`, background:`${ec}15`,
-                      display:"flex", alignItems:"center", justifyContent:"center",
-                      fontSize:11, fontWeight:800, color:ec, flexShrink:0,
-                    }}>{pick.score}</div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                        <span style={{ fontSize:10, fontWeight:700, color, letterSpacing:"0.04em" }}>
-                          {isBet ? "BEST BET" : "O/U LEAN"}
-                        </span>
-                        <span style={{ fontSize:11, color:T.text3 }}>
-                          {pick.game.away} @ {pick.game.home}
-                        </span>
-                      </div>
-                      <div style={{ fontSize:13, color:T.text, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                        {pick.text}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {top.map(pick => (
+              <PickGameCard
+                key={`${pick.game.id}-${pick.type}`}
+                pick={pick}
+                game={pick.game}
+                onGameClick={onGameClick}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -936,33 +1100,16 @@ function KalshiMyBets({ games, aiOverrides, onPickOdds, favorites, onFavorite, o
         <div style={{ padding:"24px 0 0" }}>
           <span style={{ fontSize:20, fontWeight:800, color:T.text }}>My Picks</span>
           <p style={{ fontSize:13, color:T.text3, marginTop:4, marginBottom:16 }}>Your saved picks</p>
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {favPicks.map(pick => {
-              const color = pick.type === "bet" ? T.green : pick.type === "ou" ? T.gold : "#a78bfa";
-              return (
-                <div key={pick.id} style={{
-                  background:T.card, borderRadius:14, padding:"14px 16px",
-                  border:`1px solid ${T.border}`,
-                  boxShadow:"0 1px 3px rgba(0,0,0,0.04)",
-                  display:"flex", alignItems:"center", gap:10,
-                }}>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                      <span style={{ fontSize:10, fontWeight:700, color, letterSpacing:"0.04em" }}>
-                        {pick.label || pick.type?.toUpperCase()}
-                      </span>
-                      <span style={{ fontSize:11, color:T.text3 }}>{pick.matchup}</span>
-                    </div>
-                    <div style={{ fontSize:13, color:T.text, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {pick.text}
-                    </div>
-                  </div>
-                  <button onClick={e => { e.stopPropagation(); onFavorite.remove(pick.id); }} style={{
-                    background:"none", border:"none", fontSize:16, color:T.gold, cursor:"pointer", padding:4,
-                  }}>★</button>
-                </div>
-              );
-            })}
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {favPicks.map(pick => (
+              <PickGameCard
+                key={pick.id}
+                pick={pick}
+                game={pick.game}
+                onGameClick={onGameClick}
+                onRemove={() => onFavorite.remove(pick.id)}
+              />
+            ))}
           </div>
         </div>
       )}

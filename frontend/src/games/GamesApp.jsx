@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { AuthProvider, useAuth } from './AuthContext.jsx';
-import LoginScreen from './LoginScreen.jsx';
+import { useAuth } from './AuthContext.jsx';
 import SetUsernameScreen from './SetUsernameScreen.jsx';
 import DublPlayScreen from './DublPlayScreen.jsx';
 import NewWagerScreen from './NewWagerScreen.jsx';
@@ -8,25 +7,14 @@ import PaymentScreen from './PaymentScreen.jsx';
 import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
-function GamesRouter({ onBackToHub }) {
-  const { user, loading, needsRegistration } = useAuth();
+export default function GamesApp({ onBackToHub }) {
+  const { user, needsRegistration } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100%', background: theme.colors.background }}>
-        <div style={{ color: theme.colors.primary, fontSize: 18 }}>Loading...</div>
-      </div>
-    );
-  }
-
-  if (!user && !needsRegistration) {
-    return <LoginScreen />;
-  }
-
-  if (needsRegistration) {
+  // User is logged in via Firebase but hasn't set Chess.com username yet
+  if (!user || needsRegistration) {
     return <SetUsernameScreen />;
   }
 
@@ -48,7 +36,7 @@ function GamesRouter({ onBackToHub }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', background: theme.colors.background }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: theme.colors.background }}>
       {/* Back to hub button */}
       <div style={styles.topBar}>
         <button style={styles.backButton} onClick={onBackToHub}>← Back</button>
@@ -81,14 +69,6 @@ function GamesRouter({ onBackToHub }) {
         </button>
       </div>
     </div>
-  );
-}
-
-export default function GamesApp({ onBackToHub }) {
-  return (
-    <AuthProvider>
-      <GamesRouter onBackToHub={onBackToHub} />
-    </AuthProvider>
   );
 }
 

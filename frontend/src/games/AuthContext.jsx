@@ -7,7 +7,7 @@ import {
 } from 'firebase/auth';
 import { auth } from './firebase.js';
 
-const API_BASE = import.meta.env.VITE_GAMES_API_URL || 'https://dublplay.onrender.com/api';
+const API_BASE = import.meta.env.VITE_GAMES_API_URL || '/api';
 
 const AuthContext = createContext(null);
 const googleProvider = new GoogleAuthProvider();

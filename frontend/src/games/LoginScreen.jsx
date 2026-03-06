@@ -21,8 +21,8 @@ export default function LoginScreen() {
   return (
     <div style={styles.container}>
       <div style={styles.content}>
-        <div style={styles.title}>DublPlay Games</div>
-        <div style={styles.subtitle}>Wager on chess with friends</div>
+        <div style={styles.title}>DublPlay</div>
+        <div style={styles.subtitle}>Sports betting & chess wagers</div>
         <button
           style={{ ...styles.googleButton, ...(loading ? styles.buttonDisabled : {}) }}
           onClick={handleGoogleSignIn}

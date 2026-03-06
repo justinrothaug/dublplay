@@ -1,6 +1,6 @@
 import { auth } from './firebase.js';
 
-const API_URL = import.meta.env.VITE_GAMES_API_URL || 'https://dublplay.onrender.com/api';
+const API_URL = import.meta.env.VITE_GAMES_API_URL || '/api';
 
 async function getFirebaseToken() {
   const user = auth.currentUser;

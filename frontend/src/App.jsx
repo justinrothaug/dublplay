@@ -305,6 +305,7 @@ function useBets(dateStr) {
         return res.action; // "placed" | "switched" | "removed"
       } catch (e) {
         console.error("Bet failed:", e);
+        alert("Bet failed: " + (e.message || "Something went wrong"));
         return null;
       }
     },
@@ -2333,6 +2334,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+                if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
                 const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
                 if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
               } : null}
@@ -3664,6 +3666,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
         pickRecord={pickRecord}
         gameBets={betStore ? betStore.forGame(sg.id, profile?.uid) : null}
         onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+          if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
           const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
           if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
         } : null}

@@ -1,0 +1,29 @@
+{
+  "name": "dublplay-ios",
+  "version": "1.0.0",
+  "description": "dublplay - Sports betting & chess wagers iOS App",
+  "main": "index.js",
+  "scripts": {
+    "sync": "npx cap sync",
+    "sync:ios": "npx cap sync ios",
+    "open:ios": "npx cap open ios",
+    "copy": "npx cap copy",
+    "copy:ios": "npx cap copy ios",
+    "update": "npx cap update"
+  },
+  "dependencies": {
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/browser": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@capacitor/keyboard": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "@capgo/capacitor-social-login": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

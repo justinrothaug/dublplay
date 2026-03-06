@@ -3877,7 +3877,7 @@ const Loader = () => {
 };
 
 // ── WALLET HOOK ─────────────────────────────────────────────────────────────
-function useWallet() {
+function useWallet(firebaseUser) {
   const [balanceCents, setBalanceCents] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -3889,7 +3889,7 @@ function useWallet() {
     setLoading(false);
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { if (firebaseUser) refresh(); else setLoading(false); }, [firebaseUser]);
 
   return { balanceCents, loading, refresh, balanceDollars: (balanceCents / 100).toFixed(2) };
 }
@@ -4160,7 +4160,7 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
 function AuthenticatedApp() {
   const { user, firebaseUser, loading, logout } = useAuth();
   const [mode, setMode] = useState(null); // null = hub, "sports", "games"
-  const wallet = useWallet();
+  const wallet = useWallet(firebaseUser);
   const profile = useProfile();
 
   if (loading) {

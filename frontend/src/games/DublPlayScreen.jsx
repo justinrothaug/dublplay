@@ -100,7 +100,7 @@ export default function DublPlayScreen({ onNavigate }) {
     <div style={styles.container}>
       <div style={styles.list}>
         <div style={styles.headerRow}>
-          <span style={styles.screenTitle}>DublPlay</span>
+          <span style={styles.screenTitle}>dublplay</span>
           <span style={styles.logoutText} onClick={logout}>Logout</span>
         </div>
 

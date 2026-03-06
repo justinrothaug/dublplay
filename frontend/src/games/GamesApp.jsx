@@ -58,7 +58,7 @@ export default function GamesApp({ onBackToHub }) {
           onClick={() => setActiveTab('dublplay')}
         >
           <span style={{ fontSize: 22 }}>♟</span>
-          <span style={styles.tabLabel}>DublPlay</span>
+          <span style={styles.tabLabel}>dublplay</span>
         </button>
         <button
           style={activeTab === 'play' ? styles.tabActive : styles.tab}

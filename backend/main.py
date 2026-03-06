@@ -1978,6 +1978,7 @@ class BetRequest(BaseModel):
     locked_spread: str = "" # spread at time of bet, e.g. "BOS -5.5"
     locked_ml: str = ""     # moneyline at time of bet, e.g. "-110"
     date: Optional[str] = None  # YYYYMMDD, defaults to today
+    firebase_uid: str = ""  # Firebase UID for wallet deductions
 
 
 def _save_bet_to_firestore(date_str: str, game_id: str, side: str, uid: str, username: str, locked_spread: str = "", locked_ml: str = "") -> dict | None:
@@ -2053,6 +2054,28 @@ def _load_bets_from_firestore(date_str: str) -> dict:
         return {}
 
 
+BET_AMOUNT_CENTS = 1000  # $10 per bet
+
+
+def _update_wallet(firebase_uid: str, delta_cents: int) -> int | None:
+    """Adjust walletBalanceCents on the dublplay_users doc. Returns new balance or None."""
+    db = _init_firestore()
+    if not db or not firebase_uid:
+        return None
+    try:
+        users = db.collection("dublplay_users").where("firebaseUid", "==", firebase_uid).limit(1).get()
+        if not users:
+            return None
+        doc_ref = users[0].reference
+        current = users[0].to_dict().get("walletBalanceCents", 0)
+        new_bal = max(0, current + delta_cents)
+        doc_ref.update({"walletBalanceCents": new_bal})
+        return new_bal
+    except Exception as e:
+        logging.warning(f"Wallet update failed: {e}")
+        return None
+
+
 @app.post("/api/bet")
 def place_bet(req: BetRequest):
     date_str = req.date or datetime.now().strftime("%Y%m%d")
@@ -2062,9 +2085,33 @@ def place_bet(req: BetRequest):
     if not req.uid.strip():
         raise HTTPException(status_code=400, detail="uid required")
 
+    # Check wallet balance before placing (not removing)
+    if req.firebase_uid:
+        db = _init_firestore()
+        if db:
+            users = db.collection("dublplay_users").where("firebaseUid", "==", req.firebase_uid).limit(1).get()
+            if users:
+                bal = users[0].to_dict().get("walletBalanceCents", 0)
+                # We don't know yet if this is a place or remove — _save_bet_to_firestore tells us.
+                # We'll deduct after.
+
     result = _save_bet_to_firestore(date_str, game_id, req.side, req.uid.strip(), req.username.strip(), req.locked_spread, req.locked_ml)
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to save bet")
+
+    # Update wallet based on action
+    if req.firebase_uid and result.get("action"):
+        action = result["action"]
+        if action == "placed":
+            new_bal = _update_wallet(req.firebase_uid, -BET_AMOUNT_CENTS)
+            if new_bal is not None:
+                result["walletBalanceCents"] = new_bal
+        elif action == "removed":
+            new_bal = _update_wallet(req.firebase_uid, BET_AMOUNT_CENTS)
+            if new_bal is not None:
+                result["walletBalanceCents"] = new_bal
+        # "switched" = no net change
+
     return result
 
 

@@ -165,20 +165,12 @@ function useProfile() {
   const [username, setUsername] = useState(() => {
     try { return localStorage.getItem("dublplay_username") || ""; } catch { return ""; }
   });
-  const [balance, setBalance] = useState(() => {
-    try { return parseFloat(localStorage.getItem("dublplay_balance")) || 100; } catch { return 100; }
-  });
-  const persist = (name, bal) => {
-    try {
-      localStorage.setItem("dublplay_username", name);
-      localStorage.setItem("dublplay_balance", String(bal));
-    } catch {}
+  const persist = (name) => {
+    try { localStorage.setItem("dublplay_username", name); } catch {}
   };
   return {
-    uid, username, balance,
-    setName: name => { setUsername(name); persist(name, balance); },
-    deduct: amt => { setBalance(prev => { const nb = prev - amt; persist(username, nb); return nb; }); },
-    credit: amt => { setBalance(prev => { const nb = prev + amt; persist(username, nb); return nb; }); },
+    uid, username,
+    setName: name => { setUsername(name); persist(name); },
     color: username ? avatarColor(username) : "#555",
   };
 }
@@ -211,7 +203,7 @@ function ProfileDropdown({ profile, onClose, wallet }) {
           </div>
           <div>
             <div style={{ color:T.text, fontSize:14, fontWeight:700 }}>{profile.username || "Not set"}</div>
-            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${wallet ? wallet.balanceDollars : profile.balance.toFixed(2)}</div>
+            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${wallet ? wallet.balanceDollars : "0.00"}</div>
           </div>
         </div>
 
@@ -267,9 +259,9 @@ function useBets(dateStr) {
       ) : null;
       return { ...g, myPick, total: ((g.away || []).length + (g.home || []).length) * 10 };
     },
-    pick: async (gid, side, uid, username, lockedSpread, lockedMl, date) => {
+    pick: async (gid, side, uid, username, lockedSpread, lockedMl, date, firebase_uid = "") => {
       try {
-        const res = await api.placeBet(gid, side, uid, username, lockedSpread, lockedMl, date);
+        const res = await api.placeBet(gid, side, uid, username, lockedSpread, lockedMl, date, firebase_uid);
         // Update local state with the response
         const stripped = gid.replace(/-\d{8}$/, "");
         setBets(prev => ({ ...prev, [stripped]: res.bets }));
@@ -662,7 +654,7 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
 }
 
 // ── KALSHI-STYLE GAME DETAIL VIEW ────────────────────────────────────────────
-function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile }) {
+function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile, wallet }) {
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const isUp = game.status === "upcoming";
@@ -821,7 +813,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               </span>
             ) : !isFinal ? (
               <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
-                Balance: <span style={{ color:T.green }}>${wallet ? wallet.balanceDollars : profile.balance?.toFixed(0)}</span>
+                Balance: <span style={{ color:T.green }}>${wallet ? wallet.balanceDollars : "0"}</span>
               </span>
             ) : null;
           })()}
@@ -2222,7 +2214,7 @@ function FinalResultsPanel({ game, aiOverride, pickRecord }) {
 }
 
 // ── HORIZONTAL GAMES SCROLL ───────────────────────────────────────────────────
-function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile, dateStr }) {
+function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, upcomingLabel, onPickOdds, favorites, onFavorite, picksMap, betStore, profile, dateStr, wallet, firebaseUser }) {
   const liveGames     = games.filter(g => g.status === "live");
   const upcomingGames = games.filter(g => g.status === "upcoming");
   const finalGames    = games.filter(g => g.status === "final");
@@ -2304,9 +2296,8 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-                const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr);
-                if (result === "placed") profile.deduct(10);
-                else if (result === "removed") profile.credit(10);
+                const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
+                if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
               } : null}
               username={profile?.username}
               wallet={wallet}
@@ -3359,6 +3350,7 @@ function mergeAccuribet(analysis, game, abData) {
 
 // ── SPORTS APP ───────────────────────────────────────────────────────────────
 function SportsApp({ onBackToHub, wallet }) {
+  const { firebaseUser } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
   const [games, setGames] = useState([]);
@@ -3635,12 +3627,12 @@ function SportsApp({ onBackToHub, wallet }) {
         pickRecord={pickRecord}
         gameBets={betStore ? betStore.forGame(sg.id, profile?.uid) : null}
         onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-          const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr);
-          if (result === "placed") profile.deduct(10);
-          else if (result === "removed") profile.credit(10);
+          const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
+          if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
         } : null}
         username={profile?.username}
         profile={profile}
+        wallet={wallet}
         onPickOdds={odds => setCalcSeed(odds)}
       />
     );
@@ -3781,7 +3773,7 @@ function SportsApp({ onBackToHub, wallet }) {
       )}
 
       {/* ── Bottom Nav ── */}
-      <BottomNav activeTab={tab} onTabChange={setTab} balance={wallet ? parseFloat(wallet.balanceDollars) : (profile.username ? profile.balance : null)} />
+      <BottomNav activeTab={tab} onTabChange={setTab} balance={wallet ? parseFloat(wallet.balanceDollars) : null} />
 
       {/* ── Overlays ── */}
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />

@@ -26,7 +26,7 @@ export const api = {
   chat: (messages, api_key) =>
     req("/api/chat", { method:"POST", body: JSON.stringify({ messages, api_key }) }),
   health: () => req("/health"),
-  placeBet: (game_id, side, uid, username, locked_spread = "", locked_ml = "", date = null) =>
-    req("/api/bet", { method:"POST", body: JSON.stringify({ game_id, side, uid, username, locked_spread, locked_ml, date }) }),
+  placeBet: (game_id, side, uid, username, locked_spread = "", locked_ml = "", date = null, firebase_uid = "") =>
+    req("/api/bet", { method:"POST", body: JSON.stringify({ game_id, side, uid, username, locked_spread, locked_ml, date, firebase_uid }) }),
   getBets:  (date) => req(`/api/bets/${date}`),
 };

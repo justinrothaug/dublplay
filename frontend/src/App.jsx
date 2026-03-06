@@ -176,7 +176,7 @@ function useProfile() {
 }
 
 // ── Profile Dropdown ─────────────────────────────────────────────────────────
-function ProfileDropdown({ profile, onClose, wallet }) {
+function ProfileDropdown({ profile, onClose, wallet, onLogout }) {
   const [draft, setDraft] = useState(profile.username);
   return (
     <div style={{
@@ -230,6 +230,15 @@ function ProfileDropdown({ profile, onClose, wallet }) {
             letterSpacing:"0.06em", cursor:"pointer",
           }}
         >SAVE</button>
+        {onLogout && <button
+          onClick={onLogout}
+          style={{
+            width:"100%", marginTop:8, padding:"10px 0",
+            background:"transparent", color:T.text3, border:`1px solid ${T.border}`,
+            borderRadius:8, fontSize:12, fontWeight:700,
+            letterSpacing:"0.06em", cursor:"pointer",
+          }}
+        >Logout</button>}
       </div>
     </div>
   );
@@ -3349,7 +3358,7 @@ function mergeAccuribet(analysis, game, abData) {
 }
 
 // ── SPORTS APP ───────────────────────────────────────────────────────────────
-function SportsApp({ onBackToHub, wallet }) {
+function SportsApp({ onBackToHub, wallet, profile }) {
   const { firebaseUser } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
@@ -3370,7 +3379,6 @@ function SportsApp({ onBackToHub, wallet }) {
   const [showProfile, setShowProfile] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null); // null = list view, game obj = detail view
-  const profile = useProfile();
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -4020,8 +4028,9 @@ const modalBox = {
 };
 
 // ── HUB SCREEN ─────────────────────────────────────────────────────────────
-function HubScreen({ onSelect, user, onLogout, wallet }) {
+function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
   const [showDeposit, setShowDeposit] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   return (
     <div style={{
@@ -4033,16 +4042,25 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
       justifyContent: "center",
       padding: 24,
     }}>
-      {/* User info + logout */}
-      <div style={{ position: "absolute", top: 16, right: 20, display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontSize: 13, color: "#8b8fa8" }}>
-          {user?.displayName || user?.email}
+      {/* User info + wallet (top-left) */}
+      <div style={{ position: "absolute", top: 16, left: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        <span
+          onClick={() => setShowProfile(true)}
+          style={{ fontSize: 13, color: "#8b8fa8", cursor: "pointer" }}
+        >
+          {profile?.username || user?.displayName || user?.email}
         </span>
         <button
-          onClick={onLogout}
-          style={{ background: "none", border: "1px solid #2a2f4a", borderRadius: 6, padding: "4px 12px", color: "#8b8fa8", cursor: "pointer", fontSize: 12 }}
+          onClick={() => setShowDeposit(true)}
+          style={{
+            background: "rgba(212,168,67,0.12)", border: "1px solid #d4a843", borderRadius: 8,
+            padding: "4px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+          }}
         >
-          Logout
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#d4a843" }}>
+            ${wallet.loading ? "—" : wallet.balanceDollars}
+          </span>
+          <span style={{ fontSize: 10, color: "#d4a843" }}>+</span>
         </button>
       </div>
 
@@ -4052,30 +4070,6 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
         </div>
         <div style={{ fontSize: 16, color: "#8b8fa8" }}>
           Pick your arena
-        </div>
-      </div>
-
-      {/* Wallet Card */}
-      <div style={{
-        background: "#141829", border: "1px solid #2a2f4a", borderRadius: 14,
-        padding: "20px 28px", marginBottom: 28, width: "90%", maxWidth: 540,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
-        <div>
-          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>WALLET</div>
-          <div style={{ fontSize: 32, fontWeight: 900, color: "#e8e8f0" }}>
-            ${wallet.loading ? "—" : wallet.balanceDollars}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => setShowDeposit(true)}
-            style={{
-              background: "#d4a843", color: "#0a0e1a", border: "none", borderRadius: 10,
-              padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >Add Funds</button>
         </div>
       </div>
 
@@ -4124,6 +4118,7 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
       </div>
 
       {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
+      {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onLogout={onLogout} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }
@@ -4133,6 +4128,7 @@ function AuthenticatedApp() {
   const { user, firebaseUser, loading, logout } = useAuth();
   const [mode, setMode] = useState(null); // null = hub, "sports", "games"
   const wallet = useWallet();
+  const profile = useProfile();
 
   if (loading) {
     return (
@@ -4151,7 +4147,7 @@ function AuthenticatedApp() {
   }
 
   if (mode === "sports") {
-    return <SportsApp onBackToHub={() => setMode(null)} wallet={wallet} />;
+    return <SportsApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} />;
   }
 
   if (mode === "games") {
@@ -4162,7 +4158,7 @@ function AuthenticatedApp() {
     );
   }
 
-  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} />;
+  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} profile={profile} />;
 }
 
 // ── APP ROOT ────────────────────────────────────────────────────────────────

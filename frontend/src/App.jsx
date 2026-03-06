@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { api } from "./api.js";
+const GamesApp = lazy(() => import("./games/GamesApp.jsx"));
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
 const T = {
@@ -3394,8 +3395,8 @@ function mergeAccuribet(analysis, game, abData) {
   };
 }
 
-// ── APP ROOT ──────────────────────────────────────────────────────────────────
-export default function App() {
+// ── SPORTS APP ───────────────────────────────────────────────────────────────
+function SportsApp({ onBackToHub }) {
   const [apiKey, setApiKey] = useState(null);
   const [serverHasKey, setServerHasKey] = useState(false);
   const [tab, setTab] = useState("explore");
@@ -3706,6 +3707,11 @@ export default function App() {
       {/* ── Header (Kalshi-style) ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", height:56, padding:"0 20px" }}>
+          {/* Back to hub */}
+          <button
+            onClick={onBackToHub}
+            style={{ background:"none", border:"none", fontSize:14, color:T.green, fontWeight:600, padding:"4px 12px 4px 0", cursor:"pointer" }}
+          >← Hub</button>
           {/* Hamburger menu → profile */}
           <button
             onClick={() => setShowProfile(v => !v)}
@@ -3894,3 +3900,90 @@ const Loader = () => {
     </div>
   );
 };
+
+// ── HUB SCREEN ─────────────────────────────────────────────────────────────
+function HubScreen({ onSelect }) {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 50%, #0a0e1a 100%)",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 24,
+    }}>
+      <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <div style={{ fontSize: 48, fontWeight: 900, color: "#d4a843", letterSpacing: -1, marginBottom: 8 }}>
+          DublPlay
+        </div>
+        <div style={{ fontSize: 16, color: "#8b8fa8" }}>
+          Pick your arena
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", justifyContent: "center", maxWidth: 600 }}>
+        {/* Sports Card */}
+        <button
+          onClick={() => onSelect("sports")}
+          style={{
+            width: 260, minHeight: 220, background: "#141829",
+            border: "2px solid #2a2f4a", borderRadius: 16,
+            padding: 28, cursor: "pointer",
+            display: "flex", flexDirection: "column", alignItems: "center",
+            justifyContent: "center", gap: 12,
+            transition: "border-color 0.2s, transform 0.2s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "#1a8d4f"; e.currentTarget.style.transform = "scale(1.03)"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2f4a"; e.currentTarget.style.transform = "scale(1)"; }}
+        >
+          <span style={{ fontSize: 52 }}>🏀</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#e8e8f0" }}>Sports</span>
+          <span style={{ fontSize: 13, color: "#8b8fa8", textAlign: "center", lineHeight: 1.4 }}>
+            NBA AI picks, spreads, O/U, live scores & analysis
+          </span>
+        </button>
+
+        {/* Games Card */}
+        <button
+          onClick={() => onSelect("games")}
+          style={{
+            width: 260, minHeight: 220, background: "#141829",
+            border: "2px solid #2a2f4a", borderRadius: 16,
+            padding: 28, cursor: "pointer",
+            display: "flex", flexDirection: "column", alignItems: "center",
+            justifyContent: "center", gap: 12,
+            transition: "border-color 0.2s, transform 0.2s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "#d4a843"; e.currentTarget.style.transform = "scale(1.03)"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2f4a"; e.currentTarget.style.transform = "scale(1)"; }}
+        >
+          <span style={{ fontSize: 52 }}>♟️</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#e8e8f0" }}>Games</span>
+          <span style={{ fontSize: 13, color: "#8b8fa8", textAlign: "center", lineHeight: 1.4 }}>
+            Chess wagers with friends on Chess.com via Stripe
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── APP ROOT (HUB) ──────────────────────────────────────────────────────────
+export default function App() {
+  const [mode, setMode] = useState(null); // null = hub, "sports", "games"
+
+  if (mode === "sports") {
+    return <SportsApp onBackToHub={() => setMode(null)} />;
+  }
+
+  if (mode === "games") {
+    return (
+      <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Games...</div>}>
+        <GamesApp onBackToHub={() => setMode(null)} />
+      </Suspense>
+    );
+  }
+
+  return <HubScreen onSelect={setMode} />;
+}

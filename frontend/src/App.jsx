@@ -170,13 +170,16 @@ function useProfile() {
     try { localStorage.setItem("dublplay_username", name); } catch {}
   };
 
-  // Sync server-side display_name to local profile on new devices
+  // Sync server-side profile to local profile on new devices
   useEffect(() => {
-    if (!username && user?.display_name) {
-      setUsername(user.display_name);
-      persist(user.display_name);
+    if (!username) {
+      const serverName = user?.chess_com_username || user?.display_name;
+      if (serverName) {
+        setUsername(serverName);
+        persist(serverName);
+      }
     }
-  }, [user?.display_name]);
+  }, [user?.chess_com_username, user?.display_name]);
 
   return {
     uid, username,

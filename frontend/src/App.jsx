@@ -312,44 +312,6 @@ function BookmarkBtn({ active, onClick, light }) {
   );
 }
 
-// ── API KEY GATE ──────────────────────────────────────────────────────────────
-function ApiKeyGate({ onSubmit, serverHasKey }) {
-  const [key, setKey] = useState("");
-  const [err, setErr] = useState("");
-  return (
-    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg }}>
-      <div style={{
-        background: T.card, border:`1px solid ${T.border}`,
-        borderRadius:20, padding:"52px 44px", maxWidth:400, width:"90%", textAlign:"center",
-        boxShadow:"0 0 80px rgba(83,211,55,0.06)",
-      }}>
-        <div style={{ fontSize:48, marginBottom:12 }}>🏀</div>
-        <h1 style={{ color:T.green, fontSize:28, fontWeight:800, letterSpacing:"0.04em", margin:"0 0 6px" }}>dublplay</h1>
-        <p style={{ color:T.text2, fontSize:12, letterSpacing:"0.1em", margin:"0 0 32px" }}>AI-POWERED SPORTSBOOK ANALYST</p>
-        {serverHasKey ? (
-          <button onClick={() => onSubmit("")} style={gateBtn}>LAUNCH APP →</button>
-        ) : (
-          <>
-            <input type="password" placeholder="Gemini API Key..."
-              value={key} onChange={e => { setKey(e.target.value); setErr(""); }}
-              onKeyDown={e => e.key==="Enter" && key && onSubmit(key)}
-              style={{ width:"100%", boxSizing:"border-box", background:T.cardAlt,
-                border:`1px solid ${err ? T.red : T.borderBr}`, borderRadius:10,
-                color:T.text, padding:"13px 16px", fontSize:16, fontFamily:"inherit", marginBottom:10 }} />
-            {err && <p style={{ color:T.red, fontSize:11, margin:"0 0 10px" }}>{err}</p>}
-            <button onClick={() => key ? onSubmit(key) : setErr("Enter your API key")} style={gateBtn}>
-              CONNECT →
-            </button>
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer"
-              style={{ color:"rgba(83,211,55,0.5)", fontSize:10, display:"block", marginTop:14 }}>
-              Get a free Gemini API key →
-            </a>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function lineMovement(current, opening, isSpread) {
   if (!current || !opening) return null;
@@ -3258,10 +3220,6 @@ const Disclaimer = () => (
   </p>
 );
 
-const gateBtn = {
-  width:"100%", background:T.green, color:"#fff", border:"none",
-  borderRadius:10, padding:"14px", fontSize:12, fontWeight:800, letterSpacing:"0.08em", fontFamily:"inherit",
-};
 
 // ── PARSE GAME-ANALYSIS PLAYER PROP TEXT → STRUCTURED PROP ───────────────────
 // Format Gemini outputs: "Player OVER/UNDER X.X Stat (±odds) — reason"
@@ -3399,8 +3357,7 @@ function mergeAccuribet(analysis, game, abData) {
 
 // ── SPORTS APP ───────────────────────────────────────────────────────────────
 function SportsApp({ onBackToHub }) {
-  const [apiKey, setApiKey] = useState(null);
-  const [serverHasKey, setServerHasKey] = useState(false);
+  const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
   const [games, setGames] = useState([]);
   const [props, setProps] = useState([]);
@@ -3444,17 +3401,7 @@ function SportsApp({ onBackToHub }) {
     return fmtLocal(d);
   })();
 
-  // 1) Check server key
-  useEffect(() => {
-    api.health()
-      .then(d => {
-        setServerHasKey(d.has_server_key);
-        if (d.has_server_key) setApiKey("");
-      })
-      .catch(() => setApiKey("__no_server__"));
-  }, []);
-
-  // 2) Load games whenever apiKey or selectedDate changes
+  // Load games whenever apiKey or selectedDate changes
   const initialLoadDone = useRef(false);
   const prevDateKeyRef = useRef(null);
   useEffect(() => {
@@ -3623,12 +3570,6 @@ function SportsApp({ onBackToHub }) {
       });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (apiKey === null || apiKey === "__no_server__") {
-    if (!serverHasKey && apiKey === "__no_server__") {
-      return <ApiKeyGate serverHasKey={false} onSubmit={k=>setApiKey(k)} />;
-    }
-    return <Loader />;
-  }
   if (!dataLoaded) return <Loader />;
 
   const handleRefresh = async (gameId) => {

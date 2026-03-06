@@ -3874,7 +3874,7 @@ const Loader = () => {
     }}>
       <img
         src="/static/loading.png"
-        alt="DublPlay"
+        alt="dublplay"
         style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"contain", background:"#0f0d1a" }}
       />
       <div style={{
@@ -3930,7 +3930,7 @@ function HubScreen({ onSelect, user, onLogout }) {
 
       <div style={{ textAlign: "center", marginBottom: 48 }}>
         <div style={{ fontSize: 48, fontWeight: 900, color: "#d4a843", letterSpacing: -1, marginBottom: 8 }}>
-          DublPlay
+          dublplay
         </div>
         <div style={{ fontSize: 16, color: "#8b8fa8" }}>
           Pick your arena

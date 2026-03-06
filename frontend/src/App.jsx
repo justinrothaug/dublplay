@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { api } from "./api.js";
+import { AuthProvider, useAuth } from "./games/AuthContext.jsx";
+import LoginScreen from "./games/LoginScreen.jsx";
 const GamesApp = lazy(() => import("./games/GamesApp.jsx"));
 
 // ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
@@ -3902,7 +3904,7 @@ const Loader = () => {
 };
 
 // ── HUB SCREEN ─────────────────────────────────────────────────────────────
-function HubScreen({ onSelect }) {
+function HubScreen({ onSelect, user, onLogout }) {
   return (
     <div style={{
       minHeight: "100vh",
@@ -3913,6 +3915,19 @@ function HubScreen({ onSelect }) {
       justifyContent: "center",
       padding: 24,
     }}>
+      {/* User info + logout */}
+      <div style={{ position: "absolute", top: 16, right: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: 13, color: "#8b8fa8" }}>
+          {user?.displayName || user?.email}
+        </span>
+        <button
+          onClick={onLogout}
+          style={{ background: "none", border: "1px solid #2a2f4a", borderRadius: 6, padding: "4px 12px", color: "#8b8fa8", cursor: "pointer", fontSize: 12 }}
+        >
+          Logout
+        </button>
+      </div>
+
       <div style={{ textAlign: "center", marginBottom: 48 }}>
         <div style={{ fontSize: 48, fontWeight: 900, color: "#d4a843", letterSpacing: -1, marginBottom: 8 }}>
           DublPlay
@@ -3969,9 +3984,26 @@ function HubScreen({ onSelect }) {
   );
 }
 
-// ── APP ROOT (HUB) ──────────────────────────────────────────────────────────
-export default function App() {
+// ── AUTHENTICATED HUB ───────────────────────────────────────────────────────
+function AuthenticatedApp() {
+  const { user, firebaseUser, loading, logout } = useAuth();
   const [mode, setMode] = useState(null); // null = hub, "sports", "games"
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "#0a0e1a",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <div style={{ color: "#d4a843", fontSize: 18 }}>Loading...</div>
+      </div>
+    );
+  }
+
+  // Not logged in — show login
+  if (!firebaseUser) {
+    return <LoginScreen />;
+  }
 
   if (mode === "sports") {
     return <SportsApp onBackToHub={() => setMode(null)} />;
@@ -3985,5 +4017,14 @@ export default function App() {
     );
   }
 
-  return <HubScreen onSelect={setMode} />;
+  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} />;
+}
+
+// ── APP ROOT ────────────────────────────────────────────────────────────────
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
+  );
 }

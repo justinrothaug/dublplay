@@ -5,7 +5,7 @@ export async function expireStaleWagers() {
   const now = new Date().toISOString();
 
   // Get pending wagers that have expired
-  const pending = await db.collection('dublchess_wagers')
+  const pending = await db.collection('dublplay_wagers')
     .where('status', 'in', ['pending_acceptance', 'pending_payment'])
     .get();
 

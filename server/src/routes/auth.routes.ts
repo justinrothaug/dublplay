@@ -19,14 +19,14 @@ router.post('/register', async (req: Request, res: Response) => {
     const email = decoded.email || '';
 
     // Check if user already exists
-    const existing = await db.collection('dublchess_users').where('firebaseUid', '==', decoded.uid).limit(1).get();
+    const existing = await db.collection('dublplay_users').where('firebaseUid', '==', decoded.uid).limit(1).get();
     if (!existing.empty) {
       res.status(409).json({ error: 'Account already exists. Please sign in.' });
       return;
     }
 
     // Check if chess.com username is taken
-    const usernameTaken = await db.collection('dublchess_users')
+    const usernameTaken = await db.collection('dublplay_users')
       .where('chessComUsernameLower', '==', body.chessComUsername.toLowerCase())
       .limit(1).get();
     if (!usernameTaken.empty) {
@@ -35,7 +35,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const now = new Date().toISOString();
-    const userRef = db.collection('dublchess_users').doc();
+    const userRef = db.collection('dublplay_users').doc();
     const userData = {
       email,
       firebaseUid: decoded.uid,
@@ -78,7 +78,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
   try {
     const decoded = await firebaseAuth.verifyIdToken(firebaseToken);
-    const snapshot = await db.collection('dublchess_users').where('firebaseUid', '==', decoded.uid).limit(1).get();
+    const snapshot = await db.collection('dublplay_users').where('firebaseUid', '==', decoded.uid).limit(1).get();
 
     if (snapshot.empty) {
       res.status(404).json({ error: 'User not found. Please register first.' });
@@ -102,7 +102,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
 // Get current user profile
 router.get('/me', authenticate, async (req: Request, res: Response) => {
-  const doc = await db.collection('dublchess_users').doc(req.user!.userId).get();
+  const doc = await db.collection('dublplay_users').doc(req.user!.userId).get();
 
   if (!doc.exists) {
     res.status(404).json({ error: 'User not found' });

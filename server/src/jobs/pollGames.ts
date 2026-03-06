@@ -3,7 +3,7 @@ import { stripe } from '../config/stripe';
 import { fetchRecentGames, findMatchingGame, getResultForChallenger } from '../services/chesscom.service';
 
 export async function pollActiveWagers() {
-  const snapshot = await db.collection('dublchess_wagers').where('status', '==', 'active').get();
+  const snapshot = await db.collection('dublplay_wagers').where('status', '==', 'active').get();
 
   let settledCount = 0;
 
@@ -13,8 +13,8 @@ export async function pollActiveWagers() {
 
       // Get chess usernames
       const [challengerDoc, opponentDoc] = await Promise.all([
-        db.collection('dublchess_users').doc(wager.challengerId).get(),
-        db.collection('dublchess_users').doc(wager.opponentId).get(),
+        db.collection('dublplay_users').doc(wager.challengerId).get(),
+        db.collection('dublplay_users').doc(wager.opponentId).get(),
       ]);
       const challengerChess = challengerDoc.data()!.chessComUsername;
       const opponentChess = opponentDoc.data()!.chessComUsername;
@@ -61,7 +61,7 @@ export async function pollActiveWagers() {
 
 async function processWinnerPayout(wagerId: string, wager: any, winnerId: string) {
   try {
-    const winnerDoc = await db.collection('dublchess_users').doc(winnerId).get();
+    const winnerDoc = await db.collection('dublplay_users').doc(winnerId).get();
     const connectAccountId = winnerDoc.data()?.stripeConnectAccountId;
 
     if (!connectAccountId) {
@@ -81,9 +81,9 @@ async function processWinnerPayout(wagerId: string, wager: any, winnerId: string
       metadata: { wagerId, winnerId },
     });
 
-    await db.collection('dublchess_wagers').doc(wagerId).update({ payoutTransferId: transfer.id });
+    await db.collection('dublplay_wagers').doc(wagerId).update({ payoutTransferId: transfer.id });
 
-    await db.collection('dublchess_transactions').doc().set({
+    await db.collection('dublplay_transactions').doc().set({
       wagerId,
       userId: winnerId,
       type: 'payout',
@@ -106,7 +106,7 @@ async function processDrawRefund(wagerId: string, wager: any) {
           ? wager.challengerId
           : wager.opponentId;
 
-        await db.collection('dublchess_transactions').doc().set({
+        await db.collection('dublplay_transactions').doc().set({
           wagerId,
           userId,
           type: 'draw_refund',

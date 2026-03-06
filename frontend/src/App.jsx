@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { api } from "./api.js";
 import { AuthProvider, useAuth } from "./games/AuthContext.jsx";
+import { walletApi, stripeApi } from "./games/api.js";
 import LoginScreen from "./games/LoginScreen.jsx";
 const GamesApp = lazy(() => import("./games/GamesApp.jsx"));
 
@@ -183,7 +184,7 @@ function useProfile() {
 }
 
 // ── Profile Dropdown ─────────────────────────────────────────────────────────
-function ProfileDropdown({ profile, onClose }) {
+function ProfileDropdown({ profile, onClose, wallet }) {
   const [draft, setDraft] = useState(profile.username);
   return (
     <div style={{
@@ -210,7 +211,7 @@ function ProfileDropdown({ profile, onClose }) {
           </div>
           <div>
             <div style={{ color:T.text, fontSize:14, fontWeight:700 }}>{profile.username || "Not set"}</div>
-            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${profile.balance.toFixed(2)}</div>
+            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${wallet ? wallet.balanceDollars : profile.balance.toFixed(2)}</div>
           </div>
         </div>
 
@@ -820,7 +821,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
               </span>
             ) : !isFinal ? (
               <span style={{ fontSize:12, fontWeight:700, color:T.text2 }}>
-                Balance: <span style={{ color:T.green }}>${profile.balance?.toFixed(0)}</span>
+                Balance: <span style={{ color:T.green }}>${wallet ? wallet.balanceDollars : profile.balance?.toFixed(0)}</span>
               </span>
             ) : null;
           })()}
@@ -1448,7 +1449,7 @@ function BottomNav({ activeTab, onTabChange, balance }) {
 }
 
 // ── GAME CARD (legacy — kept for compatibility) ──────────────────────────────
-function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, gameBets, onBet, username }) {
+function GameCard({ game, onRefresh, loadingRefresh, aiOverride, onPickOdds, favorites, onFavorite, pickRecord, gameBets, onBet, username, wallet }) {
   const isLive   = game.status === "live";
   const isFinal  = game.status === "final";
   const isUp     = game.status === "upcoming";
@@ -2308,6 +2309,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
                 else if (result === "removed") profile.credit(10);
               } : null}
               username={profile?.username}
+              wallet={wallet}
             />
           );
         })}
@@ -3356,7 +3358,7 @@ function mergeAccuribet(analysis, game, abData) {
 }
 
 // ── SPORTS APP ───────────────────────────────────────────────────────────────
-function SportsApp({ onBackToHub }) {
+function SportsApp({ onBackToHub, wallet }) {
   const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
   const [games, setGames] = useState([]);
@@ -3779,12 +3781,12 @@ function SportsApp({ onBackToHub }) {
       )}
 
       {/* ── Bottom Nav ── */}
-      <BottomNav activeTab={tab} onTabChange={setTab} balance={profile.username ? profile.balance : null} />
+      <BottomNav activeTab={tab} onTabChange={setTab} balance={wallet ? parseFloat(wallet.balanceDollars) : (profile.username ? profile.balance : null)} />
 
       {/* ── Overlays ── */}
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
-      {showProfile && <ProfileDropdown profile={profile} onClose={() => setShowProfile(false)} />}
+      {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }
@@ -3844,8 +3846,191 @@ const Loader = () => {
   );
 };
 
+// ── WALLET HOOK ─────────────────────────────────────────────────────────────
+function useWallet() {
+  const [balanceCents, setBalanceCents] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    try {
+      const data = await walletApi.balance();
+      setBalanceCents(data.balanceCents || 0);
+    } catch { /* not logged in or no user doc yet */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  return { balanceCents, loading, refresh, balanceDollars: (balanceCents / 100).toFixed(2) };
+}
+
+// ── DEPOSIT MODAL ───────────────────────────────────────────────────────────
+function DepositModal({ onClose, onSuccess }) {
+  const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [clientSecret, setClientSecret] = useState(null);
+  const presets = [5, 10, 25, 50, 100];
+
+  const handleDeposit = async () => {
+    const cents = Math.round(parseFloat(amount) * 100);
+    if (!cents || cents < 100) { setError("Minimum $1.00"); return; }
+    if (cents > 50000) { setError("Maximum $500.00"); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const { clientSecret: cs } = await walletApi.deposit(cents);
+      setClientSecret(cs);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  // If we have a clientSecret, show the Stripe payment form
+  if (clientSecret) {
+    return (
+      <div style={modalOverlay} onClick={onClose}>
+        <div style={modalBox} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 16 }}>COMPLETE PAYMENT</div>
+          <StripePaymentForm clientSecret={clientSecret} onSuccess={() => { onSuccess(); onClose(); }} onError={setError} />
+          {error && <p style={{ color: "#e53935", fontSize: 12, marginTop: 8 }}>{error}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={modalOverlay} onClick={onClose}>
+      <div style={modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 16 }}>ADD FUNDS</div>
+
+        {/* Quick amounts */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          {presets.map(v => (
+            <button key={v} onClick={() => { setAmount(String(v)); setError(""); }}
+              style={{
+                flex: 1, minWidth: 50, padding: "10px 0", border: `1px solid ${amount === String(v) ? "#d4a843" : "#2a2f4a"}`,
+                borderRadius: 8, background: amount === String(v) ? "rgba(212,168,67,0.15)" : "#141829",
+                color: amount === String(v) ? "#d4a843" : "#8b8fa8", fontWeight: 700, fontSize: 14, cursor: "pointer",
+              }}
+            >${v}</button>
+          ))}
+        </div>
+
+        {/* Custom amount */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <span style={{ color: "#8b8fa8", fontSize: 20, fontWeight: 700 }}>$</span>
+          <input
+            type="number" min="1" max="500" step="1" placeholder="0.00"
+            value={amount} onChange={e => { setAmount(e.target.value); setError(""); }}
+            onKeyDown={e => e.key === "Enter" && handleDeposit()}
+            style={{
+              flex: 1, background: "#141829", border: "1px solid #2a2f4a", borderRadius: 8,
+              color: "#e8e8f0", padding: "12px 14px", fontSize: 18, fontFamily: "inherit",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        {error && <p style={{ color: "#e53935", fontSize: 12, marginBottom: 12 }}>{error}</p>}
+
+        <button onClick={handleDeposit} disabled={loading}
+          style={{
+            width: "100%", padding: "14px 0", background: "#d4a843", color: "#0a0e1a",
+            border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
+            letterSpacing: "0.06em", cursor: loading ? "wait" : "pointer",
+            opacity: loading ? 0.6 : 1,
+          }}
+        >{loading ? "Processing..." : "Continue to Payment"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── STRIPE PAYMENT FORM (inline for deposits) ──────────────────────────────
+function StripePaymentForm({ clientSecret, onSuccess, onError }) {
+  const formRef = useRef(null);
+  const [stripe, setStripe] = useState(null);
+  const [elements, setElements] = useState(null);
+  const [paying, setPaying] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { publishableKey } = await stripeApi.config();
+        if (cancelled) return;
+        const s = window.Stripe?.(publishableKey);
+        if (!s) {
+          // Load Stripe.js dynamically
+          const script = document.createElement("script");
+          script.src = "https://js.stripe.com/v3/";
+          script.onload = () => {
+            if (cancelled) return;
+            const loaded = window.Stripe(publishableKey);
+            setStripe(loaded);
+            const elems = loaded.elements({ clientSecret, appearance: { theme: "night", variables: { colorPrimary: "#d4a843" } } });
+            elems.create("payment").mount(formRef.current);
+            setElements(elems);
+          };
+          document.head.appendChild(script);
+        } else {
+          setStripe(s);
+          const elems = s.elements({ clientSecret, appearance: { theme: "night", variables: { colorPrimary: "#d4a843" } } });
+          elems.create("payment").mount(formRef.current);
+          setElements(elems);
+        }
+      } catch (err) { onError?.(err.message); }
+    })();
+    return () => { cancelled = true; };
+  }, [clientSecret]);
+
+  const handleSubmit = async () => {
+    if (!stripe || !elements) return;
+    setPaying(true);
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: { return_url: window.location.origin },
+      redirect: "if_required",
+    });
+    if (error) {
+      onError?.(error.message);
+      setPaying(false);
+    } else {
+      onSuccess?.();
+    }
+  };
+
+  return (
+    <div>
+      <div ref={formRef} style={{ minHeight: 120, marginBottom: 16 }} />
+      <button onClick={handleSubmit} disabled={paying || !stripe}
+        style={{
+          width: "100%", padding: "14px 0", background: "#d4a843", color: "#0a0e1a",
+          border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
+          letterSpacing: "0.06em", cursor: paying ? "wait" : "pointer",
+          opacity: paying ? 0.6 : 1,
+        }}
+      >{paying ? "Processing..." : "Pay Now"}</button>
+    </div>
+  );
+}
+
+const modalOverlay = {
+  position: "fixed", inset: 0, zIndex: 9999,
+  background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)",
+  display: "flex", alignItems: "center", justifyContent: "center",
+};
+const modalBox = {
+  background: "#1a1a2e", border: "1px solid #2a2f4a",
+  borderRadius: 16, padding: "28px 24px", width: "90%", maxWidth: 380,
+};
+
 // ── HUB SCREEN ─────────────────────────────────────────────────────────────
-function HubScreen({ onSelect, user, onLogout }) {
+function HubScreen({ onSelect, user, onLogout, wallet }) {
+  const [showDeposit, setShowDeposit] = useState(false);
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -3869,12 +4054,36 @@ function HubScreen({ onSelect, user, onLogout }) {
         </button>
       </div>
 
-      <div style={{ textAlign: "center", marginBottom: 48 }}>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div style={{ fontSize: 48, fontWeight: 900, color: "#d4a843", letterSpacing: -1, marginBottom: 8 }}>
           dublplay
         </div>
         <div style={{ fontSize: 16, color: "#8b8fa8" }}>
           Pick your arena
+        </div>
+      </div>
+
+      {/* Wallet Card */}
+      <div style={{
+        background: "#141829", border: "1px solid #2a2f4a", borderRadius: 14,
+        padding: "20px 28px", marginBottom: 28, width: "90%", maxWidth: 540,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <div>
+          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>WALLET</div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: "#e8e8f0" }}>
+            ${wallet.loading ? "—" : wallet.balanceDollars}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => setShowDeposit(true)}
+            style={{
+              background: "#d4a843", color: "#0a0e1a", border: "none", borderRadius: 10,
+              padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer",
+              letterSpacing: "0.04em",
+            }}
+          >Add Funds</button>
         </div>
       </div>
 
@@ -3917,10 +4126,12 @@ function HubScreen({ onSelect, user, onLogout }) {
           <span style={{ fontSize: 52 }}>♟️</span>
           <span style={{ fontSize: 22, fontWeight: 800, color: "#e8e8f0" }}>Games</span>
           <span style={{ fontSize: 13, color: "#8b8fa8", textAlign: "center", lineHeight: 1.4 }}>
-            Chess wagers with friends on Chess.com via Stripe
+            Chess wagers with friends on Chess.com
           </span>
         </button>
       </div>
+
+      {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
     </div>
   );
 }
@@ -3929,6 +4140,7 @@ function HubScreen({ onSelect, user, onLogout }) {
 function AuthenticatedApp() {
   const { user, firebaseUser, loading, logout } = useAuth();
   const [mode, setMode] = useState(null); // null = hub, "sports", "games"
+  const wallet = useWallet();
 
   if (loading) {
     return (
@@ -3947,7 +4159,7 @@ function AuthenticatedApp() {
   }
 
   if (mode === "sports") {
-    return <SportsApp onBackToHub={() => setMode(null)} />;
+    return <SportsApp onBackToHub={() => setMode(null)} wallet={wallet} />;
   }
 
   if (mode === "games") {
@@ -3958,7 +4170,7 @@ function AuthenticatedApp() {
     );
   }
 
-  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} />;
+  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} />;
 }
 
 // ── APP ROOT ────────────────────────────────────────────────────────────────

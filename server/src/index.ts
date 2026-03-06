@@ -10,6 +10,7 @@ import friendsRoutes from './routes/friends.routes';
 import wagersRoutes from './routes/wagers.routes';
 import stripeRoutes from './routes/stripe.routes';
 import statsRoutes from './routes/stats.routes';
+import walletRoutes from './routes/wallet.routes';
 import { pollActiveWagers } from './jobs/pollGames';
 import { expireStaleWagers } from './jobs/expireWagers';
 
@@ -30,6 +31,7 @@ app.use('/api/friends', friendsRoutes);
 app.use('/api/wagers', wagersRoutes);
 app.use('/api/stripe', stripeRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/wallet', walletRoutes);
 
 // Games health check
 app.get('/api/health', (_req, res) => {

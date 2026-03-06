@@ -7,8 +7,8 @@ import PaymentScreen from './PaymentScreen.jsx';
 import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
-export default function GamesApp({ onBackToHub, wallet, profile, onLogout }) {
-  const { user, needsRegistration } = useAuth();
+export default function GamesApp({ onBackToHub, wallet, profile }) {
+  const { user, needsRegistration, disconnectChess } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
@@ -87,15 +87,15 @@ export default function GamesApp({ onBackToHub, wallet, profile, onLogout }) {
                 <div style={{ color: theme.colors.success, fontSize: 12, fontWeight: 700 }}>${wallet ? wallet.balanceDollars : '0.00'}</div>
               </div>
             </div>
-            {onLogout && <button
-              onClick={onLogout}
+            <button
+              onClick={() => { setShowProfile(false); disconnectChess(); }}
               style={{
                 width: '100%', padding: '10px 0',
-                background: 'transparent', color: theme.colors.textSecondary, border: `1px solid ${theme.colors.border}`,
+                background: 'transparent', color: theme.colors.danger, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 12, fontWeight: 700,
                 letterSpacing: '0.06em', cursor: 'pointer',
               }}
-            >Logout</button>}
+            >Disconnect Chess.com</button>
           </div>
         </div>
       )}

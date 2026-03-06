@@ -177,7 +177,16 @@ function useProfile() {
 
 // ── Profile Dropdown ─────────────────────────────────────────────────────────
 function ProfileDropdown({ profile, onClose, wallet, onLogout }) {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(profile.username);
+
+  const save = () => {
+    if (draft.trim() && draft.trim() !== profile.username) {
+      profile.setName(draft.trim());
+    }
+    setEditing(false);
+  };
+
   return (
     <div style={{
       position:"fixed", inset:0, zIndex:9999,
@@ -191,49 +200,55 @@ function ProfileDropdown({ profile, onClose, wallet, onLogout }) {
       }}>
         <div style={{ fontSize:10, color:T.text2, fontWeight:700, letterSpacing:"0.1em", marginBottom:12 }}>PROFILE</div>
 
-        {/* Avatar */}
+        {/* Avatar + name (click name to edit) */}
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
           <div style={{
-            width:40, height:40, borderRadius:"50%",
+            width:40, height:40, borderRadius:"50%", flexShrink:0,
             background: profile.username ? avatarColor(profile.username) : T.text3,
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:18, fontWeight:800, color:"#fff",
           }}>
             {profile.username ? profile.username[0].toUpperCase() : "?"}
           </div>
-          <div>
-            <div style={{ color:T.text, fontSize:14, fontWeight:700 }}>{profile.username || "Not set"}</div>
-            <div style={{ color:T.green, fontSize:12, fontWeight:700 }}>${wallet ? wallet.balanceDollars : "0.00"}</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            {editing ? (
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") { setDraft(profile.username); setEditing(false); } }}
+                  maxLength={20}
+                  style={{
+                    flex:1, minWidth:0, background:T.cardAlt, border:`1px solid ${T.borderBr}`,
+                    borderRadius:6, color:T.text, padding:"4px 8px",
+                    fontSize:14, fontWeight:700, fontFamily:"inherit", outline:"none",
+                  }}
+                />
+                <button
+                  onClick={save}
+                  style={{
+                    background:T.green, color:"#000", border:"none",
+                    borderRadius:6, padding:"4px 10px", fontSize:11, fontWeight:800,
+                    cursor:"pointer", flexShrink:0,
+                  }}
+                >Save</button>
+              </div>
+            ) : (
+              <div
+                onClick={() => setEditing(true)}
+                style={{ color:T.text, fontSize:14, fontWeight:700, cursor:"pointer" }}
+                title="Click to edit"
+              >{profile.username || "Set username"}</div>
+            )}
+            <div style={{ color:T.green, fontSize:12, fontWeight:700, marginTop:2 }}>${wallet ? wallet.balanceDollars : "0.00"}</div>
           </div>
         </div>
 
-        {/* Username input */}
-        <input
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && draft.trim()) { profile.setName(draft.trim()); onClose(); } }}
-          placeholder="Enter username..."
-          maxLength={20}
-          style={{
-            width:"100%", boxSizing:"border-box",
-            background:T.cardAlt, border:`1px solid ${T.borderBr}`,
-            borderRadius:8, color:T.text, padding:"10px 12px",
-            fontSize:16, fontFamily:"inherit",
-          }}
-        />
-        <button
-          onClick={() => { if (draft.trim()) { profile.setName(draft.trim()); onClose(); } }}
-          style={{
-            width:"100%", marginTop:10, padding:"10px 0",
-            background:T.green, color:"#000", border:"none",
-            borderRadius:8, fontSize:12, fontWeight:800,
-            letterSpacing:"0.06em", cursor:"pointer",
-          }}
-        >SAVE</button>
         {onLogout && <button
           onClick={onLogout}
           style={{
-            width:"100%", marginTop:8, padding:"10px 0",
+            width:"100%", padding:"10px 0",
             background:"transparent", color:T.text3, border:`1px solid ${T.border}`,
             borderRadius:8, fontSize:12, fontWeight:700,
             letterSpacing:"0.06em", cursor:"pointer",

@@ -29,7 +29,7 @@ div[style*="scrollSnapType"]::-webkit-scrollbar { display: none; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 
-input, textarea, button { font-family: inherit; }
+input, textarea, select, button { font-family: inherit; font-size: 16px; }
 input:focus, textarea:focus { outline: none; box-shadow: 0 0 0 2px rgba(26,141,79,0.2); border-color: rgba(26,141,79,0.4) !important; }
 
 button { cursor: pointer; transition: filter 0.12s, opacity 0.12s, transform 0.1s; }

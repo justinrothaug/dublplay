@@ -155,6 +155,7 @@ function avatarColor(name) {
 }
 
 function useProfile() {
+  const { user } = useAuth();
   const [uid] = useState(() => {
     try {
       let id = localStorage.getItem("dublplay_uid");
@@ -168,6 +169,15 @@ function useProfile() {
   const persist = (name) => {
     try { localStorage.setItem("dublplay_username", name); } catch {}
   };
+
+  // Sync server-side display_name to local profile on new devices
+  useEffect(() => {
+    if (!username && user?.display_name) {
+      setUsername(user.display_name);
+      persist(user.display_name);
+    }
+  }, [user?.display_name]);
+
   return {
     uid, username,
     setName: name => { setUsername(name); persist(name); },

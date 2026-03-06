@@ -83,13 +83,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const disconnectChess = () => {
+    setUser(null);
+    setNeedsRegistration(true);
+  };
+
   const refreshUser = async () => {
     if (firebaseUser) await syncDbUser(firebaseUser);
   };
 
   return (
     <AuthContext.Provider
-      value={{ user, firebaseUser, loading, signInWithGoogle, completeRegistration, logout, refreshUser, needsRegistration }}
+      value={{ user, firebaseUser, loading, signInWithGoogle, completeRegistration, logout, disconnectChess, refreshUser, needsRegistration }}
     >
       {children}
     </AuthContext.Provider>

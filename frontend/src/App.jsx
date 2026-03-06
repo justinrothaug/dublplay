@@ -4033,11 +4033,23 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
       justifyContent: "center",
       padding: 24,
     }}>
-      {/* User info + logout */}
+      {/* User info + wallet + logout */}
       <div style={{ position: "absolute", top: 16, right: 20, display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ fontSize: 13, color: "#8b8fa8" }}>
           {user?.displayName || user?.email}
         </span>
+        <button
+          onClick={() => setShowDeposit(true)}
+          style={{
+            background: "rgba(212,168,67,0.12)", border: "1px solid #d4a843", borderRadius: 8,
+            padding: "4px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#d4a843" }}>
+            ${wallet.loading ? "—" : wallet.balanceDollars}
+          </span>
+          <span style={{ fontSize: 10, color: "#d4a843" }}>+</span>
+        </button>
         <button
           onClick={onLogout}
           style={{ background: "none", border: "1px solid #2a2f4a", borderRadius: 6, padding: "4px 12px", color: "#8b8fa8", cursor: "pointer", fontSize: 12 }}
@@ -4052,30 +4064,6 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
         </div>
         <div style={{ fontSize: 16, color: "#8b8fa8" }}>
           Pick your arena
-        </div>
-      </div>
-
-      {/* Wallet Card */}
-      <div style={{
-        background: "#141829", border: "1px solid #2a2f4a", borderRadius: 14,
-        padding: "20px 28px", marginBottom: 28, width: "90%", maxWidth: 540,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
-        <div>
-          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>WALLET</div>
-          <div style={{ fontSize: 32, fontWeight: 900, color: "#e8e8f0" }}>
-            ${wallet.loading ? "—" : wallet.balanceDollars}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => setShowDeposit(true)}
-            style={{
-              background: "#d4a843", color: "#0a0e1a", border: "none", borderRadius: 10,
-              padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >Add Funds</button>
         </div>
       </div>
 

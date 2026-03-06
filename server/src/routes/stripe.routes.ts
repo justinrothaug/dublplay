@@ -142,6 +142,30 @@ router.post(
 
     if (event.type === 'payment_intent.succeeded') {
       const pi = event.data.object as any;
+
+      // ── Wallet deposit ──
+      if (pi.metadata?.type === 'wallet_deposit') {
+        const userId = pi.metadata.userId;
+        if (userId) {
+          const userRef = db.collection('dublchess_users').doc(userId);
+          const userDoc = await userRef.get();
+          const currentBalance = userDoc.data()?.walletBalanceCents || 0;
+          await userRef.update({
+            walletBalanceCents: currentBalance + pi.amount,
+            updatedAt: new Date().toISOString(),
+          });
+          await db.collection('dublchess_transactions').doc().set({
+            userId,
+            type: 'deposit',
+            amountCents: pi.amount,
+            stripePaymentIntentId: pi.id,
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      // ── Wager payment ──
       const wagerId = pi.metadata?.wagerId;
       const side = pi.metadata?.side;
 

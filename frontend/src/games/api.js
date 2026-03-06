@@ -65,6 +65,21 @@ export const stripeApi = {
   accountStatus: () => gamesApi('/stripe/account-status'),
 };
 
+// Wallet
+export const walletApi = {
+  balance: () => gamesApi('/wallet/balance'),
+  deposit: (amountCents) =>
+    gamesApi('/wallet/deposit', {
+      method: 'POST',
+      body: JSON.stringify({ amountCents }),
+    }),
+  withdraw: (amountCents) =>
+    gamesApi('/wallet/withdraw', {
+      method: 'POST',
+      body: JSON.stringify({ amountCents }),
+    }),
+};
+
 // Stats
 export const statsApi = {
   leaderboard: () => gamesApi('/stats/leaderboard'),

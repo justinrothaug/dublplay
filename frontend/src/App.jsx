@@ -184,7 +184,7 @@ function ProfileDropdown({ profile, onClose, wallet }) {
       background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)",
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        position:"absolute", top:52, right:20,
+        position:"absolute", top:52, left:12,
         background:T.card, border:`1px solid ${T.borderBr}`,
         borderRadius:14, padding:20, width:240,
         boxShadow:"0 12px 40px rgba(0,0,0,0.5)",
@@ -4033,8 +4033,8 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
       justifyContent: "center",
       padding: 24,
     }}>
-      {/* User info + wallet + logout */}
-      <div style={{ position: "absolute", top: 16, right: 20, display: "flex", alignItems: "center", gap: 12 }}>
+      {/* User info + wallet (top-left) */}
+      <div style={{ position: "absolute", top: 16, left: 20, display: "flex", alignItems: "center", gap: 12 }}>
         <span
           onClick={() => setShowProfile(true)}
           style={{ fontSize: 13, color: "#8b8fa8", cursor: "pointer" }}
@@ -4053,6 +4053,9 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
           </span>
           <span style={{ fontSize: 10, color: "#d4a843" }}>+</span>
         </button>
+      </div>
+      {/* Logout (top-right) */}
+      <div style={{ position: "absolute", top: 16, right: 20 }}>
         <button
           onClick={onLogout}
           style={{ background: "none", border: "1px solid #2a2f4a", borderRadius: 6, padding: "4px 12px", color: "#8b8fa8", cursor: "pointer", fontSize: 12 }}

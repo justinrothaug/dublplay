@@ -13,7 +13,6 @@ export default function GamesApp({ onBackToHub, wallet, profile, onLogout }) {
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
   const [showProfile, setShowProfile] = useState(false);
-  const [showDeposit, setShowDeposit] = useState(false);
 
   // User is logged in via Firebase but hasn't set Chess.com username yet
   if (!user || needsRegistration) {
@@ -41,27 +40,25 @@ export default function GamesApp({ onBackToHub, wallet, profile, onLogout }) {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: theme.colors.background }}>
       {/* Top bar with profile + wallet + back */}
       <div style={styles.topBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button style={styles.backButton} onClick={onBackToHub}>← Hub</button>
-          <span
+          <button
             onClick={() => setShowProfile(true)}
-            style={{ fontSize: 13, color: '#8b8fa8', cursor: 'pointer' }}
-          >
-            {profile?.username || user?.display_name || 'Profile'}
-          </span>
+            style={{
+              width: 30, height: 30, borderRadius: '50%', border: 'none', cursor: 'pointer', padding: 0,
+              background: profile?.username ? profile.color : '#555',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14, fontWeight: 800, color: '#fff',
+            }}
+          >{(profile?.username || user?.display_name || '?')[0].toUpperCase()}</button>
           {wallet && (
-            <button
-              onClick={() => setShowDeposit(true)}
-              style={{
-                background: 'rgba(212,168,67,0.12)', border: '1px solid #d4a843', borderRadius: 8,
-                padding: '4px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#d4a843' }}>
-                ${wallet.loading ? '—' : wallet.balanceDollars}
-              </span>
-              <span style={{ fontSize: 10, color: '#d4a843' }}>+</span>
-            </button>
+            <span style={{
+              background: 'rgba(212,168,67,0.12)', border: '1px solid #d4a843', borderRadius: 8,
+              padding: '4px 12px', display: 'flex', alignItems: 'center',
+              fontSize: 13, fontWeight: 800, color: '#d4a843',
+            }}>
+              ${wallet.loading ? '—' : wallet.balanceDollars}
+            </span>
           )}
         </div>
       </div>

@@ -51,7 +51,7 @@ def _init_firestore():
         try:
             app = firebase_admin.get_app()
         except ValueError:
-            sa_env = os.getenv("FIREBASE_CREDENTIALS", "").strip()
+            sa_env = (os.getenv("FIREBASE_SERVICE_ACCOUNT") or os.getenv("FIREBASE_CREDENTIALS") or "").strip()
             if sa_env:
                 cred = fb_credentials.Certificate(json.loads(sa_env))
             elif pathlib.Path("firebase-service-account.json").exists():

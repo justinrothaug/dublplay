@@ -49,24 +49,28 @@ app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res
 // ── Sports API proxy (Python/FastAPI on internal port 8000) ─────────────────
 const PYTHON_BACKEND = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:8000';
 
+// HPM v3 with Express mount paths strips the prefix from req.url, so Python
+// would receive "/" instead of "/api/games". Use pathFilter at the root level
+// to keep the full original path intact.
+const sportsPaths = [
+  '/api/games', '/api/picks', '/api/props', '/api/injuries',
+  '/api/standings', '/api/analyze', '/api/chat', '/api/bet',
+  '/api/bets', '/api/parlay', '/api/debug', '/health',
+];
+
 const sportsProxy = createProxyMiddleware({
   target: PYTHON_BACKEND,
   changeOrigin: true,
+  pathFilter: sportsPaths,
+  on: {
+    error: (err, _req, res) => {
+      console.error('Sports proxy error:', err.message);
+      (res as any).status?.(502)?.json?.({ error: 'Sports backend unavailable' });
+    },
+  },
 });
 
-// Proxy sports-specific routes to Python backend
-app.use('/api/games', sportsProxy);
-app.use('/api/picks', sportsProxy);
-app.use('/api/props', sportsProxy);
-app.use('/api/injuries', sportsProxy);
-app.use('/api/standings', sportsProxy);
-app.use('/api/analyze', sportsProxy);
-app.use('/api/chat', sportsProxy);
-app.use('/api/bet', sportsProxy);
-app.use('/api/bets', sportsProxy);
-app.use('/api/parlay', sportsProxy);
-app.use('/api/debug', sportsProxy);
-app.use('/health', sportsProxy);
+app.use(sportsProxy);
 
 // ── Serve frontend static files ─────────────────────────────────────────────
 const publicDir = path.join(__dirname, 'public');

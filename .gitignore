@@ -7,3 +7,11 @@ __pycache__/
 .env
 firebase-service-account.json
 server/dist/
+
+# iOS build artifacts
+ios/App/Pods/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+DerivedData/

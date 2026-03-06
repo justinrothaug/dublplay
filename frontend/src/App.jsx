@@ -184,7 +184,7 @@ function ProfileDropdown({ profile, onClose, wallet }) {
       background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)",
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        position:"absolute", top:52, left:12,
+        position:"absolute", top:52, right:20,
         background:T.card, border:`1px solid ${T.borderBr}`,
         borderRadius:14, padding:20, width:240,
         boxShadow:"0 12px 40px rgba(0,0,0,0.5)",
@@ -3349,7 +3349,7 @@ function mergeAccuribet(analysis, game, abData) {
 }
 
 // ── SPORTS APP ───────────────────────────────────────────────────────────────
-function SportsApp({ onBackToHub, wallet }) {
+function SportsApp({ onBackToHub, wallet, profile }) {
   const { firebaseUser } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
@@ -3370,7 +3370,6 @@ function SportsApp({ onBackToHub, wallet }) {
   const [showProfile, setShowProfile] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null); // null = list view, game obj = detail view
-  const profile = useProfile();
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -4020,8 +4019,9 @@ const modalBox = {
 };
 
 // ── HUB SCREEN ─────────────────────────────────────────────────────────────
-function HubScreen({ onSelect, user, onLogout, wallet }) {
+function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
   const [showDeposit, setShowDeposit] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   return (
     <div style={{
@@ -4035,8 +4035,11 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
     }}>
       {/* User info + wallet + logout */}
       <div style={{ position: "absolute", top: 16, right: 20, display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontSize: 13, color: "#8b8fa8" }}>
-          {user?.displayName || user?.email}
+        <span
+          onClick={() => setShowProfile(true)}
+          style={{ fontSize: 13, color: "#8b8fa8", cursor: "pointer" }}
+        >
+          {profile?.username || user?.displayName || user?.email}
         </span>
         <button
           onClick={() => setShowDeposit(true)}
@@ -4112,6 +4115,7 @@ function HubScreen({ onSelect, user, onLogout, wallet }) {
       </div>
 
       {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
+      {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }
@@ -4121,6 +4125,7 @@ function AuthenticatedApp() {
   const { user, firebaseUser, loading, logout } = useAuth();
   const [mode, setMode] = useState(null); // null = hub, "sports", "games"
   const wallet = useWallet();
+  const profile = useProfile();
 
   if (loading) {
     return (
@@ -4139,7 +4144,7 @@ function AuthenticatedApp() {
   }
 
   if (mode === "sports") {
-    return <SportsApp onBackToHub={() => setMode(null)} wallet={wallet} />;
+    return <SportsApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} />;
   }
 
   if (mode === "games") {
@@ -4150,7 +4155,7 @@ function AuthenticatedApp() {
     );
   }
 
-  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} />;
+  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} profile={profile} />;
 }
 
 // ── APP ROOT ────────────────────────────────────────────────────────────────

@@ -176,7 +176,7 @@ function useProfile() {
 }
 
 // ── Profile Dropdown ─────────────────────────────────────────────────────────
-function ProfileDropdown({ profile, onClose, wallet }) {
+function ProfileDropdown({ profile, onClose, wallet, onLogout }) {
   const [draft, setDraft] = useState(profile.username);
   return (
     <div style={{
@@ -230,6 +230,15 @@ function ProfileDropdown({ profile, onClose, wallet }) {
             letterSpacing:"0.06em", cursor:"pointer",
           }}
         >SAVE</button>
+        {onLogout && <button
+          onClick={onLogout}
+          style={{
+            width:"100%", marginTop:8, padding:"10px 0",
+            background:"transparent", color:T.text3, border:`1px solid ${T.border}`,
+            borderRadius:8, fontSize:12, fontWeight:700,
+            letterSpacing:"0.06em", cursor:"pointer",
+          }}
+        >Logout</button>}
       </div>
     </div>
   );
@@ -4054,15 +4063,6 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
           <span style={{ fontSize: 10, color: "#d4a843" }}>+</span>
         </button>
       </div>
-      {/* Logout (top-right) */}
-      <div style={{ position: "absolute", top: 16, right: 20 }}>
-        <button
-          onClick={onLogout}
-          style={{ background: "none", border: "1px solid #2a2f4a", borderRadius: 6, padding: "4px 12px", color: "#8b8fa8", cursor: "pointer", fontSize: 12 }}
-        >
-          Logout
-        </button>
-      </div>
 
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div style={{ fontSize: 48, fontWeight: 900, color: "#d4a843", letterSpacing: -1, marginBottom: 8 }}>
@@ -4118,7 +4118,7 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
       </div>
 
       {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
-      {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onClose={() => setShowProfile(false)} />}
+      {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onLogout={onLogout} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

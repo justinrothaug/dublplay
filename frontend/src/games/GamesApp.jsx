@@ -87,6 +87,16 @@ export default function GamesApp({ onBackToHub, wallet, profile }) {
                 <div style={{ color: theme.colors.success, fontSize: 12, fontWeight: 700 }}>${wallet ? wallet.balanceDollars : '0.00'}</div>
               </div>
             </div>
+            {user?.chess_com_username && (
+              <div style={{
+                padding: '8px 12px', marginBottom: 12,
+                background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+                borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
+              }}>
+                <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.chess_com_username}</span>
+                <span style={{ marginLeft: 4, opacity: 0.6 }}>on Chess.com</span>
+              </div>
+            )}
             <button
               onClick={() => { setShowProfile(false); disconnectChess(); }}
               style={{

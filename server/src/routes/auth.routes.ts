@@ -101,6 +101,44 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+// Update Chess.com username
+router.put('/chess-username', authenticate, async (req: Request, res: Response) => {
+  const { chessComUsername } = req.body;
+  if (!chessComUsername || typeof chessComUsername !== 'string' || !chessComUsername.trim()) {
+    res.status(400).json({ error: 'Chess.com username required' });
+    return;
+  }
+
+  const username = chessComUsername.trim();
+  const userRef = db.collection('dublplay_users').doc(req.user!.userId);
+
+  // Check if username is taken by another user
+  const taken = await db.collection('dublplay_users')
+    .where('chessComUsernameLower', '==', username.toLowerCase())
+    .limit(1).get();
+  if (!taken.empty && taken.docs[0].id !== req.user!.userId) {
+    res.status(409).json({ error: 'Chess.com username already taken' });
+    return;
+  }
+
+  await userRef.update({
+    chessComUsername: username,
+    chessComUsernameLower: username.toLowerCase(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const doc = await userRef.get();
+  const u = doc.data()!;
+  res.json({
+    id: doc.id,
+    email: u.email,
+    chess_com_username: u.chessComUsername,
+    display_name: u.displayName,
+    stripe_onboarding_complete: u.stripeOnboardingComplete,
+    created_at: u.createdAt,
+  });
+});
+
 // Get current user profile
 router.get('/me', authenticate, async (req: Request, res: Response) => {
   const doc = await db.collection('dublplay_users').doc(req.user!.userId).get();

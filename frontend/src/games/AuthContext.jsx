@@ -62,14 +62,32 @@ export function AuthProvider({ children }) {
     if (!firebaseUser) throw new Error('Not signed in');
     const token = await firebaseUser.getIdToken();
 
+    // Try registering first; if user already exists, update the username
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ firebaseToken: token, chessComUsername }),
     });
 
+    if (res.status === 409) {
+      // User already exists — update chess username instead
+      const updateRes = await fetch(`${API_BASE}/auth/chess-username`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ chessComUsername }),
+      });
+      if (!updateRes.ok) {
+        const body = await updateRes.json().catch(() => ({ error: 'Update failed' }));
+        throw new Error(body.error || 'Failed to update username');
+      }
+      const dbUser = await updateRes.json();
+      setUser(dbUser);
+      setNeedsRegistration(false);
+      return;
+    }
+
     if (!res.ok) {
-      const body = await res.json();
+      const body = await res.json().catch(() => ({ error: 'Registration failed' }));
       throw new Error(body.error || 'Registration failed');
     }
 

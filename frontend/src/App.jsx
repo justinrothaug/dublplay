@@ -241,7 +241,7 @@ function ProfileDropdown({ profile, onClose, wallet, onLogout }) {
                 title="Click to edit"
               >{profile.username || "Set username"}</div>
             )}
-            <div style={{ color:T.green, fontSize:12, fontWeight:700, marginTop:2 }}>${wallet ? wallet.balanceDollars : profile.balance.toFixed(2)}</div>
+            <div style={{ color:T.green, fontSize:12, fontWeight:700, marginTop:2 }}>${wallet ? wallet.balanceDollars : "0.00"}</div>
           </div>
         </div>
 

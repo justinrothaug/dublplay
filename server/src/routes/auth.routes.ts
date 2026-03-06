@@ -42,6 +42,7 @@ router.post('/register', async (req: Request, res: Response) => {
       chessComUsername: body.chessComUsername,
       chessComUsernameLower: body.chessComUsername.toLowerCase(),
       displayName: body.displayName || body.chessComUsername,
+      walletBalanceCents: 0,
       stripeCustomerId: null,
       stripeConnectAccountId: null,
       stripeOnboardingComplete: false,

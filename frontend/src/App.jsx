@@ -3377,6 +3377,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
   const [picksLoading, setPicksLoading] = useState(true); // loading state for picks tab
   const [overallStats, setOverallStats] = useState(null); // 7-day aggregate hit stats
   const [showProfile, setShowProfile] = useState(false);
+  const [showDeposit, setShowDeposit] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null); // null = list view, game obj = detail view
   const favorites = useFavoritePicks();
@@ -3657,19 +3658,32 @@ function SportsApp({ onBackToHub, wallet, profile }) {
             onClick={onBackToHub}
             style={{ background:"none", border:"none", fontSize:14, color:T.green, fontWeight:600, padding:"4px 12px 4px 0", cursor:"pointer" }}
           >← Hub</button>
-          {/* Hamburger menu → profile */}
+          {/* Profile avatar */}
           <button
             onClick={() => setShowProfile(v => !v)}
-            style={{ background:"none", border:"none", fontSize:20, color:T.text, padding:"4px 8px 4px 0", cursor:"pointer" }}
+            style={{ background:"none", border:"none", padding:0, cursor:"pointer" }}
           >
-            {profile.username ? (
-              <span style={{
-                display:"inline-flex", alignItems:"center", justifyContent:"center",
-                width:30, height:30, borderRadius:"50%",
-                background: profile.color, fontSize:14, fontWeight:800, color:"#fff",
-              }}>{(profile.username || "?")[0].toUpperCase()}</span>
-            ) : "☰"}
+            <span style={{
+              display:"inline-flex", alignItems:"center", justifyContent:"center",
+              width:30, height:30, borderRadius:"50%",
+              background: profile.username ? profile.color : "#555", fontSize:14, fontWeight:800, color:"#fff",
+            }}>{(profile.username || "?")[0].toUpperCase()}</span>
           </button>
+          {/* Wallet badge */}
+          {wallet && (
+            <button
+              onClick={() => setShowDeposit(true)}
+              style={{
+                background:"rgba(212,168,67,0.12)", border:"1px solid #d4a843", borderRadius:8,
+                padding:"3px 10px", cursor:"pointer", display:"flex", alignItems:"center", gap:3, marginLeft:6,
+              }}
+            >
+              <span style={{ fontSize:12, fontWeight:800, color:"#d4a843" }}>
+                ${wallet.loading ? "—" : wallet.balanceDollars}
+              </span>
+              <span style={{ fontSize:9, color:"#d4a843" }}>+</span>
+            </button>
+          )}
           <span
             onClick={() => setShowStats(v => !v)}
             style={{ color:T.red, fontWeight:900, fontSize:20, letterSpacing:"-0.02em", marginLeft:8, cursor:"pointer" }}
@@ -3787,6 +3801,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
       {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onClose={() => setShowProfile(false)} />}
+      {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
     </div>
   );
 }
@@ -4042,14 +4057,17 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
       justifyContent: "center",
       padding: 24,
     }}>
-      {/* User info + wallet (top-left) */}
-      <div style={{ position: "absolute", top: 16, left: 20, display: "flex", alignItems: "center", gap: 12 }}>
-        <span
+      {/* Profile avatar + wallet (top-left) */}
+      <div style={{ position: "absolute", top: 16, left: 20, display: "flex", alignItems: "center", gap: 10 }}>
+        <button
           onClick={() => setShowProfile(true)}
-          style={{ fontSize: 13, color: "#8b8fa8", cursor: "pointer" }}
-        >
-          {profile?.username || user?.displayName || user?.email}
-        </span>
+          style={{
+            width: 34, height: 34, borderRadius: "50%", border: "none", cursor: "pointer",
+            background: profile?.username ? avatarColor(profile.username) : "#555",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 15, fontWeight: 800, color: "#fff",
+          }}
+        >{(profile?.username || user?.displayName || "?")[0].toUpperCase()}</button>
         <button
           onClick={() => setShowDeposit(true)}
           style={{
@@ -4153,7 +4171,7 @@ function AuthenticatedApp() {
   if (mode === "games") {
     return (
       <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Games...</div>}>
-        <GamesApp onBackToHub={() => setMode(null)} />
+        <GamesApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} onLogout={logout} />
       </Suspense>
     );
   }

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
-import { friendsApi, wagersApi, stripeApi } from './api.js';
+import { friendsApi, wagersApi } from './api.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate }) {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [friends, setFriends] = useState([]);
   const [requests, setRequests] = useState([]);
   const [wagers, setWagers] = useState([]);
@@ -68,15 +68,6 @@ export default function DublPlayScreen({ onNavigate }) {
     onNavigate('payment', { wagerId: wager.id, amount: wager.amount_cents, opponentName });
   };
 
-  const handleStripeOnboarding = async () => {
-    try {
-      const { url } = await stripeApi.onboarding();
-      if (url) window.open(url, '_blank');
-    } catch (err) {
-      alert('Error: ' + err.message);
-    }
-  };
-
   const getOpponentName = (w) =>
     w.challenger_id === user?.id ? w.opponent_name : w.challenger_name;
 
@@ -99,18 +90,6 @@ export default function DublPlayScreen({ onNavigate }) {
   return (
     <div style={styles.container}>
       <div style={styles.list}>
-        <div style={styles.headerRow}>
-          <span style={styles.screenTitle}>dublplay</span>
-          <span style={styles.logoutText} onClick={logout}>Logout</span>
-        </div>
-
-        {!user?.stripe_onboarding_complete && (
-          <div style={styles.onboardingBanner} onClick={handleStripeOnboarding}>
-            <span style={styles.onboardingText}>Set up payments to receive winnings</span>
-            <span style={styles.onboardingCta}>Connect Stripe →</span>
-          </div>
-        )}
-
         <div style={styles.sectionTitle}>Add Friend</div>
         <div style={styles.addRow}>
           <input
@@ -207,9 +186,6 @@ export default function DublPlayScreen({ onNavigate }) {
 const styles = {
   container: { flex: 1, background: theme.colors.background, minHeight: '100%' },
   list: { padding: 16, paddingBottom: 100, maxWidth: 600, margin: '0 auto' },
-  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  screenTitle: { fontSize: 24, fontWeight: 800, color: theme.colors.primary },
-  logoutText: { color: theme.colors.textSecondary, fontSize: 13, cursor: 'pointer' },
   sectionTitle: { fontSize: 18, fontWeight: 700, color: theme.colors.primary, marginTop: 24, marginBottom: 8 },
   addRow: { display: 'flex', gap: 8 },
   input: { flex: 1, background: theme.colors.surface, borderRadius: 8, padding: 16, color: theme.colors.text, fontSize: 15, border: `1px solid ${theme.colors.border}`, outline: 'none' },
@@ -230,8 +206,5 @@ const styles = {
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
   actionRow: { display: 'flex', gap: 8 },
   payNowButton: { background: theme.colors.primary, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: theme.colors.background, fontWeight: 800, fontSize: 13 },
-  onboardingBanner: { background: theme.colors.surface, borderRadius: 12, padding: 16, marginTop: 8, border: `1px solid ${theme.colors.primary}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
-  onboardingText: { color: theme.colors.text, fontSize: 13, flex: 1 },
-  onboardingCta: { color: theme.colors.primary, fontWeight: 700, fontSize: 13 },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

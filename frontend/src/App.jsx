@@ -4153,7 +4153,7 @@ function AuthenticatedApp() {
   if (mode === "games") {
     return (
       <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Games...</div>}>
-        <GamesApp onBackToHub={() => setMode(null)} />
+        <GamesApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} onLogout={logout} />
       </Suspense>
     );
   }

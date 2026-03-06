@@ -11,12 +11,12 @@ router.get('/', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
   // Get friendships where user is requester or addressee and status is accepted
-  const asRequester = await db.collection('dublchess_friendships')
+  const asRequester = await db.collection('dublplay_friendships')
     .where('requesterId', '==', userId)
     .where('status', '==', 'accepted')
     .get();
 
-  const asAddressee = await db.collection('dublchess_friendships')
+  const asAddressee = await db.collection('dublplay_friendships')
     .where('addresseeId', '==', userId)
     .where('status', '==', 'accepted')
     .get();
@@ -25,7 +25,7 @@ router.get('/', async (req: Request, res: Response) => {
 
   for (const doc of asRequester.docs) {
     const f = doc.data();
-    const userDoc = await db.collection('dublchess_users').doc(f.addresseeId).get();
+    const userDoc = await db.collection('dublplay_users').doc(f.addresseeId).get();
     if (userDoc.exists) {
       const u = userDoc.data()!;
       friends.push({
@@ -40,7 +40,7 @@ router.get('/', async (req: Request, res: Response) => {
 
   for (const doc of asAddressee.docs) {
     const f = doc.data();
-    const userDoc = await db.collection('dublchess_users').doc(f.requesterId).get();
+    const userDoc = await db.collection('dublplay_users').doc(f.requesterId).get();
     if (userDoc.exists) {
       const u = userDoc.data()!;
       friends.push({
@@ -61,7 +61,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/requests', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
-  const snapshot = await db.collection('dublchess_friendships')
+  const snapshot = await db.collection('dublplay_friendships')
     .where('addresseeId', '==', userId)
     .where('status', '==', 'pending')
     .orderBy('createdAt', 'desc')
@@ -70,7 +70,7 @@ router.get('/requests', async (req: Request, res: Response) => {
   const requests: any[] = [];
   for (const doc of snapshot.docs) {
     const f = doc.data();
-    const userDoc = await db.collection('dublchess_users').doc(f.requesterId).get();
+    const userDoc = await db.collection('dublplay_users').doc(f.requesterId).get();
     if (userDoc.exists) {
       const u = userDoc.data()!;
       requests.push({
@@ -96,7 +96,7 @@ router.post('/request', async (req: Request, res: Response) => {
     throw new AppError(400, 'Chess.com username required');
   }
 
-  const userSnapshot = await db.collection('dublchess_users')
+  const userSnapshot = await db.collection('dublplay_users')
     .where('chessComUsernameLower', '==', chessComUsername.toLowerCase())
     .limit(1).get();
 
@@ -112,12 +112,12 @@ router.post('/request', async (req: Request, res: Response) => {
   }
 
   // Check if friendship already exists in either direction
-  const existing1 = await db.collection('dublchess_friendships')
+  const existing1 = await db.collection('dublplay_friendships')
     .where('requesterId', '==', userId)
     .where('addresseeId', '==', friendId)
     .limit(1).get();
 
-  const existing2 = await db.collection('dublchess_friendships')
+  const existing2 = await db.collection('dublplay_friendships')
     .where('requesterId', '==', friendId)
     .where('addresseeId', '==', userId)
     .limit(1).get();
@@ -130,7 +130,7 @@ router.post('/request', async (req: Request, res: Response) => {
   }
 
   const now = new Date().toISOString();
-  const ref = db.collection('dublchess_friendships').doc();
+  const ref = db.collection('dublplay_friendships').doc();
   const data = {
     requesterId: userId,
     addresseeId: friendId,
@@ -146,7 +146,7 @@ router.post('/request', async (req: Request, res: Response) => {
 // Accept friend request
 router.post('/:id/accept', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_friendships').doc(String(req.params.id));
+  const ref = db.collection('dublplay_friendships').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Friend request not found');
@@ -162,7 +162,7 @@ router.post('/:id/accept', async (req: Request, res: Response) => {
 // Decline friend request
 router.post('/:id/decline', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_friendships').doc(String(req.params.id));
+  const ref = db.collection('dublplay_friendships').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Friend request not found');
@@ -178,7 +178,7 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
 // Remove friend
 router.delete('/:id', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_friendships').doc(String(req.params.id));
+  const ref = db.collection('dublplay_friendships').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Friendship not found');

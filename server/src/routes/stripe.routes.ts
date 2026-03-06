@@ -16,7 +16,7 @@ router.get('/config', (_req: Request, res: Response) => {
 // Stripe Connect onboarding - create account and return link
 router.post('/onboarding', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const userRef = db.collection('dublchess_users').doc(userId);
+  const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   const user = userDoc.data()!;
 
@@ -45,7 +45,7 @@ router.post('/onboarding', authenticate, async (req: Request, res: Response) => 
 // Check onboarding status
 router.get('/account-status', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const userRef = db.collection('dublchess_users').doc(userId);
+  const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   const user = userDoc.data()!;
 
@@ -74,7 +74,7 @@ router.get('/account-status', authenticate, async (req: Request, res: Response) 
 // Pay for a wager (creates PaymentIntent)
 router.post('/wagers/:id/pay', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const wagerRef = db.collection('dublchess_wagers').doc(String(req.params.id));
+  const wagerRef = db.collection('dublplay_wagers').doc(String(req.params.id));
   const wagerDoc = await wagerRef.get();
 
   if (!wagerDoc.exists) throw new AppError(404, 'Wager not found');
@@ -92,7 +92,7 @@ router.post('/wagers/:id/pay', authenticate, async (req: Request, res: Response)
   if (isOpponent && wager.opponentPaid) throw new AppError(400, 'Already paid');
 
   // Get or create Stripe customer
-  const userRef = db.collection('dublchess_users').doc(userId);
+  const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   const user = userDoc.data()!;
 
@@ -147,14 +147,14 @@ router.post(
       if (pi.metadata?.type === 'wallet_deposit') {
         const userId = pi.metadata.userId;
         if (userId) {
-          const userRef = db.collection('dublchess_users').doc(userId);
+          const userRef = db.collection('dublplay_users').doc(userId);
           const userDoc = await userRef.get();
           const currentBalance = userDoc.data()?.walletBalanceCents || 0;
           await userRef.update({
             walletBalanceCents: currentBalance + pi.amount,
             updatedAt: new Date().toISOString(),
           });
-          await db.collection('dublchess_transactions').doc().set({
+          await db.collection('dublplay_transactions').doc().set({
             userId,
             type: 'deposit',
             amountCents: pi.amount,
@@ -170,7 +170,7 @@ router.post(
       const side = pi.metadata?.side;
 
       if (wagerId && side) {
-        const wagerRef = db.collection('dublchess_wagers').doc(wagerId);
+        const wagerRef = db.collection('dublplay_wagers').doc(wagerId);
         const paidField = side === 'challenger' ? 'challengerPaid' : 'opponentPaid';
         await wagerRef.update({ [paidField]: true, updatedAt: new Date().toISOString() });
 
@@ -182,7 +182,7 @@ router.post(
         }
 
         // Record transaction
-        await db.collection('dublchess_transactions').doc().set({
+        await db.collection('dublplay_transactions').doc().set({
           wagerId,
           userId: pi.metadata.userId,
           type: 'bet_payment',

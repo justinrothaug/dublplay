@@ -20,7 +20,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   firebaseAuth
     .verifyIdToken(token)
     .then(async (decoded) => {
-      const usersRef = db.collection('dublchess_users');
+      const usersRef = db.collection('dublplay_users');
       const snapshot = await usersRef.where('firebaseUid', '==', decoded.uid).limit(1).get();
 
       if (snapshot.empty) {

@@ -16,8 +16,8 @@ const createWagerSchema = z.object({
 async function enrichWager(doc: FirebaseFirestore.DocumentSnapshot) {
   const w = doc.data()!;
   const [challengerDoc, opponentDoc] = await Promise.all([
-    db.collection('dublchess_users').doc(w.challengerId).get(),
-    db.collection('dublchess_users').doc(w.opponentId).get(),
+    db.collection('dublplay_users').doc(w.challengerId).get(),
+    db.collection('dublplay_users').doc(w.opponentId).get(),
   ]);
   const challenger = challengerDoc.data() || {};
   const opponent = opponentDoc.data() || {};
@@ -37,8 +37,8 @@ router.get('/', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const status = req.query.status as string | undefined;
 
-  const asChallenger = await db.collection('dublchess_wagers').where('challengerId', '==', userId).get();
-  const asOpponent = await db.collection('dublchess_wagers').where('opponentId', '==', userId).get();
+  const asChallenger = await db.collection('dublplay_wagers').where('challengerId', '==', userId).get();
+  const asOpponent = await db.collection('dublplay_wagers').where('opponentId', '==', userId).get();
 
   const allDocs = [...asChallenger.docs, ...asOpponent.docs];
   // Deduplicate (shouldn't happen but just in case)
@@ -63,7 +63,7 @@ router.get('/', async (req: Request, res: Response) => {
 // Get single wager
 router.get('/:id', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const doc = await db.collection('dublchess_wagers').doc(String(req.params.id)).get();
+  const doc = await db.collection('dublplay_wagers').doc(String(req.params.id)).get();
 
   if (!doc.exists) throw new AppError(404, 'Wager not found');
   const w = doc.data()!;
@@ -84,12 +84,12 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   // Verify opponent is a friend
-  const f1 = await db.collection('dublchess_friendships')
+  const f1 = await db.collection('dublplay_friendships')
     .where('requesterId', '==', userId)
     .where('addresseeId', '==', body.opponentId)
     .where('status', '==', 'accepted')
     .limit(1).get();
-  const f2 = await db.collection('dublchess_friendships')
+  const f2 = await db.collection('dublplay_friendships')
     .where('requesterId', '==', body.opponentId)
     .where('addresseeId', '==', userId)
     .where('status', '==', 'accepted')
@@ -102,7 +102,7 @@ router.post('/', async (req: Request, res: Response) => {
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
-  const ref = db.collection('dublchess_wagers').doc();
+  const ref = db.collection('dublplay_wagers').doc();
   const data = {
     challengerId: userId,
     opponentId: body.opponentId,
@@ -130,7 +130,7 @@ router.post('/', async (req: Request, res: Response) => {
 // Accept wager
 router.post('/:id/accept', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_wagers').doc(String(req.params.id));
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Wager not found or cannot be accepted');
@@ -146,7 +146,7 @@ router.post('/:id/accept', async (req: Request, res: Response) => {
 // Decline wager
 router.post('/:id/decline', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_wagers').doc(String(req.params.id));
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Wager not found or cannot be declined');
@@ -162,7 +162,7 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
 // Cancel wager (challenger only, before acceptance)
 router.post('/:id/cancel', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const ref = db.collection('dublchess_wagers').doc(String(req.params.id));
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
   const doc = await ref.get();
 
   if (!doc.exists) throw new AppError(404, 'Wager not found or cannot be cancelled');

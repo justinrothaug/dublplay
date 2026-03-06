@@ -9,7 +9,7 @@ const router = Router();
 // Get wallet balance
 router.get('/balance', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const userDoc = await db.collection('dublchess_users').doc(userId).get();
+  const userDoc = await db.collection('dublplay_users').doc(userId).get();
   if (!userDoc.exists) throw new AppError(404, 'User not found');
   const data = userDoc.data()!;
   res.json({ balanceCents: data.walletBalanceCents || 0 });
@@ -27,7 +27,7 @@ router.post('/deposit', authenticate, async (req: Request, res: Response) => {
     throw new AppError(400, 'Maximum deposit is $500.00');
   }
 
-  const userRef = db.collection('dublchess_users').doc(userId);
+  const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   if (!userDoc.exists) throw new AppError(404, 'User not found');
   const user = userDoc.data()!;
@@ -61,7 +61,7 @@ router.post('/withdraw', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const { amountCents } = req.body;
 
-  const userRef = db.collection('dublchess_users').doc(userId);
+  const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   if (!userDoc.exists) throw new AppError(404, 'User not found');
   const user = userDoc.data()!;
@@ -93,7 +93,7 @@ router.post('/withdraw', authenticate, async (req: Request, res: Response) => {
   });
 
   // Record transaction
-  await db.collection('dublchess_transactions').doc().set({
+  await db.collection('dublplay_transactions').doc().set({
     userId,
     type: 'withdrawal',
     amountCents,

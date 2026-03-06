@@ -10,10 +10,10 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
   // Get all friend IDs
-  const f1 = await db.collection('dublchess_friendships')
+  const f1 = await db.collection('dublplay_friendships')
     .where('requesterId', '==', userId)
     .where('status', '==', 'accepted').get();
-  const f2 = await db.collection('dublchess_friendships')
+  const f2 = await db.collection('dublplay_friendships')
     .where('addresseeId', '==', userId)
     .where('status', '==', 'accepted').get();
 
@@ -26,10 +26,10 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
   // Get all settled wagers involving these users
   const settledWagers: any[] = [];
   for (const id of allIds) {
-    const asC = await db.collection('dublchess_wagers')
+    const asC = await db.collection('dublplay_wagers')
       .where('challengerId', '==', id)
       .where('status', '==', 'settled').get();
-    const asO = await db.collection('dublchess_wagers')
+    const asO = await db.collection('dublplay_wagers')
       .where('opponentId', '==', id)
       .where('status', '==', 'settled').get();
     for (const d of [...asC.docs, ...asO.docs]) {
@@ -40,7 +40,7 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
   }
 
   // Get user info
-  const userDocs = await Promise.all(allIds.map(id => db.collection('dublchess_users').doc(id).get()));
+  const userDocs = await Promise.all(allIds.map(id => db.collection('dublplay_users').doc(id).get()));
 
   const leaderboard = userDocs.map(userDoc => {
     const u = userDoc.data()!;
@@ -85,11 +85,11 @@ router.get('/balance/:friendId', async (req: Request, res: Response) => {
   const friendId = req.params.friendId;
 
   // Get settled wagers between the two users
-  const w1 = await db.collection('dublchess_wagers')
+  const w1 = await db.collection('dublplay_wagers')
     .where('challengerId', '==', userId)
     .where('opponentId', '==', friendId)
     .where('status', '==', 'settled').get();
-  const w2 = await db.collection('dublchess_wagers')
+  const w2 = await db.collection('dublplay_wagers')
     .where('challengerId', '==', friendId)
     .where('opponentId', '==', userId)
     .where('status', '==', 'settled').get();

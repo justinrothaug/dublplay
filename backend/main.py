@@ -1680,22 +1680,17 @@ async def get_games(date: Optional[str] = None):
     # NOTE: Accuribet predictions are fetched client-side (browser) to bypass
     # Cloudflare/IP restrictions on Hugging Face.  The frontend merges them in.
 
-    # Only use Firestore cache for dates clearly in the past (>= 2 days old from
-    # server UTC). For today / yesterday / tomorrow the cache may hold data written
-    # under a mismatched UTC date, so always do a fresh ESPN fetch for recent dates.
-    stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y%m%d")
-    if date_str < stale_cutoff:
-        # ── 1. Past date — safe to serve from Firestore cache instantly
-        cached_games = _load_games_from_firestore(date_str)
-        if cached_games:
-            asyncio.create_task(_full_espn_refresh(date_str, date))
-            return {
-                "games": cached_games,
-                "source": "live",
-                "odds_updated_at": _odds_updated_at.get(date_str),
-            }
+    # ── 1. Try Firestore cache first for instant loads, refresh in background
+    cached_games = _load_games_from_firestore(date_str)
+    if cached_games:
+        asyncio.create_task(_full_espn_refresh(date_str, date))
+        return {
+            "games": cached_games,
+            "source": "live",
+            "odds_updated_at": _odds_updated_at.get(date_str),
+        }
 
-    # ── 2. Recent date or cache miss — always fetch fresh from ESPN
+    # ── 2. Cache miss — fetch fresh from ESPN (first load of the day)
     merged = await _full_espn_refresh(date_str, date)
 
     if not merged:

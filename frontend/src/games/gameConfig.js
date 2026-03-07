@@ -29,6 +29,16 @@ export const PLATFORMS = {
       { id: 'hex', name: 'Hex', icon: '⬡', bgaSlug: 'hex' },
     ],
   },
+  custom: {
+    id: 'custom',
+    name: 'Custom',
+    url: null,
+    usernameField: null,
+    icon: '🎯',
+    games: [
+      { id: 'custom', name: 'Custom Bet', icon: '🎯' },
+    ],
+  },
 };
 
 // Get display name for a platform + game combo

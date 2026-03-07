@@ -121,6 +121,31 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       alert('Error: ' + err.message);
     }
   };
+  const handleClaimWin = async (id) => {
+    try {
+      await wagersApi.claimWin(id);
+      loadData();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+  const handleConfirmWin = async (id) => {
+    try {
+      await wagersApi.confirmWin(id);
+      loadData();
+      onWalletRefresh?.();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+  const handleDenyWin = async (id) => {
+    try {
+      await wagersApi.denyWin(id);
+      loadData();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
   };
@@ -295,9 +320,11 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     <span style={styles.wagerAmount}>${(item.amountCents / 100).toFixed(2)}</span>
                   </div>
                   <div style={styles.wagerPlayers}>
-                    {item.gameType
-                      ? `${getGameDisplayName(item.platform, item.gameType)} on ${getPlatformDisplayName(item.platform || 'chesscom')}`
-                      : `${item.challenger_chess_username} vs ${item.opponent_chess_username}`
+                    {item.platform === 'custom' && item.customDescription
+                      ? item.customDescription
+                      : item.gameType
+                        ? `${getGameDisplayName(item.platform, item.gameType)} on ${getPlatformDisplayName(item.platform || 'chesscom')}`
+                        : `${item.challenger_chess_username} vs ${item.opponent_chess_username}`
                     }
                   </div>
                   {pending ? (
@@ -319,6 +346,23 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     ) : item.cancelRequestedBy === user?.id ? (
                       <div style={styles.actionRow}>
                         <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
+                      </div>
+                    ) : item.platform === 'custom' ? (
+                      <div style={styles.actionRow}>
+                        {item.winClaimedBy === user?.id ? (
+                          <span style={{ ...styles.badge, border: `1px solid ${theme.colors.accent}`, color: theme.colors.accent }}>WAITING FOR CONFIRMATION</span>
+                        ) : item.winClaimedBy ? (
+                          <>
+                            <span style={{ fontSize: 13, color: theme.colors.textSecondary }}>{getOpponentName(item)} claims they won</span>
+                            <button style={styles.acceptButton} onClick={() => handleConfirmWin(item.id)}>Accept</button>
+                            <button style={styles.declineButton} onClick={() => handleDenyWin(item.id)}>Deny</button>
+                          </>
+                        ) : (
+                          <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, padding: '6px 16px' }} onClick={() => handleClaimWin(item.id)}>
+                            I WON
+                          </button>
+                        )}
+                        <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                       </div>
                     ) : (
                       <div style={styles.actionRow}>

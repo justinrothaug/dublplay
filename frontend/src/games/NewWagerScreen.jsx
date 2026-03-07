@@ -11,6 +11,7 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [selectedGame, setSelectedGame] = useState(null);
+  const [customDescription, setCustomDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState('friend'); // 'friend' | 'game' | 'amount'
 
@@ -45,17 +46,22 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
     }
     setSelectedPlatform(platformId);
     setSelectedGame(game);
-    setStep('amount');
+    if (platformId === 'custom') {
+      setStep('customDesc');
+    } else {
+      setStep('amount');
+    }
   };
 
   const handleCreateWager = async () => {
     if (!selectedFriend) { alert('Please select a friend'); return; }
     if (!selectedPlatform || !selectedGame) { alert('Please select a game'); return; }
+    if (selectedPlatform === 'custom' && !customDescription.trim()) { alert('Please describe what you are betting on'); return; }
     if (!amount || parseFloat(amount) <= 0) { alert('Please enter a valid wager amount'); return; }
     try {
       const amountCents = Math.round(parseFloat(amount) * 100);
-      await wagersApi.create(selectedFriend.id, amountCents, selectedPlatform, selectedGame.id);
-      alert(`$${amount} ${selectedGame.name} wager sent to ${selectedFriend.display_name}. Funds deducted from your wallet.`);
+      await wagersApi.create(selectedFriend.id, amountCents, selectedPlatform, selectedGame.id, selectedPlatform === 'custom' ? customDescription.trim() : null);
+      alert(`$${amount} ${selectedPlatform === 'custom' ? 'custom' : selectedGame.name} wager sent to ${selectedFriend.display_name}. Funds deducted from your wallet.`);
       onWalletRefresh?.();
       onBack();
     } catch (err) {
@@ -68,7 +74,9 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
   };
 
   const handleStepBack = () => {
-    if (step === 'amount') { setStep('game'); setSelectedPlatform(null); setSelectedGame(null); }
+    if (step === 'amount' && selectedPlatform === 'custom') { setStep('customDesc'); }
+    else if (step === 'amount') { setStep('game'); setSelectedPlatform(null); setSelectedGame(null); }
+    else if (step === 'customDesc') { setStep('game'); setSelectedPlatform(null); setSelectedGame(null); setCustomDescription(''); }
     else if (step === 'game') {
       if (params?.friendId) { onBack(); }
       else { setStep('friend'); setSelectedFriend(null); }
@@ -86,7 +94,7 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
       <div style={styles.modalHeader}>
         <button style={styles.backBtn} onClick={handleStepBack}>&#8592;</button>
         <span style={styles.modalTitle}>
-          {step === 'friend' ? 'Select Friend' : step === 'game' ? 'Select Game' : 'Set Wager'}
+          {step === 'friend' ? 'Select Friend' : step === 'game' ? 'Select Game' : step === 'customDesc' ? 'Custom Bet' : 'Set Wager'}
         </span>
         <button style={styles.closeButton} onClick={onBack}>&#10005;</button>
       </div>
@@ -150,22 +158,57 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
           </>
         )}
 
+        {/* Step 2.5: Custom bet description */}
+        {step === 'customDesc' && selectedFriend && (
+          <>
+            <div style={styles.challengingBanner}>
+              Challenging <span style={{ color: theme.colors.accent, fontWeight: 700 }}>{selectedFriend.display_name}</span>
+            </div>
+            <div style={styles.label}>What are you betting on?</div>
+            <input
+              style={styles.input}
+              value={customDescription}
+              onChange={(e) => setCustomDescription(e.target.value)}
+              placeholder="e.g. Eagles beat the Chiefs"
+              autoFocus
+            />
+            <button
+              style={{ ...styles.createButton, marginTop: 16, opacity: customDescription.trim() ? 1 : 0.5 }}
+              onClick={() => { if (customDescription.trim()) setStep('amount'); }}
+              disabled={!customDescription.trim()}
+            >
+              Next
+            </button>
+          </>
+        )}
+
         {/* Step 3: Enter Amount */}
         {step === 'amount' && selectedFriend && selectedGame && (
           <>
             <div style={styles.selectedSummary}>
-              <div style={styles.summaryRow}>
-                <span style={{ color: theme.colors.textSecondary }}>Game</span>
-                <span style={{ color: theme.colors.text, fontWeight: 700 }}>
-                  {selectedGame.icon} {selectedGame.name}
-                </span>
-              </div>
-              <div style={styles.summaryRow}>
-                <span style={{ color: theme.colors.textSecondary }}>Platform</span>
-                <span style={{ color: theme.colors.text, fontWeight: 600 }}>
-                  {getPlatformDisplayName(selectedPlatform)}
-                </span>
-              </div>
+              {selectedPlatform === 'custom' ? (
+                <div style={styles.summaryRow}>
+                  <span style={{ color: theme.colors.textSecondary }}>Bet</span>
+                  <span style={{ color: theme.colors.text, fontWeight: 700 }}>
+                    {customDescription}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div style={styles.summaryRow}>
+                    <span style={{ color: theme.colors.textSecondary }}>Game</span>
+                    <span style={{ color: theme.colors.text, fontWeight: 700 }}>
+                      {selectedGame.icon} {selectedGame.name}
+                    </span>
+                  </div>
+                  <div style={styles.summaryRow}>
+                    <span style={{ color: theme.colors.textSecondary }}>Platform</span>
+                    <span style={{ color: theme.colors.text, fontWeight: 600 }}>
+                      {getPlatformDisplayName(selectedPlatform)}
+                    </span>
+                  </div>
+                </>
+              )}
               <div style={styles.summaryRow}>
                 <span style={{ color: theme.colors.textSecondary }}>Opponent</span>
                 <span style={{ color: theme.colors.accent, fontWeight: 700 }}>

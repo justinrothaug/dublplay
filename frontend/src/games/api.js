@@ -49,16 +49,19 @@ export const friendsApi = {
 export const wagersApi = {
   list: (status) => gamesApi(`/wagers${status ? `?status=${status}` : ''}`),
   get: (id) => gamesApi(`/wagers/${id}`),
-  create: (opponentId, amountCents, platform = 'chesscom', gameType = null) =>
+  create: (opponentId, amountCents, platform = 'chesscom', gameType = null, customDescription = null) =>
     gamesApi('/wagers', {
       method: 'POST',
-      body: JSON.stringify({ opponentId, amountCents, platform, gameType }),
+      body: JSON.stringify({ opponentId, amountCents, platform, gameType, customDescription }),
     }),
   accept: (id) => gamesApi(`/wagers/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/wagers/${id}/decline`, { method: 'POST' }),
   cancel: (id) => gamesApi(`/wagers/${id}/cancel`, { method: 'POST' }),
   markPlaying: (id) => gamesApi(`/wagers/${id}/playing`, { method: 'POST' }),
   checkResult: (id) => gamesApi(`/wagers/${id}/check-result`, { method: 'POST' }),
+  claimWin: (id) => gamesApi(`/wagers/${id}/claim-win`, { method: 'POST' }),
+  confirmWin: (id) => gamesApi(`/wagers/${id}/confirm-win`, { method: 'POST' }),
+  denyWin: (id) => gamesApi(`/wagers/${id}/deny-win`, { method: 'POST' }),
   pay: (id) => gamesApi(`/stripe/wagers/${id}/pay`, { method: 'POST' }),
 };
 

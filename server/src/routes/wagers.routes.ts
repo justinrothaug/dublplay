@@ -11,8 +11,9 @@ router.use(authenticate);
 const createWagerSchema = z.object({
   opponentId: z.string().min(1),
   amountCents: z.number().int().positive(),
-  platform: z.enum(['chesscom', 'playstrategy', 'bga']).default('chesscom'),
+  platform: z.enum(['chesscom', 'playstrategy', 'bga', 'custom']).default('chesscom'),
   gameType: z.string().optional(),
+  customDescription: z.string().optional().nullable(),
 });
 
 // Helper to enrich wager with user names
@@ -149,6 +150,8 @@ router.post('/', async (req: Request, res: Response) => {
     amountCents: body.amountCents,
     platform: body.platform || 'chesscom',
     gameType: body.gameType || null,
+    customDescription: body.customDescription || null,
+    winClaimedBy: null,
     status: 'pending_acceptance',
     challengerPaid: true,
     opponentPaid: false,
@@ -346,6 +349,116 @@ router.post('/:id/check-result', async (req: Request, res: Response) => {
   } else {
     res.json({ checked: true, settled: false, message: 'No completed game found yet' });
   }
+});
+
+// Claim win on a custom wager (self-reported)
+router.post('/:id/claim-win', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
+  const w = doc.data()!;
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
+  }
+  if (w.platform !== 'custom') {
+    throw new AppError(400, 'Only custom wagers support claiming wins');
+  }
+  if (w.status !== 'active') {
+    throw new AppError(400, 'Wager is not active');
+  }
+  if (w.winClaimedBy) {
+    throw new AppError(400, 'A win has already been claimed on this wager');
+  }
+
+  await ref.update({ winClaimedBy: userId, updatedAt: new Date().toISOString() });
+  res.json({ id: doc.id, ...w, winClaimedBy: userId });
+});
+
+// Confirm the other player's win claim (settles the wager)
+router.post('/:id/confirm-win', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
+  const w = doc.data()!;
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
+  }
+  if (w.platform !== 'custom') {
+    throw new AppError(400, 'Only custom wagers support confirming wins');
+  }
+  if (w.status !== 'active') {
+    throw new AppError(400, 'Wager is not active');
+  }
+  if (!w.winClaimedBy) {
+    throw new AppError(400, 'No win has been claimed yet');
+  }
+  if (w.winClaimedBy === userId) {
+    throw new AppError(400, 'You cannot confirm your own win claim');
+  }
+
+  const winnerId = w.winClaimedBy;
+  const result = winnerId === w.challengerId ? 'challenger_win' : 'opponent_win';
+  const now = new Date().toISOString();
+
+  await ref.update({
+    status: 'settled',
+    result,
+    winnerId,
+    settledAt: now,
+    updatedAt: now,
+  });
+
+  // Pay the winner the full pot
+  const totalPot = w.amountCents * 2;
+  const winnerRef = db.collection('dublplay_users').doc(winnerId);
+  const winnerDoc = await winnerRef.get();
+  const currentBalance = winnerDoc.data()?.walletBalanceCents || 0;
+
+  await winnerRef.update({
+    walletBalanceCents: currentBalance + totalPot,
+    updatedAt: now,
+  });
+
+  await db.collection('dublplay_transactions').doc().set({
+    wagerId: doc.id,
+    userId: winnerId,
+    type: 'payout',
+    amountCents: totalPot,
+    status: 'completed',
+    createdAt: now,
+  });
+
+  const updated = await ref.get();
+  res.json(await enrichWager(updated));
+});
+
+// Deny the other player's win claim (resets it)
+router.post('/:id/deny-win', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
+  const w = doc.data()!;
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
+  }
+  if (w.platform !== 'custom') {
+    throw new AppError(400, 'Only custom wagers support denying wins');
+  }
+  if (!w.winClaimedBy) {
+    throw new AppError(400, 'No win has been claimed');
+  }
+  if (w.winClaimedBy === userId) {
+    throw new AppError(400, 'You cannot deny your own win claim');
+  }
+
+  await ref.update({ winClaimedBy: null, updatedAt: new Date().toISOString() });
+  res.json({ id: doc.id, ...w, winClaimedBy: null });
 });
 
 export default router;

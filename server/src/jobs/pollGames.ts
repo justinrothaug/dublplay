@@ -8,6 +8,9 @@ export async function pollSingleWager(doc: FirebaseFirestore.QueryDocumentSnapsh
   const wager = doc.data()!;
   const platform = wager.platform || 'chesscom';
 
+  // Custom wagers are settled manually via claim-win/confirm-win
+  if (platform === 'custom') return false;
+
   const [challengerDoc, opponentDoc] = await Promise.all([
     db.collection('dublplay_users').doc(wager.challengerId).get(),
     db.collection('dublplay_users').doc(wager.opponentId).get(),

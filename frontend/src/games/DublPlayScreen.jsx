@@ -66,15 +66,15 @@ export default function DublPlayScreen({ onNavigate }) {
 
   const handlePayWager = (wager) => {
     const opponentName = getOpponentName(wager);
-    onNavigate('payment', { wagerId: wager.id, amount: wager.amount_cents, opponentName });
+    onNavigate('payment', { wagerId: wager.id, amount: wager.amountCents, opponentName });
   };
 
   const getOpponentName = (w) =>
-    w.challenger_id === user?.id ? w.opponent_name : w.challenger_name;
+    w.challengerId === user?.id ? w.opponent_name : w.challenger_name;
 
   const getStatusDisplay = (w) => {
     if (w.status === 'settled' && w.result) {
-      const iWon = w.winner_id === user?.id;
+      const iWon = w.winnerId === user?.id;
       const isDraw = w.result === 'draw';
       if (isDraw) return { label: 'DRAW', color: theme.colors.draw };
       return iWon
@@ -86,7 +86,7 @@ export default function DublPlayScreen({ onNavigate }) {
   };
 
   const isPendingForMe = (w) =>
-    w.status === 'pending_acceptance' && w.opponent_id === user?.id;
+    w.status === 'pending_acceptance' && w.opponentId === user?.id;
 
   return (
     <div style={styles.container}>
@@ -150,7 +150,7 @@ export default function DublPlayScreen({ onNavigate }) {
                 <div key={item.id} style={styles.wagerCard}>
                   <div style={styles.wagerHeader}>
                     <span style={styles.wagerFriend}>{getOpponentName(item)}</span>
-                    <span style={styles.wagerAmount}>${(item.amount_cents / 100).toFixed(2)}</span>
+                    <span style={styles.wagerAmount}>${(item.amountCents / 100).toFixed(2)}</span>
                   </div>
                   <div style={styles.wagerPlayers}>
                     {item.gameType
@@ -165,7 +165,7 @@ export default function DublPlayScreen({ onNavigate }) {
                     </div>
                   ) : item.status === 'pending_payment' ? (
                     <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>
-                      PAY ${(item.amount_cents / 100).toFixed(2)}
+                      PAY ${(item.amountCents / 100).toFixed(2)}
                     </button>
                   ) : (
                     <span style={{

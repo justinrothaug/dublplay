@@ -174,9 +174,31 @@ export default function DublPlayScreen({ onNavigate }) {
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
                   ) : item.status === 'pending_payment' ? (
-                    <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>
-                      PAY ${(item.amountCents / 100).toFixed(2)}
-                    </button>
+                    <div style={styles.actionRow}>
+                      <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>
+                        PAY ${(item.amountCents / 100).toFixed(2)}
+                      </button>
+                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                    </div>
+                  ) : item.cancelRequestedBy && item.cancelRequestedBy !== user?.id ? (
+                    <div style={styles.actionRow}>
+                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL REQUESTED</span>
+                      <button style={styles.acceptButton} onClick={() => handleCancelWager(item.id)}>Accept Cancel</button>
+                    </div>
+                  ) : item.cancelRequestedBy === user?.id ? (
+                    <div style={styles.actionRow}>
+                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
+                    </div>
+                  ) : ['active', 'both_paid'].includes(item.status) ? (
+                    <div style={styles.actionRow}>
+                      <span style={{
+                        ...styles.badge,
+                        border: `1px solid ${statusInfo.color}`, color: statusInfo.color,
+                      }}>
+                        {statusInfo.label}
+                      </span>
+                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                    </div>
                   ) : (
                     <span style={{
                       ...styles.badge,

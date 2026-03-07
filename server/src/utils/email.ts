@@ -1,3 +1,4 @@
+// @ts-ignore -- no @types/nodemailer needed
 import nodemailer from 'nodemailer';
 
 const ADMIN_EMAIL = 'justin@dubllabs.com';

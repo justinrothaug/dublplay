@@ -44,7 +44,7 @@ router.get('/users', async (req: Request, res: Response) => {
 
 // Update a user's wallet balance
 router.put('/users/:id/balance', async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const { balanceCents } = req.body;
 
   if (typeof balanceCents !== 'number' || balanceCents < 0) {
@@ -98,7 +98,7 @@ router.get('/payouts', async (req: Request, res: Response) => {
 
 // Mark a payout as paid
 router.put('/payouts/:id/paid', async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const txRef = db.collection('dublplay_transactions').doc(id);
   const txDoc = await txRef.get();
   if (!txDoc.exists) throw new AppError(404, 'Payout request not found');

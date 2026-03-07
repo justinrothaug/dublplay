@@ -59,6 +59,9 @@ export default function DublPlayScreen({ onNavigate }) {
   const handleDeclineWager = async (id) => {
     try { await wagersApi.decline(id); loadData(); } catch (err) { console.error(err); }
   };
+  const handleCancelWager = async (id) => {
+    try { await wagersApi.cancel(id); loadData(); } catch (err) { console.error(err); }
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
@@ -87,6 +90,8 @@ export default function DublPlayScreen({ onNavigate }) {
 
   const isPendingForMe = (w) =>
     w.status === 'pending_acceptance' && w.opponentId === user?.id;
+  const isSentByMe = (w) =>
+    w.status === 'pending_acceptance' && w.challengerId === user?.id;
 
   return (
     <div style={styles.container}>
@@ -162,6 +167,11 @@ export default function DublPlayScreen({ onNavigate }) {
                     <div style={styles.actionRow}>
                       <button style={styles.acceptButton} onClick={() => handleAcceptWager(item.id)}>Accept</button>
                       <button style={styles.declineButton} onClick={() => handleDeclineWager(item.id)}>Decline</button>
+                    </div>
+                  ) : isSentByMe(item) ? (
+                    <div style={styles.actionRow}>
+                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>SENT</span>
+                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
                   ) : item.status === 'pending_payment' ? (
                     <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>

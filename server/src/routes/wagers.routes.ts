@@ -111,6 +111,23 @@ router.post('/', async (req: Request, res: Response) => {
     throw new AppError(400, 'You can only wager against friends');
   }
 
+  // Check for existing active wager between these two users
+  const activeStatuses = ['pending_acceptance', 'pending_payment', 'active', 'both_paid'];
+  const existingAsChallenger = await db.collection('dublplay_wagers')
+    .where('challengerId', '==', userId)
+    .where('opponentId', '==', body.opponentId)
+    .get();
+  const existingAsOpponent = await db.collection('dublplay_wagers')
+    .where('challengerId', '==', body.opponentId)
+    .where('opponentId', '==', userId)
+    .get();
+
+  const hasActive = [...existingAsChallenger.docs, ...existingAsOpponent.docs]
+    .some(d => activeStatuses.includes(d.data().status));
+  if (hasActive) {
+    throw new AppError(409, 'You already have an active wager with this friend. Finish or cancel it first.');
+  }
+
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 

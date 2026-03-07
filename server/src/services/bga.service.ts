@@ -67,18 +67,27 @@ export async function fetchRecentGames(
   }
 }
 
+function findPlayerEntry(players: Record<string, BGAPlayerResult>, username: string): BGAPlayerResult | null {
+  // First try by key (numeric ID), then by fullname (username)
+  if (players[username]) return players[username];
+  const lower = username.toLowerCase();
+  for (const p of Object.values(players)) {
+    if ((p.fullname || '').toLowerCase() === lower) return p;
+  }
+  return null;
+}
+
 export function findMatchingGame(
   tables: BGATableResult[],
-  player1BgaId: string,
-  player2BgaId: string,
+  player1: string,
+  player2: string,
   afterTimestamp: number,
 ): BGATableResult | null {
   for (const table of tables) {
     if (table.end < afterTimestamp) continue;
 
-    const playerIds = Object.keys(table.players || {});
-    const hasP1 = playerIds.includes(player1BgaId);
-    const hasP2 = playerIds.includes(player2BgaId);
+    const hasP1 = findPlayerEntry(table.players, player1) !== null;
+    const hasP2 = findPlayerEntry(table.players, player2) !== null;
 
     if (hasP1 && hasP2) {
       return table;
@@ -92,7 +101,7 @@ export function getResultForChallenger(
   challengerBgaId: string,
 ): 'challenger_win' | 'opponent_win' | 'draw' {
   const players = table.players || {};
-  const challenger = players[challengerBgaId];
+  const challenger = findPlayerEntry(players, challengerBgaId);
 
   if (!challenger) return 'draw';
 

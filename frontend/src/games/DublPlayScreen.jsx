@@ -239,7 +239,16 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       </div>
                     ) : item.gameStarted ? (
                       <div style={styles.actionRow}>
-                        <span style={{ ...styles.badge, background: theme.colors.primary, color: '#fff' }}>GAME IN PROGRESS</span>
+                        {((item.challengerId === user?.id && !item.challengerPlaying) ||
+                          (item.opponentId === user?.id && !item.opponentPlaying)) ? (
+                          <button style={styles.playNowButton} onClick={() => handlePlayNow(item)}>
+                            Join Game
+                          </button>
+                        ) : (
+                          <button style={{ ...styles.playNowButton, background: theme.colors.primary }} onClick={() => handlePlayNow(item)}>
+                            Rejoin Game
+                          </button>
+                        )}
                         <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                       </div>
                     ) : (

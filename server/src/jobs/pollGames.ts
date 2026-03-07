@@ -42,17 +42,41 @@ export async function pollSingleWager(doc: FirebaseFirestore.QueryDocumentSnapsh
       gameUrl = `https://playstrategy.org/${match.id}`;
     }
   } else if (platform === 'bga') {
-    const challengerBGA = challengerData.bgaUsername;
-    const opponentBGA = opponentData.bgaUsername;
-    if (!challengerBGA || !opponentBGA) return false;
+    // Use stored numeric IDs if available, otherwise resolve from usernames
+    let challengerBgaId = challengerData.bgaPlayerId || null;
+    let opponentBgaId = opponentData.bgaPlayerId || null;
 
-    // Resolve usernames to numeric BGA player IDs
-    const [challengerBgaId, opponentBgaId] = await Promise.all([
-      bga.resolvePlayerId(challengerBGA),
-      bga.resolvePlayerId(opponentBGA),
-    ]);
     if (!challengerBgaId || !opponentBgaId) {
-      console.warn(`BGA: Could not resolve IDs for ${challengerBGA}/${opponentBGA}`);
+      const challengerBGA = challengerData.bgaUsername ? decodeURIComponent(challengerData.bgaUsername).trim() : null;
+      const opponentBGA = opponentData.bgaUsername ? decodeURIComponent(opponentData.bgaUsername).trim() : null;
+      if (!challengerBGA || !opponentBGA) return false;
+
+      // Fix URL-encoded usernames in DB
+      if (challengerData.bgaUsername !== challengerBGA) {
+        await db.collection('dublplay_users').doc(wager.challengerId).update({ bgaUsername: challengerBGA, bgaUsernameLower: challengerBGA.toLowerCase() });
+      }
+      if (opponentData.bgaUsername !== opponentBGA) {
+        await db.collection('dublplay_users').doc(wager.opponentId).update({ bgaUsername: opponentBGA, bgaUsernameLower: opponentBGA.toLowerCase() });
+      }
+
+      const [resolvedChallenger, resolvedOpponent] = await Promise.all([
+        challengerBgaId ? Promise.resolve(challengerBgaId) : bga.resolvePlayerId(challengerBGA),
+        opponentBgaId ? Promise.resolve(opponentBgaId) : bga.resolvePlayerId(opponentBGA),
+      ]);
+      challengerBgaId = resolvedChallenger;
+      opponentBgaId = resolvedOpponent;
+
+      // Store resolved IDs for next time
+      if (challengerBgaId && !challengerData.bgaPlayerId) {
+        await db.collection('dublplay_users').doc(wager.challengerId).update({ bgaPlayerId: challengerBgaId });
+      }
+      if (opponentBgaId && !opponentData.bgaPlayerId) {
+        await db.collection('dublplay_users').doc(wager.opponentId).update({ bgaPlayerId: opponentBgaId });
+      }
+    }
+
+    if (!challengerBgaId || !opponentBgaId) {
+      console.warn(`BGA: Could not resolve IDs — challenger: ${challengerBgaId || 'MISSING'}, opponent: ${opponentBgaId || 'MISSING'}`);
       return false;
     }
 

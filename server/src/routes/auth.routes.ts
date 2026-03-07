@@ -47,8 +47,8 @@ router.post('/register', async (req: Request, res: Response) => {
       displayNameLower: (body.displayName || body.chessComUsername).toLowerCase(),
       playStrategyUsername: body.playStrategyUsername || null,
       playStrategyUsernameLower: body.playStrategyUsername?.toLowerCase() || null,
-      bgaUsername: body.bgaUsername || null,
-      bgaUsernameLower: body.bgaUsername?.toLowerCase() || null,
+      bgaUsername: body.bgaUsername ? decodeURIComponent(body.bgaUsername).trim() : null,
+      bgaUsernameLower: body.bgaUsername ? decodeURIComponent(body.bgaUsername).trim().toLowerCase() : null,
       walletBalanceCents: 0,
       stripeCustomerId: null,
       stripeConnectAccountId: null,
@@ -169,8 +169,10 @@ router.put('/platform-usernames', authenticate, async (req: Request, res: Respon
     updates.playStrategyUsernameLower = playStrategyUsername?.toLowerCase() || null;
   }
   if (bgaUsername !== undefined) {
-    updates.bgaUsername = bgaUsername || null;
-    updates.bgaUsernameLower = bgaUsername?.toLowerCase() || null;
+    // Decode any URL-encoded characters (e.g. %20 -> space)
+    const decoded = bgaUsername ? decodeURIComponent(bgaUsername).trim() : null;
+    updates.bgaUsername = decoded || null;
+    updates.bgaUsernameLower = decoded?.toLowerCase() || null;
   }
 
   await userRef.update(updates);

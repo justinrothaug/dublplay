@@ -1,10 +1,10 @@
 // Board Game Arena integration
-// Uses BGA's internal AJAX endpoints which return JSON.
-// Requires BGA_SESSION_COOKIE env var for authenticated API calls.
+// Uses BGA's AJAX endpoints (requires valid BGA_SESSION_COOKIE).
+// When cookie is expired, the poll will fail gracefully and users can report results manually.
 
 const BGA_BASE = 'https://en.boardgamearena.com';
 
-interface BGATableResult {
+export interface BGATableResult {
   table_id: string;
   game_name: string;
   players: Record<string, BGAPlayerResult>;
@@ -23,7 +23,9 @@ interface BGAPlayerResult {
 const bgaIdCache = new Map<string, string>();
 
 function getHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'User-Agent': 'DublPlay/1.0' };
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  };
   const cookie = process.env.BGA_SESSION_COOKIE;
   if (cookie) headers['Cookie'] = cookie;
   return headers;
@@ -35,14 +37,13 @@ function hasCookie(): boolean {
 
 // Resolve BGA username to numeric player ID
 export async function resolvePlayerId(bgaUsername: string): Promise<string | null> {
-  // Decode any URL-encoded characters first
   const decoded = decodeURIComponent(bgaUsername).trim();
   const lower = decoded.toLowerCase();
   const cached = bgaIdCache.get(lower);
   if (cached) return cached;
 
   if (!hasCookie()) {
-    console.warn('BGA: Cannot resolve player ID without BGA_SESSION_COOKIE env var');
+    console.warn('BGA: No BGA_SESSION_COOKIE set');
     return null;
   }
 
@@ -51,20 +52,12 @@ export async function resolvePlayerId(bgaUsername: string): Promise<string | nul
       `${BGA_BASE}/player/player/findPlayer.html?q=${encodeURIComponent(decoded)}&start=0&count=5`,
       { headers: getHeaders(), redirect: 'follow' },
     );
-    if (!res.ok) {
-      console.error(`BGA: findPlayer failed ${res.status} for "${decoded}"`);
-      return null;
-    }
+    if (!res.ok) return null;
     const text = await res.text();
     let data: any;
-    try { data = JSON.parse(text); } catch {
-      console.error(`BGA: findPlayer returned non-JSON for "${decoded}": ${text.substring(0, 200)}`);
-      return null;
-    }
-
-    // Check for BGA error response
+    try { data = JSON.parse(text); } catch { return null; }
     if (data.status === '0' || data.error) {
-      console.error(`BGA: findPlayer error for "${decoded}": ${data.error || 'unknown'}`);
+      console.error(`BGA: findPlayer error: ${data.error}`);
       return null;
     }
 
@@ -73,33 +66,26 @@ export async function resolvePlayerId(bgaUsername: string): Promise<string | nul
       if ((item.fullname || item.name || '').toLowerCase() === lower) {
         const id = String(item.id);
         bgaIdCache.set(lower, id);
-        console.log(`BGA: Resolved "${decoded}" -> ${id}`);
         return id;
       }
     }
     if (items.length > 0) {
       const id = String(items[0].id);
       bgaIdCache.set(lower, id);
-      console.log(`BGA: Resolved "${decoded}" -> ${id} (first result)`);
       return id;
     }
-    console.warn(`BGA: No results for "${decoded}"`);
     return null;
-  } catch (err) {
-    console.error(`BGA: resolvePlayerId error for "${decoded}":`, err);
+  } catch {
     return null;
   }
 }
 
-// Fetch finished games for a player (uses numeric player IDs)
+// Fetch finished games for a player
 export async function fetchRecentGames(
   bgaPlayerId: string,
   opponentId?: string,
 ): Promise<BGATableResult[]> {
-  if (!hasCookie()) {
-    console.warn('BGA: Cannot fetch games without BGA_SESSION_COOKIE env var');
-    return [];
-  }
+  if (!hasCookie()) return [];
 
   try {
     const params = new URLSearchParams({
@@ -112,20 +98,14 @@ export async function fetchRecentGames(
     const url = `${BGA_BASE}/gamestats/gamestats/getGames.html?${params}`;
     console.log(`BGA: Fetching ${url}`);
     const res = await fetch(url, { headers: getHeaders(), redirect: 'follow' });
-    if (!res.ok) {
-      console.error(`BGA: getGames failed ${res.status}`);
-      return [];
-    }
+    if (!res.ok) return [];
 
     const text = await res.text();
     let data: any;
-    try { data = JSON.parse(text); } catch {
-      console.error(`BGA: getGames non-JSON response: ${text.substring(0, 200)}`);
-      return [];
-    }
+    try { data = JSON.parse(text); } catch { return []; }
 
     if (data.status === '0' || data.error) {
-      console.error(`BGA: getGames error: ${data.error || 'unknown'} (code ${data.code})`);
+      console.error(`BGA: getGames error: ${data.error} (code ${data.code})`);
       return [];
     }
 
@@ -133,8 +113,7 @@ export async function fetchRecentGames(
     if (tables && !Array.isArray(tables)) tables = Object.values(tables);
     console.log(`BGA: Got ${tables?.length || 0} tables`);
     return tables || [];
-  } catch (err) {
-    console.error('BGA: fetchRecentGames error:', err);
+  } catch {
     return [];
   }
 }

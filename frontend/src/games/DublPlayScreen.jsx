@@ -121,7 +121,6 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       alert('Error: ' + err.message);
     }
   };
-
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
   };
@@ -325,7 +324,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <div style={styles.actionRow}>
                         {iHaveClickedPlay(item) ? (
                           <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
-                            ACTIVE
+                            GAME IN PROGRESS
                           </button>
                         ) : (
                           <button style={{ ...styles.badge, background: theme.colors.primary, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, padding: '6px 16px' }} onClick={() => handlePlayNow(item)}>

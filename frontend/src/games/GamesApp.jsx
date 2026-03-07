@@ -8,7 +8,7 @@ import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
 export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) {
-  const { user, needsRegistration, disconnectChess, refreshUser } = useAuth();
+  const { user, needsRegistration, logout, disconnectChess, refreshUser } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
@@ -102,9 +102,16 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 padding: '8px 12px', marginBottom: 6,
                 background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               }}>
-                <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.chess_com_username}</span>
-                <span style={{ marginLeft: 4, opacity: 0.6 }}>Chess.com</span>
+                <div>
+                  <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.chess_com_username}</span>
+                  <span style={{ marginLeft: 4, opacity: 0.6 }}>Chess.com</span>
+                </div>
+                <button
+                  onClick={() => { setShowProfile(false); disconnectChess(); }}
+                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                >Disconnect</button>
               </div>
             )}
             {user?.bga_username ? (
@@ -112,9 +119,21 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 padding: '8px 12px', marginBottom: 6,
                 background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               }}>
-                <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.bga_username}</span>
-                <span style={{ marginLeft: 4, opacity: 0.6 }}>BGA</span>
+                <div>
+                  <span style={{ fontWeight: 600, color: theme.colors.text }}>{decodeURIComponent(user.bga_username)}</span>
+                  <span style={{ marginLeft: 4, opacity: 0.6 }}>BGA</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await authApi.updatePlatformUsernames(null, '');
+                      await refreshUser();
+                    } catch (err) { alert('Error: ' + err.message); }
+                  }}
+                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                >Disconnect</button>
               </div>
             ) : linkingBga ? (
               <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
@@ -156,15 +175,6 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 }}
               >+ Link Board Game Arena</button>
             )}
-            <button
-              onClick={() => { setShowProfile(false); disconnectChess(); }}
-              style={{
-                width: '100%', padding: '10px 0', marginTop: 8,
-                background: 'transparent', color: theme.colors.danger, border: `1px solid ${theme.colors.border}`,
-                borderRadius: 8, fontSize: 12, fontWeight: 700,
-                letterSpacing: '0.06em', cursor: 'pointer',
-              }}
-            >Sign Out</button>
           </div>
         </div>
       )}

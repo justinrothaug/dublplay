@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
-import { getGameDisplayName, getPlatformDisplayName } from './gameConfig.js';
+import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl } from './gameConfig.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
@@ -66,6 +66,18 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
+  };
+
+  const openPlatform = async (platform) => {
+    const url = getPlatformUrl(platform);
+    if (typeof window !== 'undefined' && window.Capacitor) {
+      try {
+        const { Browser } = window.Capacitor.Plugins;
+        await Browser.open({ url, presentationStyle: 'fullscreen' });
+      } catch { window.open(url, '_blank'); }
+    } else {
+      window.open(url, '_blank');
+    }
   };
 
   const getOpponentName = (w) =>
@@ -180,12 +192,9 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     </div>
                   ) : ['active', 'both_paid'].includes(item.status) ? (
                     <div style={styles.actionRow}>
-                      <span style={{
-                        ...styles.badge,
-                        border: `1px solid ${statusInfo.color}`, color: statusInfo.color,
-                      }}>
-                        {statusInfo.label}
-                      </span>
+                      <button style={styles.playNowButton} onClick={() => openPlatform(item.platform || 'chesscom')}>
+                        Play Now
+                      </button>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
                   ) : (
@@ -236,6 +245,7 @@ const styles = {
   wagerAmount: { color: theme.colors.accent, fontSize: 15, fontWeight: 700 },
   wagerPlayers: { color: theme.colors.textSecondary, fontSize: 13, marginBottom: 8 },
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
-  actionRow: { display: 'flex', gap: 8 },
+  actionRow: { display: 'flex', gap: 8, alignItems: 'center' },
+  playNowButton: { background: theme.colors.success, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 800, fontSize: 13 },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

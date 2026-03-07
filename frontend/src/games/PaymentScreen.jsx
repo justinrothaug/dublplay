@@ -1,73 +1,92 @@
 import { useEffect, useState } from 'react';
-import { wagersApi, gamesApi } from './api.js';
+import { wagersApi, gamesApi, stripeApi } from './api.js';
 import { theme } from './theme.js';
 
-let stripePromise = null;
+let stripeInstance = null;
 
 async function getStripe() {
-  if (!stripePromise) {
-    const { loadStripe } = await import('@stripe/stripe-js');
-    const config = await gamesApi('/stripe/config');
-    stripePromise = loadStripe(config.publishableKey);
-  }
-  return stripePromise;
+  if (stripeInstance) return stripeInstance;
+  const { loadStripe } = await import('@stripe/stripe-js');
+  const config = await gamesApi('/stripe/config');
+  stripeInstance = await loadStripe(config.publishableKey);
+  return stripeInstance;
 }
 
 export default function PaymentScreen({ params, onBack }) {
   const { wagerId, amount, opponentName } = params || {};
   const [loading, setLoading] = useState(true);
-  const [paying, setPaying] = useState(false);
-  const [stripe, setStripe] = useState(null);
-  const [elements, setElements] = useState(null);
-  const [paymentReady, setPaymentReady] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     let mounted = true;
 
     async function init() {
       try {
-        const { clientSecret: cs } = await wagersApi.pay(wagerId);
+        const { clientSecret } = await wagersApi.pay(wagerId);
         if (!mounted) return;
 
-        const stripeInstance = await getStripe();
+        const stripe = await getStripe();
         if (!mounted) return;
-        setStripe(stripeInstance);
 
-        const elementsInstance = stripeInstance.elements({
-          clientSecret: cs,
-          appearance: {
-            theme: 'night',
-            variables: {
-              colorPrimary: theme.colors.primary,
-              colorBackground: theme.colors.surface,
-              colorText: theme.colors.text,
-              colorDanger: theme.colors.danger,
-              borderRadius: '8px',
-            },
-          },
+        const paymentRequest = stripe.paymentRequest({
+          country: 'US',
+          currency: 'usd',
+          total: { label: `Wager vs ${opponentName}`, amount },
+          requestPayerName: true,
+          requestPayerEmail: true,
         });
 
-        const paymentElement = elementsInstance.create('payment', {
-          layout: 'tabs',
-          wallets: { applePay: 'auto', googlePay: 'auto' },
-        });
-
-        setTimeout(() => {
-          const container = document.getElementById('stripe-payment-element');
-          if (container && mounted) {
-            paymentElement.mount(container);
-            paymentElement.on('ready', () => {
-              if (mounted) setPaymentReady(true);
-            });
-            setElements(elementsInstance);
+        const canMakePayment = await paymentRequest.canMakePayment();
+        if (!canMakePayment || !canMakePayment.applePay) {
+          if (mounted) {
+            setError('Apple Pay is not available on this device. Please use Safari on an Apple device with Apple Pay set up.');
+            setLoading(false);
           }
-        }, 100);
+          return;
+        }
+
+        paymentRequest.on('paymentmethod', async (ev) => {
+          const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
+            clientSecret,
+            { payment_method: ev.paymentMethod.id },
+            { handleActions: false }
+          );
+          if (confirmError) {
+            ev.complete('fail');
+            if (mounted) {
+              setError(confirmError.message);
+              setLoading(false);
+            }
+          } else if (paymentIntent.status === 'requires_action') {
+            ev.complete('success');
+            const { error: actionError } = await stripe.confirmCardPayment(clientSecret);
+            if (actionError) {
+              if (mounted) { setError(actionError.message); setLoading(false); }
+            } else {
+              if (mounted) {
+                alert(`Payment Successful! $${(amount / 100).toFixed(2)} paid for wager vs ${opponentName}`);
+                onBack();
+              }
+            }
+          } else {
+            ev.complete('success');
+            if (mounted) {
+              alert(`Payment Successful! $${(amount / 100).toFixed(2)} paid for wager vs ${opponentName}`);
+              onBack();
+            }
+          }
+        });
+
+        paymentRequest.on('cancel', () => {
+          if (mounted) onBack();
+        });
 
         setLoading(false);
+        paymentRequest.show();
       } catch (err) {
         if (mounted) {
-          alert('Error: ' + (err.message || 'Failed to initialize payment'));
-          onBack();
+          setError(err.message || 'Failed to initialize payment');
+          setLoading(false);
         }
       }
     }
@@ -75,28 +94,6 @@ export default function PaymentScreen({ params, onBack }) {
     init();
     return () => { mounted = false; };
   }, [wagerId]);
-
-  const handlePay = async () => {
-    if (!stripe || !elements) return;
-    setPaying(true);
-    try {
-      const { error } = await stripe.confirmPayment({
-        elements,
-        confirmParams: { return_url: window.location.origin },
-        redirect: 'if_required',
-      });
-      if (error) {
-        alert('Payment Failed: ' + error.message);
-        setPaying(false);
-      } else {
-        alert(`Payment Successful! $${(amount / 100).toFixed(2)} paid for wager vs ${opponentName}`);
-        onBack();
-      }
-    } catch (err) {
-      alert('Error: ' + err.message);
-      setPaying(false);
-    }
-  };
 
   return (
     <div style={styles.container}>
@@ -108,20 +105,15 @@ export default function PaymentScreen({ params, onBack }) {
         <div style={styles.summaryLabel}>Wager vs {opponentName}</div>
         <div style={styles.summaryAmount}>${(amount / 100).toFixed(2)}</div>
       </div>
-      {loading ? (
+      {loading && (
         <div style={styles.loadingContainer}>
-          <div style={styles.loadingText}>Setting up payment...</div>
+          <div style={styles.loadingText}>Opening Apple Pay...</div>
         </div>
-      ) : (
-        <div style={styles.paymentContainer}>
-          <div id="stripe-payment-element" style={styles.stripeElement} />
-          <button
-            style={{ ...styles.payButton, ...(!paymentReady || paying ? styles.payButtonDisabled : {}) }}
-            onClick={handlePay}
-            disabled={!paymentReady || paying}
-          >
-            {paying ? 'Processing...' : `Pay $${(amount / 100).toFixed(2)}`}
-          </button>
+      )}
+      {error && (
+        <div style={styles.errorContainer}>
+          <div style={styles.errorText}>{error}</div>
+          <button style={styles.backButton} onClick={onBack}>Go Back</button>
         </div>
       )}
     </div>
@@ -138,8 +130,7 @@ const styles = {
   summaryAmount: { color: theme.colors.primary, fontSize: 32, fontWeight: 800, marginTop: 4 },
   loadingContainer: { display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 48 },
   loadingText: { color: theme.colors.textMuted, fontSize: 15 },
-  paymentContainer: { padding: 16, maxWidth: 500, margin: '0 auto', width: '100%' },
-  stripeElement: { minHeight: 300, marginBottom: 24 },
-  payButton: { width: '100%', background: theme.colors.primary, borderRadius: 8, padding: 16, border: 'none', cursor: 'pointer', color: theme.colors.background, fontSize: 18, fontWeight: 800, textAlign: 'center' },
-  payButtonDisabled: { opacity: 0.5, cursor: 'default' },
+  errorContainer: { padding: 24, textAlign: 'center' },
+  errorText: { color: theme.colors.danger || '#e53935', fontSize: 14, marginBottom: 16 },
+  backButton: { background: theme.colors.primary, color: theme.colors.background, border: 'none', borderRadius: 8, padding: '12px 32px', fontSize: 15, fontWeight: 700, cursor: 'pointer' },
 };

@@ -227,6 +227,10 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
     await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
   }
 
+  // Delete bet_payment transactions for this wager (cancelled = never happened)
+  const txSnap = await db.collection('dublplay_transactions').where('wagerId', '==', doc.id).get();
+  await Promise.all(txSnap.docs.map(d => d.ref.delete()));
+
   await ref.delete();
   res.json({ deleted: true });
 });
@@ -245,13 +249,15 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
 
   // Before acceptance: either side can cancel instantly, refund challenger
   if (w.status === 'pending_acceptance') {
-    // Refund challenger
     if (w.challengerPaid) {
       const challengerRef = db.collection('dublplay_users').doc(w.challengerId);
       const challengerDoc = await challengerRef.get();
       const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
       await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
     }
+    // Delete bet_payment transactions (cancelled = never happened)
+    const txSnap = await db.collection('dublplay_transactions').where('wagerId', '==', doc.id).get();
+    await Promise.all(txSnap.docs.map(d => d.ref.delete()));
     await ref.delete();
     return res.json({ deleted: true });
   }
@@ -264,17 +270,20 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
 
   // If the OTHER person already requested cancellation, this confirms it — refund both and delete
   if (w.cancelRequestedBy && w.cancelRequestedBy !== userId) {
-    // Refund both players
     const [challengerDoc, opponentDoc] = await Promise.all([
       db.collection('dublplay_users').doc(w.challengerId).get(),
       db.collection('dublplay_users').doc(w.opponentId).get(),
     ]);
     const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
     const opponentBalance = opponentDoc.data()?.walletBalanceCents || 0;
+    const now = new Date().toISOString();
     await Promise.all([
-      db.collection('dublplay_users').doc(w.challengerId).update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() }),
-      db.collection('dublplay_users').doc(w.opponentId).update({ walletBalanceCents: opponentBalance + w.amountCents, updatedAt: new Date().toISOString() }),
+      db.collection('dublplay_users').doc(w.challengerId).update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: now }),
+      db.collection('dublplay_users').doc(w.opponentId).update({ walletBalanceCents: opponentBalance + w.amountCents, updatedAt: now }),
     ]);
+    // Delete all transactions for this wager (cancelled = never happened)
+    const txSnap = await db.collection('dublplay_transactions').where('wagerId', '==', doc.id).get();
+    await Promise.all(txSnap.docs.map(d => d.ref.delete()));
     await ref.delete();
     return res.json({ deleted: true });
   }

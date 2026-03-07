@@ -4194,26 +4194,36 @@ function WalletModal({ onClose, onSuccess, wallet }) {
             ) : (
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
                 {history.map((t) => {
-                  const labels = {
-                    deposit: { text: "Deposit", color: "#4caf50", sign: "+" },
-                    withdrawal: { text: "Withdrawal", color: "#e53935", sign: "-" },
-                    payout_request: { text: "Payout", color: "#e53935", sign: "-" },
-                    bet_payment: { text: "Wager", color: "#e53935", sign: "-" },
-                    payout: { text: "Win", color: "#4caf50", sign: "+" },
-                    refund: { text: "Refund", color: "#4caf50", sign: "+" },
-                    draw_refund: { text: "Draw Refund", color: "#4caf50", sign: "+" },
-                  };
-                  const info = labels[t.type] || { text: t.type, color: "#8b8fa8", sign: "" };
+                  const opponent = t.opponentName || "";
+                  let text, color, sign;
+                  switch (t.type) {
+                    case "deposit":
+                      text = "Deposit"; color = "#4caf50"; sign = "+"; break;
+                    case "withdrawal":
+                      text = "Withdrawal"; color = "#e53935"; sign = "-"; break;
+                    case "payout_request":
+                      text = "Cash Out"; color = "#e53935"; sign = "-"; break;
+                    case "payout":
+                      text = opponent ? `Won vs ${opponent}` : "Won"; color = "#4caf50"; sign = "+"; break;
+                    case "refund":
+                      text = opponent ? `Refund (${opponent})` : "Refund"; color = "#4caf50"; sign = "+"; break;
+                    case "draw_refund":
+                      text = opponent ? `Draw vs ${opponent}` : "Draw Refund"; color = "#4caf50"; sign = "+"; break;
+                    case "bet_payment":
+                      text = opponent ? `Wager vs ${opponent}` : "Wager"; color = "#e53935"; sign = "-"; break;
+                    default:
+                      text = t.type; color = "#8b8fa8"; sign = "";
+                  }
                   const dollars = (t.amountCents / 100).toFixed(2);
                   const date = new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
                   return (
                     <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #2a2f4a" }}>
                       <div>
-                        <div style={{ color: "#e8e8f0", fontSize: 14, fontWeight: 600 }}>{info.text}</div>
+                        <div style={{ color: "#e8e8f0", fontSize: 14, fontWeight: 600 }}>{text}</div>
                         <div style={{ color: "#8b8fa8", fontSize: 11 }}>{date}</div>
                       </div>
-                      <div style={{ color: info.color, fontSize: 15, fontWeight: 700 }}>
-                        {info.sign}${dollars}
+                      <div style={{ color, fontSize: 15, fontWeight: 700 }}>
+                        {sign}${dollars}
                       </div>
                     </div>
                   );

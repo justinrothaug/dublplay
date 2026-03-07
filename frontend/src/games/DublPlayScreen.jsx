@@ -24,7 +24,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       ]);
       setFriends(f);
       setRequests(r);
-      setWagers(w.filter(x => x.status !== 'cancelled' && x.status !== 'declined' && x.status !== 'settled'));
+      setWagers(w.filter(x => x.status !== 'cancelled' && x.status !== 'declined'));
     } catch (err) {
       console.error('Failed to load data:', err);
     }

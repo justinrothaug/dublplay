@@ -77,7 +77,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
     const isChallenger = wager.challengerId === user?.id;
     if (platform === 'chesscom' && opponentUsername) {
       const color = isChallenger ? 'white' : 'black';
-      return `https://www.chess.com/play/online#time=10m0s0i&game=chess&rated=rated&color=${color}&member=${opponentUsername}`;
+      return `https://www.chess.com/play/${opponentUsername}`;
     }
     if (platform === 'bga') {
       const slug = getBgaSlug(wager.gameType);

@@ -60,7 +60,7 @@ export async function fetchRecentGames(
     });
 
     if (!res.ok) return [];
-    const data = await res.json();
+    const data: any = await res.json();
     return data.data?.tables || [];
   } catch {
     return [];

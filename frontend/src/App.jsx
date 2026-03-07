@@ -717,6 +717,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
   const myPick = gameBets?.myPick;
 
   const handleSidePick = (side) => {
+    console.log("[BET] handleSidePick", { side, isUp, hasOnBet: !!onBet, status: game.status, gameId: game.id });
     if (!isUp || !onBet) return;
     const ml = side === "away" ? dispAwayOdds : dispHomeOdds;
     onBet(game.id, side, dispSpread || "", ml || "");
@@ -3782,9 +3783,13 @@ function SportsApp({ onBackToHub, wallet, profile }) {
           pickRecord={detailPickRecord}
           gameBets={betStore ? betStore.forGame(detailGame.id, profile?.uid) : null}
           onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+            console.log("[BET] onBet fired", { gid, side, lockedSpread, lockedMl, balanceCents: wallet?.balanceCents, uid: profile.uid, username: profile.username });
             if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
-            const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
-            if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
+            try {
+              const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
+              console.log("[BET] result:", result);
+              if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
+            } catch(e) { console.error("[BET] onBet error:", e); alert("Bet failed: " + e.message); }
           } : null}
           username={profile?.username}
           profile={profile}

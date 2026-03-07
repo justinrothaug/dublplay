@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
-import { getGameDisplayName, getPlatformDisplayName } from './gameConfig.js';
+import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl } from './gameConfig.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
@@ -32,6 +32,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
+    onWalletRefresh?.();
     setRefreshing(false);
   };
 
@@ -65,6 +66,35 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
+  };
+
+  const getOpponentPlatformUsername = (w) =>
+    w.challengerId === user?.id ? w.opponent_platform_username : w.challenger_platform_username;
+
+  const getChallengeUrl = (wager) => {
+    const opponentUsername = getOpponentPlatformUsername(wager);
+    const platform = wager.platform || 'chesscom';
+    const isChallenger = wager.challengerId === user?.id;
+    if (platform === 'chesscom' && opponentUsername) {
+      const color = isChallenger ? 'white' : 'black';
+      return `https://www.chess.com/play/online#time=10m0s0i&game=chess&rated=rated&color=${color}&member=${opponentUsername}`;
+    }
+    if (platform === 'bga' && opponentUsername) {
+      return `https://boardgamearena.com/player?id=${opponentUsername}`;
+    }
+    return getPlatformUrl(platform);
+  };
+
+  const openChallenge = async (wager) => {
+    const url = getChallengeUrl(wager);
+    if (typeof window !== 'undefined' && window.Capacitor) {
+      try {
+        const { Browser } = window.Capacitor.Plugins;
+        await Browser.open({ url, presentationStyle: 'fullscreen' });
+      } catch { window.open(url, '_blank'); }
+    } else {
+      window.open(url, '_blank');
+    }
   };
 
   const getOpponentName = (w) =>
@@ -179,12 +209,9 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     </div>
                   ) : ['active', 'both_paid'].includes(item.status) ? (
                     <div style={styles.actionRow}>
-                      <span style={{
-                        ...styles.badge,
-                        border: `1px solid ${statusInfo.color}`, color: statusInfo.color,
-                      }}>
-                        {statusInfo.label}
-                      </span>
+                      <button style={styles.playNowButton} onClick={() => openChallenge(item)}>
+                        Play Now
+                      </button>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
                   ) : (
@@ -235,6 +262,7 @@ const styles = {
   wagerAmount: { color: theme.colors.accent, fontSize: 15, fontWeight: 700 },
   wagerPlayers: { color: theme.colors.textSecondary, fontSize: 13, marginBottom: 8 },
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
-  actionRow: { display: 'flex', gap: 8 },
+  actionRow: { display: 'flex', gap: 8, alignItems: 'center' },
+  playNowButton: { background: theme.colors.success, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 800, fontSize: 13 },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

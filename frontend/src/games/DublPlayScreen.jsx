@@ -32,6 +32,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
+    onWalletRefresh?.();
     setRefreshing(false);
   };
 

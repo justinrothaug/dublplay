@@ -3958,12 +3958,14 @@ function useWallet(firebaseUser) {
 
 // ── WALLET MODAL (Add Funds + Cash Out) ─────────────────────────────────────
 function WalletModal({ onClose, onSuccess, wallet }) {
-  const [tab, setTab] = useState("deposit"); // "deposit" | "cashout"
+  const [tab, setTab] = useState("deposit"); // "deposit" | "cashout" | "history"
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [venmo, setVenmo] = useState("");
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [venmoSaved, setVenmoSaved] = useState(false);
   const [venmoLoading, setVenmoLoading] = useState(true);
   const presets = [5, 10, 25, 50, 100];
@@ -3982,7 +3984,13 @@ function WalletModal({ onClose, onSuccess, wallet }) {
     })();
   }, []);
 
-  const switchTab = (t) => { setTab(t); setError(""); setSuccess(""); setAmount(""); };
+  const switchTab = (t) => {
+    setTab(t); setError(""); setSuccess(""); setAmount("");
+    if (t === "history" && history.length === 0) {
+      setHistoryLoading(true);
+      walletApi.history().then(setHistory).catch(() => {}).finally(() => setHistoryLoading(false));
+    }
+  };
 
   const handleDeposit = async () => {
     const cents = Math.round(parseFloat(amount) * 100);
@@ -4056,6 +4064,7 @@ function WalletModal({ onClose, onSuccess, wallet }) {
         <div style={{ display: "flex", marginBottom: 20, borderBottom: "1px solid #2a2f4a" }}>
           <button style={tabStyle(tab === "deposit")} onClick={() => switchTab("deposit")}>Add Funds</button>
           <button style={tabStyle(tab === "cashout")} onClick={() => switchTab("cashout")}>Cash Out</button>
+          <button style={tabStyle(tab === "history")} onClick={() => switchTab("history")}>History</button>
         </div>
 
         {tab === "deposit" && (
@@ -4173,6 +4182,44 @@ function WalletModal({ onClose, onSuccess, wallet }) {
                 opacity: loading ? 0.6 : 1,
               }}
             >{loading ? "Processing..." : "Pay Me"}</button>
+          </>
+        )}
+
+        {tab === "history" && (
+          <>
+            {historyLoading ? (
+              <div style={{ textAlign: "center", color: "#8b8fa8", padding: 20 }}>Loading...</div>
+            ) : history.length === 0 ? (
+              <div style={{ textAlign: "center", color: "#8b8fa8", padding: 20 }}>No transactions yet</div>
+            ) : (
+              <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                {history.map((t) => {
+                  const labels = {
+                    deposit: { text: "Deposit", color: "#4caf50", sign: "+" },
+                    withdrawal: { text: "Withdrawal", color: "#e53935", sign: "-" },
+                    payout_request: { text: "Payout", color: "#e53935", sign: "-" },
+                    bet_payment: { text: "Wager", color: "#e53935", sign: "-" },
+                    payout: { text: "Win", color: "#4caf50", sign: "+" },
+                    refund: { text: "Refund", color: "#4caf50", sign: "+" },
+                    draw_refund: { text: "Draw Refund", color: "#4caf50", sign: "+" },
+                  };
+                  const info = labels[t.type] || { text: t.type, color: "#8b8fa8", sign: "" };
+                  const dollars = (t.amountCents / 100).toFixed(2);
+                  const date = new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                  return (
+                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #2a2f4a" }}>
+                      <div>
+                        <div style={{ color: "#e8e8f0", fontSize: 14, fontWeight: 600 }}>{info.text}</div>
+                        <div style={{ color: "#8b8fa8", fontSize: 11 }}>{date}</div>
+                      </div>
+                      <div style={{ color: info.color, fontSize: 15, fontWeight: 700 }}>
+                        {info.sign}${dollars}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </div>

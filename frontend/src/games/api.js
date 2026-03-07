@@ -86,6 +86,7 @@ export const walletApi = {
       method: 'POST',
       body: JSON.stringify({ amountCents }),
     }),
+  history: () => gamesApi('/wallet/history'),
 };
 
 // Auth helpers

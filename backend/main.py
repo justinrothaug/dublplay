@@ -386,10 +386,11 @@ def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
                 winners = bets.get(winning_side, []) if winning_side != "push" else []
                 losers = bets.get("home" if winning_side == "away" else "away", []) if winning_side != "push" else []
 
-                # Pay winners 2x their bet
+                # Winners split the losers' pool proportionally
+                losers_pool = len(losers) * BET_AMOUNT_CENTS
+                winner_count = len(winners)
                 for bettor in winners:
                     uid = bettor.get("uid", "")
-                    # Find firebase_uid from dublplay_users
                     try:
                         user_docs = db.collection("dublplay_users").where("chessComUsername", "==", uid).limit(1).get()
                         if not user_docs:
@@ -400,7 +401,7 @@ def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
                             u_ref = user_docs[0].reference
                             u_data = user_docs[0].to_dict()
                             bal = u_data.get("walletBalanceCents", 0)
-                            payout = BET_AMOUNT_CENTS * 2
+                            payout = BET_AMOUNT_CENTS + losers_pool // winner_count
                             u_ref.update({"walletBalanceCents": bal + payout})
                             db.collection("dublplay_transactions").document().set({
                                 "userId": user_docs[0].id,

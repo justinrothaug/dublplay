@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
-import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl } from './gameConfig.js';
+import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl, getBgaSlug } from './gameConfig.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
@@ -79,14 +79,21 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       const color = isChallenger ? 'white' : 'black';
       return `https://www.chess.com/play/online#time=10m0s0i&game=chess&rated=rated&color=${color}&member=${opponentUsername}`;
     }
-    if (platform === 'bga' && opponentUsername) {
-      return `https://boardgamearena.com/player?id=${opponentUsername}`;
+    if (platform === 'bga') {
+      const slug = getBgaSlug(wager.gameType);
+      if (slug) return `https://boardgamearena.com/gamepanel?game=${slug}`;
+      return 'https://boardgamearena.com';
     }
     return getPlatformUrl(platform);
   };
 
-  const openChallenge = async (wager) => {
-    const url = getChallengeUrl(wager);
+  const getBgaFriendUrl = (wager) => {
+    const opponentUsername = getOpponentPlatformUsername(wager);
+    if (opponentUsername) return `https://boardgamearena.com/player?name=${opponentUsername}`;
+    return null;
+  };
+
+  const openUrl = async (url) => {
     if (typeof window !== 'undefined' && window.Capacitor) {
       try {
         const { Browser } = window.Capacitor.Plugins;
@@ -209,7 +216,12 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     </div>
                   ) : ['active', 'both_paid'].includes(item.status) ? (
                     <div style={styles.actionRow}>
-                      <button style={styles.playNowButton} onClick={() => openChallenge(item)}>
+                      {(item.platform || 'chesscom') === 'bga' && getBgaFriendUrl(item) && (
+                        <button style={styles.addFriendButton} onClick={() => openUrl(getBgaFriendUrl(item))}>
+                          Add on BGA
+                        </button>
+                      )}
+                      <button style={styles.playNowButton} onClick={() => openUrl(getChallengeUrl(item))}>
                         Play Now
                       </button>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
@@ -264,5 +276,6 @@ const styles = {
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
   actionRow: { display: 'flex', gap: 8, alignItems: 'center' },
   playNowButton: { background: theme.colors.success, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 800, fontSize: 13 },
+  addFriendButton: { background: theme.colors.primary, borderRadius: 8, padding: '8px 12px', border: 'none', cursor: 'pointer', color: theme.colors.background, fontWeight: 700, fontSize: 12 },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

@@ -127,7 +127,7 @@ router.get('/debug-bga/:wagerId', async (req: Request, res: Response) => {
     steps.cookie = { set: hasCookie, length: process.env.BGA_SESSION_COOKIE?.length || 0 };
 
     // Step 2: Get wager
-    const wagerDoc = await db.collection('dublplay_wagers').doc(req.params.id).get();
+    const wagerDoc = await db.collection('dublplay_wagers').doc(String(req.params.wagerId)).get();
     if (!wagerDoc.exists) { res.json({ error: 'Wager not found', steps }); return; }
     const wager = wagerDoc.data()!;
     steps.wager = { platform: wager.platform, status: wager.status, game: wager.game, createdAt: wager.createdAt };

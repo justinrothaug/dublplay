@@ -167,12 +167,20 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
           <div style={styles.emptyText}>No friends yet. Add someone by their display name!</div>
         ) : (
           friends.map((item) => (
-            <div key={item.friendship_id} style={styles.friendRow} onClick={() => handleChallengeFriend(item)}>
-              <div style={{ flex: 1 }}>
+            <div key={item.friendship_id} style={styles.friendRow}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => handleChallengeFriend(item)}>
                 <div style={styles.friendName}>{item.display_name}</div>
                 <div style={styles.friendUsername}>@{item.chess_com_username}</div>
               </div>
-              <span style={styles.challengeIcon}>⚔</span>
+              {item.bga_username && (
+                <button
+                  style={styles.bgaLinkButton}
+                  onClick={(e) => { e.stopPropagation(); openUrl(`https://boardgamearena.com/player?name=${item.bga_username}`); }}
+                >
+                  Add on BGA
+                </button>
+              )}
+              <span style={styles.challengeIcon} onClick={() => handleChallengeFriend(item)}>⚔</span>
             </div>
           ))
         )}
@@ -205,27 +213,24 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>SENT</span>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
-                  ) : item.cancelRequestedBy && item.cancelRequestedBy !== user?.id ? (
-                    <div style={styles.actionRow}>
-                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL REQUESTED</span>
-                      <button style={styles.acceptButton} onClick={() => handleCancelWager(item.id)}>Accept Cancel</button>
-                    </div>
-                  ) : item.cancelRequestedBy === user?.id ? (
-                    <div style={styles.actionRow}>
-                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
-                    </div>
                   ) : ['active', 'both_paid'].includes(item.status) ? (
-                    <div style={styles.actionRow}>
-                      {(item.platform || 'chesscom') === 'bga' && getBgaFriendUrl(item) && (
-                        <button style={styles.addFriendButton} onClick={() => openUrl(getBgaFriendUrl(item))}>
-                          Add on BGA
+                    item.cancelRequestedBy && item.cancelRequestedBy !== user?.id ? (
+                      <div style={styles.actionRow}>
+                        <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL REQUESTED</span>
+                        <button style={styles.acceptButton} onClick={() => handleCancelWager(item.id)}>Accept Cancel</button>
+                      </div>
+                    ) : item.cancelRequestedBy === user?.id ? (
+                      <div style={styles.actionRow}>
+                        <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
+                      </div>
+                    ) : (
+                      <div style={styles.actionRow}>
+                        <button style={styles.playNowButton} onClick={() => openUrl(getChallengeUrl(item))}>
+                          Play Now
                         </button>
-                      )}
-                      <button style={styles.playNowButton} onClick={() => openUrl(getChallengeUrl(item))}>
-                        Play Now
-                      </button>
-                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
-                    </div>
+                        <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                      </div>
+                    )
                   ) : (
                     <span style={{
                       ...styles.badge,
@@ -276,6 +281,6 @@ const styles = {
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
   actionRow: { display: 'flex', gap: 8, alignItems: 'center' },
   playNowButton: { background: theme.colors.success, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 800, fontSize: 13 },
-  addFriendButton: { background: theme.colors.primary, borderRadius: 8, padding: '8px 12px', border: 'none', cursor: 'pointer', color: theme.colors.background, fontWeight: 700, fontSize: 12 },
+  bgaLinkButton: { background: 'transparent', border: `1px solid ${theme.colors.primary}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: theme.colors.primary, fontWeight: 600, fontSize: 11, marginRight: 4, whiteSpace: 'nowrap' },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

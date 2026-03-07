@@ -113,8 +113,7 @@ export const BGA_GAMES: Record<string, string> = {
   connect4: 'Connect 4',
   battleship: 'Battleship',
   sevenwonders: 'Seven Wonders Duel',
-  dotsandboxes: 'Dots & Boxes',
-  quarto: 'Quarto',
-  oware: 'Mancala',
+  patchwork: 'Patchwork',
+  jaipur: 'Jaipur',
   hex: 'Hex',
 };

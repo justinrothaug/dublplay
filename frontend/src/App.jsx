@@ -3411,6 +3411,9 @@ function SportsApp({ onBackToHub, wallet, profile }) {
   const [showDeposit, setShowDeposit] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null); // null = list view, game obj = detail view
+  const scrollPosRef = useRef(0); // save scroll position when entering detail view
+  const openGame = (g) => { scrollPosRef.current = window.scrollY; setSelectedGame(g); window.scrollTo(0, 0); };
+  const closeGame = () => { setSelectedGame(null); requestAnimationFrame(() => window.scrollTo(0, scrollPosRef.current)); };
   const favorites = useFavoritePicks();
   const analyzedLiveRef = useRef(new Set()); // game IDs already analyzed with live prompt
   const analyzedPreGameRef = useRef(new Set()); // game IDs we already attempted pre-game analysis for this session
@@ -3658,11 +3661,11 @@ function SportsApp({ onBackToHub, wallet, profile }) {
   return (
     <div style={{ minHeight:"100vh", background:T.bg }}>
       {/* ── Header (Kalshi-style) ── */}
-      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
+      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:50 }}>
         <div style={{ display:"flex", alignItems:"center", height:56, padding:"0 20px" }}>
           {/* Back to hub / back to list */}
           <button
-            onClick={selectedGame ? () => setSelectedGame(null) : onBackToHub}
+            onClick={selectedGame ? closeGame : onBackToHub}
             style={{ background:"none", border:"none", fontSize:14, color:T.green, fontWeight:600, padding:"4px 12px 4px 0", cursor:"pointer" }}
           >{selectedGame ? "← Back" : "← Hub"}</button>
           {/* Profile avatar */}
@@ -3773,7 +3776,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
         <KalshiDetail
           game={detailGame}
           aiOverride={aiOverrides[detailGame.id]}
-          onBack={() => setSelectedGame(null)}
+          onBack={closeGame}
           onRefresh={handleRefresh}
           loadingRefresh={loadingIds.has(detailGame.id)}
           favorites={favorites}
@@ -3796,7 +3799,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
             <KalshiGameList
               games={games}
               aiOverrides={aiOverrides}
-              onGameClick={g => setSelectedGame(g)}
+              onGameClick={openGame}
               lastUpdated={lastUpdated}
               upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
               betStore={betStore}
@@ -3813,7 +3816,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
               onPickOdds={odds => setCalcSeed(odds)}
               favorites={favorites}
               onFavorite={favorites}
-              onGameClick={g => setSelectedGame(g)}
+              onGameClick={openGame}
               loading={gamesLoading || picksLoading}
             />
           )}
@@ -3827,7 +3830,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
       )}
 
       {/* ── Bottom Nav ── */}
-      <BottomNav activeTab={tab} onTabChange={setTab} balance={wallet ? parseFloat(wallet.balanceDollars) : null} />
+      <BottomNav activeTab={tab} onTabChange={t => { setTab(t); if (selectedGame) closeGame(); }} balance={wallet ? parseFloat(wallet.balanceDollars) : null} />
 
       {/* ── Overlays ── */}
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />

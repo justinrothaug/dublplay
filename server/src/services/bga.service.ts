@@ -23,12 +23,55 @@ interface BGAPlayerResult {
 let bgaSessionCookie: string | null = null;
 
 async function ensureBGASession(): Promise<string | null> {
-  // BGA requires an authenticated session.
-  // For now, we use a service account cookie set via environment variable.
-  // In production, this would be obtained by logging in via the BGA login endpoint.
   if (bgaSessionCookie) return bgaSessionCookie;
   bgaSessionCookie = process.env.BGA_SESSION_COOKIE || null;
   return bgaSessionCookie;
+}
+
+// Resolve BGA username to numeric player ID
+const bgaIdCache = new Map<string, string>();
+
+export async function resolvePlayerId(bgaUsername: string): Promise<string | null> {
+  const lower = bgaUsername.toLowerCase();
+  const cached = bgaIdCache.get(lower);
+  if (cached) return cached;
+
+  try {
+    const cookie = await ensureBGASession();
+    if (!cookie) return null;
+
+    // Use BGA's player search endpoint
+    const url = `https://boardgamearena.com/player/player/findPlayer.html?q=${encodeURIComponent(bgaUsername)}&start=0&count=5`;
+    const res = await fetch(url, {
+      headers: { Cookie: cookie, 'User-Agent': 'DublPlay/1.0' },
+    });
+    if (!res.ok) {
+      console.error(`BGA: findPlayer failed ${res.status} for ${bgaUsername}`);
+      return null;
+    }
+    const data: any = await res.json();
+    const items = data.data?.items || data.items || [];
+    for (const item of items) {
+      const name = (item.fullname || item.name || '').toLowerCase();
+      if (name === lower) {
+        const id = String(item.id);
+        bgaIdCache.set(lower, id);
+        return id;
+      }
+    }
+    // If no exact match, use first result
+    if (items.length > 0) {
+      const id = String(items[0].id);
+      bgaIdCache.set(lower, id);
+      console.log(`BGA: Resolved ${bgaUsername} -> ${id} (first result, not exact match)`);
+      return id;
+    }
+    console.warn(`BGA: Could not resolve player ID for ${bgaUsername}`);
+    return null;
+  } catch (err) {
+    console.error(`BGA: resolvePlayerId error for ${bgaUsername}:`, err);
+    return null;
+  }
 }
 
 export async function fetchRecentGames(
@@ -42,6 +85,7 @@ export async function fetchRecentGames(
       return [];
     }
 
+    // Primary: gamestats endpoint with numeric IDs
     const params = new URLSearchParams({
       player: bgaPlayerId,
       finished: '1',
@@ -52,6 +96,7 @@ export async function fetchRecentGames(
     }
 
     const url = `https://boardgamearena.com/gamestats/gamestats/getGames.html?${params}`;
+    console.log(`BGA: Fetching games: ${url}`);
     const res = await fetch(url, {
       headers: {
         Cookie: cookie,
@@ -59,10 +104,59 @@ export async function fetchRecentGames(
       },
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.error(`BGA: getGames failed with status ${res.status}`);
+      return await fetchRecentGamesViaTableManager(bgaPlayerId, cookie);
+    }
+
+    const text = await res.text();
+    console.log(`BGA: Raw response (first 500 chars): ${text.substring(0, 500)}`);
+
+    let data: any;
+    try { data = JSON.parse(text); } catch {
+      console.error('BGA: Failed to parse JSON response');
+      return await fetchRecentGamesViaTableManager(bgaPlayerId, cookie);
+    }
+
+    // BGA returns tables as either an array or an object keyed by table_id
+    let tables = data.data?.tables;
+    if (tables && !Array.isArray(tables)) {
+      tables = Object.values(tables);
+    }
+    console.log(`BGA: Got ${tables?.length || 0} tables from gamestats`);
+
+    if (!tables || tables.length === 0) {
+      return await fetchRecentGamesViaTableManager(bgaPlayerId, cookie);
+    }
+
+    return tables;
+  } catch (err) {
+    console.error('BGA: fetchRecentGames error:', err);
+    return [];
+  }
+}
+
+// Fallback: use tablemanager endpoint
+async function fetchRecentGamesViaTableManager(bgaPlayerId: string, cookie: string): Promise<BGATableResult[]> {
+  try {
+    const url = `https://boardgamearena.com/tablemanager/tablemanager/tableinfos.html?playerfilter=${bgaPlayerId}&status=finished&nbmax=20`;
+    console.log(`BGA: Trying tablemanager fallback: ${url}`);
+    const res = await fetch(url, {
+      headers: { Cookie: cookie, 'User-Agent': 'DublPlay/1.0' },
+    });
+    if (!res.ok) {
+      console.error(`BGA: tablemanager failed with status ${res.status}`);
+      return [];
+    }
     const data: any = await res.json();
-    return data.data?.tables || [];
-  } catch {
+    let tables = data.data?.tables;
+    if (tables && !Array.isArray(tables)) {
+      tables = Object.values(tables);
+    }
+    console.log(`BGA: Got ${tables?.length || 0} tables from tablemanager`);
+    return tables || [];
+  } catch (err) {
+    console.error('BGA: tablemanager fallback error:', err);
     return [];
   }
 }

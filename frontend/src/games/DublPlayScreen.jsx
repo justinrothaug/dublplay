@@ -107,6 +107,19 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
     openUrl(url);
     loadData();
   };
+  const handleCheckResult = async (id) => {
+    try {
+      const res = await wagersApi.checkResult(id);
+      if (res.settled === false) {
+        alert('No completed game found yet. Try again in a moment.');
+      } else {
+        loadData();
+        onWalletRefresh?.();
+      }
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });

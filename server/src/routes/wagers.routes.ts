@@ -112,7 +112,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   // Check for existing active wager between these two users
-  const activeStatuses = ['pending_acceptance', 'pending_payment', 'active', 'both_paid'];
+  const activeStatuses = ['pending_acceptance', 'active', 'both_paid'];
   const existingAsChallenger = await db.collection('dublplay_wagers')
     .where('challengerId', '==', userId)
     .where('opponentId', '==', body.opponentId)
@@ -128,6 +128,16 @@ router.post('/', async (req: Request, res: Response) => {
     throw new AppError(409, 'You already have an active wager with this friend. Finish or cancel it first.');
   }
 
+  // Deduct from challenger's wallet immediately
+  const userRef = db.collection('dublplay_users').doc(userId);
+  const userDoc = await userRef.get();
+  const userData = userDoc.data()!;
+  const balance = userData.walletBalanceCents || 0;
+  if (balance < body.amountCents) {
+    throw new AppError(400, `Insufficient balance. You have $${(balance / 100).toFixed(2)} but need $${(body.amountCents / 100).toFixed(2)}. Deposit funds first.`);
+  }
+  await userRef.update({ walletBalanceCents: balance - body.amountCents, updatedAt: new Date().toISOString() });
+
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
@@ -139,10 +149,8 @@ router.post('/', async (req: Request, res: Response) => {
     platform: body.platform || 'chesscom',
     gameType: body.gameType || null,
     status: 'pending_acceptance',
-    challengerPaid: false,
+    challengerPaid: true,
     opponentPaid: false,
-    challengerPaymentIntentId: null,
-    opponentPaymentIntentId: null,
     result: null,
     winnerId: null,
     gameUrl: null,
@@ -155,10 +163,16 @@ router.post('/', async (req: Request, res: Response) => {
   };
 
   await ref.set(data);
+
+  // Record transaction
+  await db.collection('dublplay_transactions').doc().set({
+    wagerId: ref.id, userId, type: 'bet_payment', amountCents: body.amountCents, status: 'completed', createdAt: now,
+  });
+
   res.status(201).json({ id: ref.id, ...data });
 });
 
-// Accept wager
+// Accept wager — deducts from opponent's wallet and activates immediately
 router.post('/:id/accept', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
@@ -170,11 +184,29 @@ router.post('/:id/accept', async (req: Request, res: Response) => {
     throw new AppError(404, 'Wager not found or cannot be accepted');
   }
 
-  await ref.update({ status: 'pending_payment', updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, status: 'pending_payment' });
+  // Deduct from opponent's wallet
+  const userRef = db.collection('dublplay_users').doc(userId);
+  const userDoc = await userRef.get();
+  const userData = userDoc.data()!;
+  const balance = userData.walletBalanceCents || 0;
+  if (balance < w.amountCents) {
+    throw new AppError(400, `Insufficient balance. You have $${(balance / 100).toFixed(2)} but need $${(w.amountCents / 100).toFixed(2)}. Deposit funds first.`);
+  }
+  const now = new Date().toISOString();
+  await userRef.update({ walletBalanceCents: balance - w.amountCents, updatedAt: now });
+
+  // Both paid — go straight to active
+  await ref.update({ status: 'active', opponentPaid: true, updatedAt: now });
+
+  // Record transaction
+  await db.collection('dublplay_transactions').doc().set({
+    wagerId: doc.id, userId, type: 'bet_payment', amountCents: w.amountCents, status: 'completed', createdAt: now,
+  });
+
+  res.json({ id: doc.id, ...w, status: 'active', opponentPaid: true });
 });
 
-// Decline wager
+// Decline wager — refund challenger
 router.post('/:id/decline', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
@@ -184,6 +216,14 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
   const w = doc.data()!;
   if (w.opponentId !== userId || w.status !== 'pending_acceptance') {
     throw new AppError(404, 'Wager not found or cannot be declined');
+  }
+
+  // Refund challenger
+  if (w.challengerPaid) {
+    const challengerRef = db.collection('dublplay_users').doc(w.challengerId);
+    const challengerDoc = await challengerRef.get();
+    const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
+    await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
   }
 
   await ref.delete();
@@ -202,23 +242,38 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
     throw new AppError(404, 'Wager not found');
   }
 
-  // Before acceptance: challenger can delete instantly
+  // Before acceptance: either side can cancel instantly, refund challenger
   if (w.status === 'pending_acceptance') {
-    if (w.challengerId !== userId) {
-      throw new AppError(400, 'Only the challenger can cancel before acceptance');
+    // Refund challenger
+    if (w.challengerPaid) {
+      const challengerRef = db.collection('dublplay_users').doc(w.challengerId);
+      const challengerDoc = await challengerRef.get();
+      const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
+      await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
     }
     await ref.delete();
     return res.json({ deleted: true });
   }
 
   // After acceptance: either side can request cancellation
-  const activeStatuses = ['pending_payment', 'active', 'both_paid'];
+  const activeStatuses = ['active', 'both_paid'];
   if (!activeStatuses.includes(w.status)) {
     throw new AppError(400, 'This wager cannot be cancelled');
   }
 
-  // If the OTHER person already requested cancellation, this confirms it — delete
+  // If the OTHER person already requested cancellation, this confirms it — refund both and delete
   if (w.cancelRequestedBy && w.cancelRequestedBy !== userId) {
+    // Refund both players
+    const [challengerDoc, opponentDoc] = await Promise.all([
+      db.collection('dublplay_users').doc(w.challengerId).get(),
+      db.collection('dublplay_users').doc(w.opponentId).get(),
+    ]);
+    const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
+    const opponentBalance = opponentDoc.data()?.walletBalanceCents || 0;
+    await Promise.all([
+      db.collection('dublplay_users').doc(w.challengerId).update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() }),
+      db.collection('dublplay_users').doc(w.opponentId).update({ walletBalanceCents: opponentBalance + w.amountCents, updatedAt: new Date().toISOString() }),
+    ]);
     await ref.delete();
     return res.json({ deleted: true });
   }

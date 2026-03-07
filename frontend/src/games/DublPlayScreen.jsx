@@ -74,8 +74,10 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const getChallengeUrl = (wager) => {
     const opponentUsername = getOpponentPlatformUsername(wager);
     const platform = wager.platform || 'chesscom';
+    const isChallenger = wager.challengerId === user?.id;
     if (platform === 'chesscom' && opponentUsername) {
-      return `https://www.chess.com/play/${opponentUsername}`;
+      const color = isChallenger ? 'white' : 'black';
+      return `https://www.chess.com/play/online#time=10m0s0i&game=chess&rated=rated&color=${color}&member=${opponentUsername}`;
     }
     if (platform === 'bga' && opponentUsername) {
       return `https://boardgamearena.com/player?id=${opponentUsername}`;

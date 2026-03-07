@@ -78,6 +78,21 @@ export const walletApi = {
       method: 'POST',
       body: JSON.stringify({ amountCents }),
     }),
+  requestPayout: (amountCents) =>
+    gamesApi('/wallet/request-payout', {
+      method: 'POST',
+      body: JSON.stringify({ amountCents }),
+    }),
+};
+
+// Auth helpers
+export const authApi = {
+  me: () => gamesApi('/auth/me'),
+  updateVenmo: (venmoUsername) =>
+    gamesApi('/auth/venmo', {
+      method: 'PUT',
+      body: JSON.stringify({ venmoUsername }),
+    }),
 };
 
 // Stats

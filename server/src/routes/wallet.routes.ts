@@ -105,4 +105,45 @@ router.post('/withdraw', authenticate, async (req: Request, res: Response) => {
   res.json({ success: true, newBalanceCents: balance - amountCents });
 });
 
+// Request payout via Venmo
+router.post('/request-payout', authenticate, async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const { amountCents } = req.body;
+
+  const userRef = db.collection('dublplay_users').doc(userId);
+  const userDoc = await userRef.get();
+  if (!userDoc.exists) throw new AppError(404, 'User not found');
+  const user = userDoc.data()!;
+
+  if (!user.venmoUsername) {
+    throw new AppError(400, 'Set your Venmo username first');
+  }
+
+  const balance = user.walletBalanceCents || 0;
+  if (!amountCents || amountCents < 100) {
+    throw new AppError(400, 'Minimum payout is $1.00');
+  }
+  if (amountCents > balance) {
+    throw new AppError(400, 'Insufficient balance');
+  }
+
+  // Deduct balance
+  await userRef.update({
+    walletBalanceCents: balance - amountCents,
+    updatedAt: new Date().toISOString(),
+  });
+
+  // Record payout request
+  await db.collection('dublplay_transactions').doc().set({
+    userId,
+    type: 'payout_request',
+    amountCents,
+    venmoUsername: user.venmoUsername,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  });
+
+  res.json({ success: true, newBalanceCents: balance - amountCents });
+});
+
 export default router;

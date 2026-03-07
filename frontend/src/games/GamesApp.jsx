@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
+import { authApi } from './api.js';
 import SetUsernameScreen from './SetUsernameScreen.jsx';
 import DublPlayScreen from './DublPlayScreen.jsx';
 import NewWagerScreen from './NewWagerScreen.jsx';
@@ -8,12 +9,14 @@ import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
 export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) {
-  const { user, needsRegistration, disconnectChess } = useAuth();
+  const { user, needsRegistration, disconnectChess, refreshUser } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
   const [showProfile, setShowProfile] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
+  const [linkingBga, setLinkingBga] = useState(false);
+  const [bgaInput, setBgaInput] = useState('');
 
   // User is logged in via Firebase but hasn't set Chess.com username yet
   if (!user || needsRegistration) {
@@ -92,25 +95,75 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 <div style={{ color: theme.colors.success, fontSize: 12, fontWeight: 700 }}>${wallet ? wallet.balanceDollars : '0.00'}</div>
               </div>
             </div>
+            <div style={{ fontSize: 10, color: theme.colors.textSecondary, fontWeight: 700, letterSpacing: '0.1em', marginBottom: 8, marginTop: 4 }}>LINKED ACCOUNTS</div>
             {user?.chess_com_username && (
               <div style={{
-                padding: '8px 12px', marginBottom: 12,
+                padding: '8px 12px', marginBottom: 6,
                 background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
               }}>
                 <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.chess_com_username}</span>
-                <span style={{ marginLeft: 4, opacity: 0.6 }}>on Chess.com</span>
+                <span style={{ marginLeft: 4, opacity: 0.6 }}>Chess.com</span>
               </div>
+            )}
+            {user?.bga_username ? (
+              <div style={{
+                padding: '8px 12px', marginBottom: 6,
+                background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+                borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
+              }}>
+                <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.bga_username}</span>
+                <span style={{ marginLeft: 4, opacity: 0.6 }}>BGA</span>
+              </div>
+            ) : linkingBga ? (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                <input
+                  style={{
+                    flex: 1, padding: '8px 10px', background: theme.colors.surface,
+                    border: `1px solid ${theme.colors.border}`, borderRadius: 8,
+                    color: theme.colors.text, fontSize: 13, outline: 'none',
+                  }}
+                  value={bgaInput}
+                  onChange={(e) => setBgaInput(e.target.value)}
+                  placeholder="BGA username"
+                  autoFocus
+                />
+                <button
+                  onClick={async () => {
+                    if (!bgaInput.trim()) return;
+                    try {
+                      await authApi.updatePlatformUsernames(null, bgaInput.trim());
+                      await refreshUser();
+                      setLinkingBga(false);
+                      setBgaInput('');
+                    } catch (err) { alert('Error: ' + err.message); }
+                  }}
+                  style={{
+                    padding: '8px 12px', background: theme.colors.primary, border: 'none',
+                    borderRadius: 8, color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                  }}
+                >Link</button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setLinkingBga(true)}
+                style={{
+                  width: '100%', padding: '8px 12px', marginBottom: 6,
+                  background: theme.colors.surface, border: `1px dashed ${theme.colors.border}`,
+                  borderRadius: 8, fontSize: 13, color: theme.colors.primary,
+                  cursor: 'pointer', fontWeight: 600,
+                }}
+              >+ Link Board Game Arena</button>
             )}
             <button
               onClick={() => { setShowProfile(false); disconnectChess(); }}
               style={{
-                width: '100%', padding: '10px 0',
+                width: '100%', padding: '10px 0', marginTop: 8,
                 background: 'transparent', color: theme.colors.danger, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 12, fontWeight: 700,
                 letterSpacing: '0.06em', cursor: 'pointer',
               }}
-            >Disconnect Chess.com</button>
+            >Sign Out</button>
           </div>
         </div>
       )}

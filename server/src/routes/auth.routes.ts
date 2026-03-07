@@ -9,6 +9,8 @@ const registerSchema = z.object({
   firebaseToken: z.string(),
   chessComUsername: z.string().min(1),
   displayName: z.string().optional(),
+  playStrategyUsername: z.string().optional(),
+  bgaUsername: z.string().optional(),
 });
 
 // Register: Firebase token + Chess.com username -> create Firestore user
@@ -42,6 +44,11 @@ router.post('/register', async (req: Request, res: Response) => {
       chessComUsername: body.chessComUsername,
       chessComUsernameLower: body.chessComUsername.toLowerCase(),
       displayName: body.displayName || body.chessComUsername,
+      displayNameLower: (body.displayName || body.chessComUsername).toLowerCase(),
+      playStrategyUsername: body.playStrategyUsername || null,
+      playStrategyUsernameLower: body.playStrategyUsername?.toLowerCase() || null,
+      bgaUsername: body.bgaUsername || null,
+      bgaUsernameLower: body.bgaUsername?.toLowerCase() || null,
       walletBalanceCents: 0,
       stripeCustomerId: null,
       stripeConnectAccountId: null,
@@ -57,6 +64,8 @@ router.post('/register', async (req: Request, res: Response) => {
       id: userRef.id,
       email: userData.email,
       chess_com_username: userData.chessComUsername,
+      play_strategy_username: userData.playStrategyUsername,
+      bga_username: userData.bgaUsername,
       display_name: userData.displayName,
       stripe_onboarding_complete: false,
       venmo_username: null,
@@ -95,6 +104,8 @@ router.post('/login', async (req: Request, res: Response) => {
       id: doc.id,
       email: u.email,
       chess_com_username: u.chessComUsername,
+      play_strategy_username: u.playStrategyUsername || null,
+      bga_username: u.bgaUsername || null,
       display_name: u.displayName,
       stripe_onboarding_complete: u.stripeOnboardingComplete,
       venmo_username: u.venmoUsername || null,
@@ -138,6 +149,40 @@ router.put('/chess-username', authenticate, async (req: Request, res: Response) 
     id: doc.id,
     email: u.email,
     chess_com_username: u.chessComUsername,
+    display_name: u.displayName,
+    stripe_onboarding_complete: u.stripeOnboardingComplete,
+    venmo_username: u.venmoUsername || null,
+    is_admin: !!u.admin,
+    created_at: u.createdAt,
+  });
+});
+
+// Update platform usernames (PlayStrategy, BGA)
+router.put('/platform-usernames', authenticate, async (req: Request, res: Response) => {
+  const { playStrategyUsername, bgaUsername } = req.body;
+  const userRef = db.collection('dublplay_users').doc(req.user!.userId);
+
+  const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
+
+  if (playStrategyUsername !== undefined) {
+    updates.playStrategyUsername = playStrategyUsername || null;
+    updates.playStrategyUsernameLower = playStrategyUsername?.toLowerCase() || null;
+  }
+  if (bgaUsername !== undefined) {
+    updates.bgaUsername = bgaUsername || null;
+    updates.bgaUsernameLower = bgaUsername?.toLowerCase() || null;
+  }
+
+  await userRef.update(updates);
+
+  const doc = await userRef.get();
+  const u = doc.data()!;
+  res.json({
+    id: doc.id,
+    email: u.email,
+    chess_com_username: u.chessComUsername,
+    play_strategy_username: u.playStrategyUsername || null,
+    bga_username: u.bgaUsername || null,
     display_name: u.displayName,
     stripe_onboarding_complete: u.stripeOnboardingComplete,
     venmo_username: u.venmoUsername || null,

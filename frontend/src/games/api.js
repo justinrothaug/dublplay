@@ -34,10 +34,10 @@ export async function gamesApi(path, options = {}) {
 export const friendsApi = {
   list: () => gamesApi('/friends'),
   requests: () => gamesApi('/friends/requests'),
-  sendRequest: (chessComUsername) =>
+  sendRequest: (displayName) =>
     gamesApi('/friends/request', {
       method: 'POST',
-      body: JSON.stringify({ chessComUsername }),
+      body: JSON.stringify({ displayName }),
     }),
   accept: (id) => gamesApi(`/friends/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/friends/${id}/decline`, { method: 'POST' }),
@@ -47,10 +47,10 @@ export const friendsApi = {
 export const wagersApi = {
   list: (status) => gamesApi(`/wagers${status ? `?status=${status}` : ''}`),
   get: (id) => gamesApi(`/wagers/${id}`),
-  create: (opponentId, amountCents) =>
+  create: (opponentId, amountCents, platform = 'chesscom', gameType = null) =>
     gamesApi('/wagers', {
       method: 'POST',
-      body: JSON.stringify({ opponentId, amountCents }),
+      body: JSON.stringify({ opponentId, amountCents, platform, gameType }),
     }),
   accept: (id) => gamesApi(`/wagers/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/wagers/${id}/decline`, { method: 'POST' }),
@@ -92,6 +92,11 @@ export const authApi = {
     gamesApi('/auth/venmo', {
       method: 'PUT',
       body: JSON.stringify({ venmoUsername }),
+    }),
+  updatePlatformUsernames: (playStrategyUsername, bgaUsername) =>
+    gamesApi('/auth/platform-usernames', {
+      method: 'PUT',
+      body: JSON.stringify({ playStrategyUsername, bgaUsername }),
     }),
 };
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
+import { getGameDisplayName, getPlatformDisplayName } from './gameConfig.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate }) {
@@ -96,7 +97,7 @@ export default function DublPlayScreen({ onNavigate }) {
             style={styles.input}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="Chess.com username"
+            placeholder="Display name or Chess.com username"
             onKeyDown={(e) => e.key === 'Enter' && handleSendRequest()}
           />
           <button style={styles.sendButton} onClick={handleSendRequest}>Send</button>
@@ -120,7 +121,7 @@ export default function DublPlayScreen({ onNavigate }) {
 
         <div style={styles.sectionTitle}>Friends</div>
         {friends.length === 0 ? (
-          <div style={styles.emptyText}>No friends yet. Add someone by their Chess.com username!</div>
+          <div style={styles.emptyText}>No friends yet. Add someone by their display name!</div>
         ) : (
           friends.map((item) => (
             <div key={item.friendship_id} style={styles.friendRow} onClick={() => handleChallengeFriend(item)}>
@@ -146,7 +147,10 @@ export default function DublPlayScreen({ onNavigate }) {
                     <span style={styles.wagerAmount}>${(item.amount_cents / 100).toFixed(2)}</span>
                   </div>
                   <div style={styles.wagerPlayers}>
-                    {item.challenger_chess_username} vs {item.opponent_chess_username}
+                    {item.gameType
+                      ? `${getGameDisplayName(item.platform, item.gameType)} on ${getPlatformDisplayName(item.platform || 'chesscom')}`
+                      : `${item.challenger_chess_username} vs ${item.opponent_chess_username}`
+                    }
                   </div>
                   {pending ? (
                     <div style={styles.actionRow}>

@@ -33,6 +33,7 @@ router.get('/', async (req: Request, res: Response) => {
         id: userDoc.id,
         email: u.email,
         chess_com_username: u.chessComUsername,
+        bga_username: u.bgaUsername || null,
         display_name: u.displayName,
       });
     }
@@ -48,6 +49,7 @@ router.get('/', async (req: Request, res: Response) => {
         id: userDoc.id,
         email: u.email,
         chess_com_username: u.chessComUsername,
+        bga_username: u.bgaUsername || null,
         display_name: u.displayName,
       });
     }
@@ -87,21 +89,29 @@ router.get('/requests', async (req: Request, res: Response) => {
   res.json(requests);
 });
 
-// Send friend request by chess.com username
+// Send friend request by display name or chess.com username
 router.post('/request', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { chessComUsername } = req.body;
+  const { chessComUsername, displayName } = req.body;
+  const searchTerm = displayName || chessComUsername;
 
-  if (!chessComUsername) {
-    throw new AppError(400, 'Chess.com username required');
+  if (!searchTerm) {
+    throw new AppError(400, 'Display name or username required');
   }
 
-  const userSnapshot = await db.collection('dublplay_users')
-    .where('chessComUsernameLower', '==', chessComUsername.toLowerCase())
+  // Try display name first, then fall back to chess.com username
+  let userSnapshot = await db.collection('dublplay_users')
+    .where('displayNameLower', '==', searchTerm.toLowerCase())
     .limit(1).get();
 
   if (userSnapshot.empty) {
-    throw new AppError(404, 'No user found with that Chess.com username');
+    userSnapshot = await db.collection('dublplay_users')
+      .where('chessComUsernameLower', '==', searchTerm.toLowerCase())
+      .limit(1).get();
+  }
+
+  if (userSnapshot.empty) {
+    throw new AppError(404, 'No user found with that name');
   }
 
   const friendDoc = userSnapshot.docs[0];

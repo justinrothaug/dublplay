@@ -10,6 +10,8 @@ router.use(authenticate);
 const createWagerSchema = z.object({
   opponentId: z.string().min(1),
   amountCents: z.number().int().positive(),
+  platform: z.enum(['chesscom', 'playstrategy', 'bga']).default('chesscom'),
+  gameType: z.string().optional(),
 });
 
 // Helper to enrich wager with user names
@@ -22,13 +24,23 @@ async function enrichWager(doc: FirebaseFirestore.DocumentSnapshot) {
   const challenger = challengerDoc.data() || {};
   const opponent = opponentDoc.data() || {};
 
+  // Get the platform-specific username for display
+  const platform = w.platform || 'chesscom';
+  const getPlatformUsername = (u: any) => {
+    if (platform === 'playstrategy') return u.playStrategyUsername;
+    if (platform === 'bga') return u.bgaUsername;
+    return u.chessComUsername;
+  };
+
   return {
     id: doc.id,
     ...w,
     challenger_name: challenger.displayName,
     challenger_chess_username: challenger.chessComUsername,
+    challenger_platform_username: getPlatformUsername(challenger),
     opponent_name: opponent.displayName,
     opponent_chess_username: opponent.chessComUsername,
+    opponent_platform_username: getPlatformUsername(opponent),
   };
 }
 
@@ -107,6 +119,8 @@ router.post('/', async (req: Request, res: Response) => {
     challengerId: userId,
     opponentId: body.opponentId,
     amountCents: body.amountCents,
+    platform: body.platform || 'chesscom',
+    gameType: body.gameType || null,
     status: 'pending_acceptance',
     challengerPaid: false,
     opponentPaid: false,

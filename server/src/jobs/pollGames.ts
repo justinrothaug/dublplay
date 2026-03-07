@@ -1,5 +1,7 @@
 import { db } from '../config/firebase';
-import { fetchRecentGames, findMatchingGame, getResultForChallenger } from '../services/chesscom.service';
+import * as chesscom from '../services/chesscom.service';
+import * as playstrategy from '../services/playstrategy.service';
+import * as bga from '../services/bga.service';
 
 export async function pollActiveWagers() {
   const snapshot = await db.collection('dublplay_wagers').where('status', '==', 'active').get();
@@ -9,23 +11,56 @@ export async function pollActiveWagers() {
   for (const doc of snapshot.docs) {
     try {
       const wager = doc.data();
+      const platform = wager.platform || 'chesscom';
 
-      // Get chess usernames
+      // Get user docs
       const [challengerDoc, opponentDoc] = await Promise.all([
         db.collection('dublplay_users').doc(wager.challengerId).get(),
         db.collection('dublplay_users').doc(wager.opponentId).get(),
       ]);
-      const challengerChess = challengerDoc.data()!.chessComUsername;
-      const opponentChess = opponentDoc.data()!.chessComUsername;
-
-      const games = await fetchRecentGames(challengerChess);
+      const challengerData = challengerDoc.data()!;
+      const opponentData = opponentDoc.data()!;
       const afterTs = Math.floor(new Date(wager.createdAt).getTime() / 1000);
 
-      const match = findMatchingGame(games, challengerChess, opponentChess, afterTs);
+      let result: 'challenger_win' | 'opponent_win' | 'draw' | null = null;
+      let gameUrl: string | null = null;
 
-      if (match) {
-        const result = getResultForChallenger(match, challengerChess);
+      if (platform === 'chesscom') {
+        const challengerChess = challengerData.chessComUsername;
+        const opponentChess = opponentData.chessComUsername;
+        if (!challengerChess || !opponentChess) continue;
 
+        const games = await chesscom.fetchRecentGames(challengerChess);
+        const match = chesscom.findMatchingGame(games, challengerChess, opponentChess, afterTs);
+        if (match) {
+          result = chesscom.getResultForChallenger(match, challengerChess);
+          gameUrl = match.url;
+        }
+      } else if (platform === 'playstrategy') {
+        const challengerPS = challengerData.playStrategyUsername;
+        const opponentPS = opponentData.playStrategyUsername;
+        if (!challengerPS || !opponentPS) continue;
+
+        const games = await playstrategy.fetchRecentGames(challengerPS, opponentPS);
+        const match = playstrategy.findMatchingGame(games, challengerPS, opponentPS, afterTs);
+        if (match) {
+          result = playstrategy.getResultForChallenger(match, challengerPS);
+          gameUrl = `https://playstrategy.org/${match.id}`;
+        }
+      } else if (platform === 'bga') {
+        const challengerBGA = challengerData.bgaUsername;
+        const opponentBGA = opponentData.bgaUsername;
+        if (!challengerBGA || !opponentBGA) continue;
+
+        const tables = await bga.fetchRecentGames(challengerBGA, opponentBGA);
+        const match = bga.findMatchingGame(tables, challengerBGA, opponentBGA, afterTs);
+        if (match) {
+          result = bga.getResultForChallenger(match, challengerBGA);
+          gameUrl = `https://boardgamearena.com/gamereview?table=${match.table_id}`;
+        }
+      }
+
+      if (result) {
         let winnerId: string | null = null;
         if (result === 'challenger_win') winnerId = wager.challengerId;
         if (result === 'opponent_win') winnerId = wager.opponentId;
@@ -34,8 +69,7 @@ export async function pollActiveWagers() {
           status: 'settled',
           result,
           winnerId,
-          gameUrl: match.url,
-          chessComGameId: match.url,
+          gameUrl,
           settledAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });

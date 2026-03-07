@@ -59,6 +59,9 @@ export default function DublPlayScreen({ onNavigate }) {
   const handleDeclineWager = async (id) => {
     try { await wagersApi.decline(id); loadData(); } catch (err) { console.error(err); }
   };
+  const handleCancelWager = async (id) => {
+    try { await wagersApi.cancel(id); loadData(); } catch (err) { console.error(err); }
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
@@ -66,15 +69,15 @@ export default function DublPlayScreen({ onNavigate }) {
 
   const handlePayWager = (wager) => {
     const opponentName = getOpponentName(wager);
-    onNavigate('payment', { wagerId: wager.id, amount: wager.amount_cents, opponentName });
+    onNavigate('payment', { wagerId: wager.id, amount: wager.amountCents, opponentName });
   };
 
   const getOpponentName = (w) =>
-    w.challenger_id === user?.id ? w.opponent_name : w.challenger_name;
+    w.challengerId === user?.id ? w.opponent_name : w.challenger_name;
 
   const getStatusDisplay = (w) => {
     if (w.status === 'settled' && w.result) {
-      const iWon = w.winner_id === user?.id;
+      const iWon = w.winnerId === user?.id;
       const isDraw = w.result === 'draw';
       if (isDraw) return { label: 'DRAW', color: theme.colors.draw };
       return iWon
@@ -86,7 +89,9 @@ export default function DublPlayScreen({ onNavigate }) {
   };
 
   const isPendingForMe = (w) =>
-    w.status === 'pending_acceptance' && w.opponent_id === user?.id;
+    w.status === 'pending_acceptance' && w.opponentId === user?.id;
+  const isSentByMe = (w) =>
+    w.status === 'pending_acceptance' && w.challengerId === user?.id;
 
   return (
     <div style={styles.container}>
@@ -112,8 +117,14 @@ export default function DublPlayScreen({ onNavigate }) {
                   <div style={styles.friendName}>{r.display_name}</div>
                   <div style={styles.friendUsername}>@{r.chess_com_username}</div>
                 </div>
-                <button style={styles.acceptButton} onClick={() => handleAcceptFriend(r.friendship_id)}>Accept</button>
-                <button style={styles.declineButton} onClick={() => handleDeclineFriend(r.friendship_id)}>Decline</button>
+                {r.direction === 'outgoing' ? (
+                  <span style={styles.pendingBadge}>Pending</span>
+                ) : (
+                  <>
+                    <button style={styles.acceptButton} onClick={() => handleAcceptFriend(r.friendship_id)}>Accept</button>
+                    <button style={styles.declineButton} onClick={() => handleDeclineFriend(r.friendship_id)}>Decline</button>
+                  </>
+                )}
               </div>
             ))}
           </>
@@ -144,7 +155,7 @@ export default function DublPlayScreen({ onNavigate }) {
                 <div key={item.id} style={styles.wagerCard}>
                   <div style={styles.wagerHeader}>
                     <span style={styles.wagerFriend}>{getOpponentName(item)}</span>
-                    <span style={styles.wagerAmount}>${(item.amount_cents / 100).toFixed(2)}</span>
+                    <span style={styles.wagerAmount}>${(item.amountCents / 100).toFixed(2)}</span>
                   </div>
                   <div style={styles.wagerPlayers}>
                     {item.gameType
@@ -157,9 +168,14 @@ export default function DublPlayScreen({ onNavigate }) {
                       <button style={styles.acceptButton} onClick={() => handleAcceptWager(item.id)}>Accept</button>
                       <button style={styles.declineButton} onClick={() => handleDeclineWager(item.id)}>Decline</button>
                     </div>
+                  ) : isSentByMe(item) ? (
+                    <div style={styles.actionRow}>
+                      <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>SENT</span>
+                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                    </div>
                   ) : item.status === 'pending_payment' ? (
                     <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>
-                      PAY ${(item.amount_cents / 100).toFixed(2)}
+                      PAY ${(item.amountCents / 100).toFixed(2)}
                     </button>
                   ) : (
                     <span style={{
@@ -201,6 +217,7 @@ const styles = {
   requestRow: { display: 'flex', alignItems: 'center', background: theme.colors.card, borderRadius: 12, padding: 16, marginBottom: 8, border: `1px solid ${theme.colors.border}` },
   acceptButton: { background: theme.colors.success, borderRadius: 8, padding: '6px 12px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 700, fontSize: 13, marginLeft: 8 },
   declineButton: { background: 'transparent', borderRadius: 8, padding: '6px 12px', border: 'none', cursor: 'pointer', color: theme.colors.danger, fontWeight: 600, fontSize: 13, marginLeft: 6 },
+  pendingBadge: { fontSize: 12, fontWeight: 700, color: theme.colors.textMuted, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '4px 12px' },
   emptyText: { color: theme.colors.textMuted, fontSize: 15, textAlign: 'center', padding: 16 },
   wagerCard: { background: theme.colors.card, borderRadius: 12, padding: 16, marginBottom: 8, border: `1px solid ${theme.colors.border}` },
   wagerHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: 6 },

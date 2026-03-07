@@ -11,6 +11,9 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const [wagers, setWagers] = useState([]);
   const [username, setUsername] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchTimeout = useState({ current: null })[0];
 
   const loadData = useCallback(async () => {
     try {
@@ -36,8 +39,43 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
     setRefreshing(false);
   };
 
+  const handleSearchChange = (value) => {
+    setUsername(value);
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (!value.trim()) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    searchTimeout.current = setTimeout(async () => {
+      try {
+        const results = await friendsApi.search(value.trim());
+        setSearchResults(results);
+        setShowDropdown(results.length > 0);
+      } catch {
+        setSearchResults([]);
+        setShowDropdown(false);
+      }
+    }, 200);
+  };
+
+  const handleSelectUser = async (selectedUser) => {
+    setShowDropdown(false);
+    setSearchResults([]);
+    setUsername('');
+    try {
+      await friendsApi.sendRequest(selectedUser.display_name);
+      alert(`Friend request sent to ${selectedUser.display_name}`);
+      loadData();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+
   const handleSendRequest = async () => {
     if (!username.trim()) return;
+    setShowDropdown(false);
+    setSearchResults([]);
     try {
       await friendsApi.sendRequest(username.trim());
       alert(`Friend request sent to ${username}`);
@@ -138,16 +176,66 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   return (
     <div style={styles.container}>
       <div style={styles.list}>
-        <div style={styles.sectionTitle}>Add Friend</div>
-        <div style={styles.addRow}>
-          <input
-            style={styles.input}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Display name or Chess.com username"
-            onKeyDown={(e) => e.key === 'Enter' && handleSendRequest()}
-          />
-          <button style={styles.sendButton} onClick={handleSendRequest}>Send</button>
+        <div style={styles.sectionTitle}>Friends</div>
+        {friends.length === 0 ? (
+          <div style={styles.emptyText}>No friends yet. Search for someone below!</div>
+        ) : (
+          friends.map((item) => (
+            <div key={item.friendship_id} style={styles.friendRow}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => handleChallengeFriend(item)}>
+                <div style={styles.friendName}>{item.display_name}</div>
+                <div style={styles.friendUsername}>
+                  {item.chess_com_username && <span>@{item.chess_com_username}</span>}
+                  {item.chess_com_username && item.bga_username && <span> · </span>}
+                  {item.bga_username && <span>BGA: {item.bga_username}</span>}
+                </div>
+              </div>
+              {item.bga_username && (
+                item.bga_friend_added ? (
+                  <span style={styles.bgaAddedBadge}>BGA Added</span>
+                ) : (
+                  <button
+                    style={styles.bgaLinkButton}
+                    onClick={(e) => { e.stopPropagation(); handleAddOnBga(item); }}
+                  >
+                    Add on BGA
+                  </button>
+                )
+              )}
+              <span style={styles.challengeIcon} onClick={() => handleChallengeFriend(item)}>⚔</span>
+            </div>
+          ))
+        )}
+
+        <div style={{ position: 'relative', marginBottom: 16 }}>
+          <div style={styles.addRow}>
+            <input
+              style={styles.input}
+              value={username}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+              placeholder="Add friend..."
+              onKeyDown={(e) => e.key === 'Enter' && handleSendRequest()}
+            />
+            <button style={styles.sendButton} onClick={handleSendRequest}>Send</button>
+          </div>
+          {showDropdown && (
+            <div style={styles.dropdown}>
+              {searchResults.map((r) => (
+                <div
+                  key={r.id}
+                  style={styles.dropdownItem}
+                  onMouseDown={() => handleSelectUser(r)}
+                >
+                  <div style={styles.friendName}>{r.display_name}</div>
+                  {r.chess_com_username && (
+                    <div style={styles.friendUsername}>@{r.chess_com_username}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {requests.length > 0 && (
@@ -170,33 +258,6 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
               </div>
             ))}
           </>
-        )}
-
-        <div style={styles.sectionTitle}>Friends</div>
-        {friends.length === 0 ? (
-          <div style={styles.emptyText}>No friends yet. Add someone by their display name!</div>
-        ) : (
-          friends.map((item) => (
-            <div key={item.friendship_id} style={styles.friendRow}>
-              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => handleChallengeFriend(item)}>
-                <div style={styles.friendName}>{item.display_name}</div>
-                <div style={styles.friendUsername}>@{item.chess_com_username}</div>
-              </div>
-              {item.bga_username && (
-                item.bga_friend_added ? (
-                  <span style={styles.bgaAddedBadge}>BGA Added</span>
-                ) : (
-                  <button
-                    style={styles.bgaLinkButton}
-                    onClick={(e) => { e.stopPropagation(); handleAddOnBga(item); }}
-                  >
-                    Add on BGA
-                  </button>
-                )
-              )}
-              <span style={styles.challengeIcon} onClick={() => handleChallengeFriend(item)}>⚔</span>
-            </div>
-          ))
         )}
 
         {wagers.length > 0 && (
@@ -312,4 +373,6 @@ const styles = {
   bgaLinkButton: { background: 'transparent', border: `1px solid ${theme.colors.primary}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: theme.colors.primary, fontWeight: 600, fontSize: 11, marginRight: 4, whiteSpace: 'nowrap' },
   bgaAddedBadge: { background: 'transparent', border: `1px solid ${theme.colors.success}`, borderRadius: 6, padding: '4px 8px', color: theme.colors.success, fontWeight: 600, fontSize: 11, marginRight: 4, whiteSpace: 'nowrap' },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
+  dropdown: { position: 'absolute', top: '100%', left: 0, right: 0, background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, marginTop: 4, zIndex: 10, overflow: 'hidden', maxHeight: 240, overflowY: 'auto' },
+  dropdownItem: { padding: '10px 16px', cursor: 'pointer', borderBottom: `1px solid ${theme.colors.border}` },
 };

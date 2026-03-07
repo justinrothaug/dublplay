@@ -115,6 +115,36 @@ router.get('/requests', async (req: Request, res: Response) => {
   res.json(requests);
 });
 
+// Search users by display name (for autocomplete)
+router.get('/search', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const q = (req.query.q as string || '').toLowerCase().trim();
+
+  if (!q || q.length < 1) {
+    return res.json([]);
+  }
+
+  // Firestore range query for prefix matching on displayNameLower
+  const snapshot = await db.collection('dublplay_users')
+    .where('displayNameLower', '>=', q)
+    .where('displayNameLower', '<=', q + '\uf8ff')
+    .limit(10)
+    .get();
+
+  const results = snapshot.docs
+    .filter((doc) => doc.id !== userId)
+    .map((doc) => {
+      const u = doc.data();
+      return {
+        id: doc.id,
+        display_name: u.displayName,
+        chess_com_username: u.chessComUsername || null,
+      };
+    });
+
+  res.json(results);
+});
+
 // Send friend request by display name or chess.com username
 router.post('/request', async (req: Request, res: Response) => {
   const userId = req.user!.userId;

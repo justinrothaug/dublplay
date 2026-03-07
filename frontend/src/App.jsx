@@ -717,8 +717,9 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
   const myPick = gameBets?.myPick;
 
   const handleSidePick = (side) => {
-    console.log("[BET] handleSidePick", { side, isUp, hasOnBet: !!onBet, status: game.status, gameId: game.id });
-    if (!isUp || !onBet) return;
+    console.log("[BET] KalshiDetail handleSidePick", { side, isUp, hasOnBet: !!onBet, status: game.status, gameId: game.id });
+    if (!onBet) { console.warn("[BET] onBet is null/undefined"); return; }
+    if (!isUp) { console.warn("[BET] game not upcoming, status:", game.status); return; }
     const ml = side === "away" ? dispAwayOdds : dispHomeOdds;
     onBet(game.id, side, dispSpread || "", ml || "");
   };
@@ -2337,7 +2338,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-                if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
+                console.log("[BET] onBet fired (scroll)", { gid, side });
                 const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
                 if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
               } : null}
@@ -3783,8 +3784,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
           pickRecord={detailPickRecord}
           gameBets={betStore ? betStore.forGame(detailGame.id, profile?.uid) : null}
           onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-            console.log("[BET] onBet fired", { gid, side, lockedSpread, lockedMl, balanceCents: wallet?.balanceCents, uid: profile.uid, username: profile.username });
-            if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
+            console.log("[BET] onBet fired (detail)", { gid, side, lockedSpread, lockedMl, uid: profile.uid, username: profile.username });
             try {
               const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
               console.log("[BET] result:", result);

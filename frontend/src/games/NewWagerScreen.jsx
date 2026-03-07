@@ -5,7 +5,7 @@ import { PLATFORMS, getGameDisplayName, getPlatformDisplayName } from './gameCon
 import { authApi } from './api.js';
 import { theme } from './theme.js';
 
-export default function NewWagerScreen({ params, onBack }) {
+export default function NewWagerScreen({ params, onBack, onWalletRefresh }) {
   const { user, refreshUser } = useAuth();
   const [friends, setFriends] = useState([]);
   const [selectedFriend, setSelectedFriend] = useState(null);
@@ -55,7 +55,8 @@ export default function NewWagerScreen({ params, onBack }) {
     try {
       const amountCents = Math.round(parseFloat(amount) * 100);
       await wagersApi.create(selectedFriend.id, amountCents, selectedPlatform, selectedGame.id);
-      alert(`$${amount} ${selectedGame.name} wager sent to ${selectedFriend.display_name}`);
+      alert(`$${amount} ${selectedGame.name} wager sent to ${selectedFriend.display_name}. Funds deducted from your wallet.`);
+      onWalletRefresh?.();
       onBack();
     } catch (err) {
       alert('Error: ' + err.message);

@@ -4,7 +4,6 @@ import { authApi } from './api.js';
 import SetUsernameScreen from './SetUsernameScreen.jsx';
 import DublPlayScreen from './DublPlayScreen.jsx';
 import NewWagerScreen from './NewWagerScreen.jsx';
-import PaymentScreen from './PaymentScreen.jsx';
 import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
@@ -34,10 +33,7 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
   };
 
   if (screen === 'newWager') {
-    return <NewWagerScreen params={screenParams} onBack={goBack} />;
-  }
-  if (screen === 'payment') {
-    return <PaymentScreen params={screenParams} onBack={goBack} />;
+    return <NewWagerScreen params={screenParams} onBack={goBack} onWalletRefresh={wallet?.refresh} />;
   }
 
   return (
@@ -171,7 +167,7 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
       {/* Content */}
       <div style={{ flex: 1 }}>
         {activeTab === 'dublplay' ? (
-          <DublPlayScreen onNavigate={navigate} />
+          <DublPlayScreen onNavigate={navigate} onWalletRefresh={wallet?.refresh} />
         ) : (
           <PlayScreen />
         )}

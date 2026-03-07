@@ -4,7 +4,7 @@ import { friendsApi, wagersApi } from './api.js';
 import { getGameDisplayName, getPlatformDisplayName } from './gameConfig.js';
 import { theme } from './theme.js';
 
-export default function DublPlayScreen({ onNavigate }) {
+export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const { user } = useAuth();
   const [friends, setFriends] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -54,22 +54,17 @@ export default function DublPlayScreen({ onNavigate }) {
     try { await friendsApi.decline(id); loadData(); } catch (err) { alert('Error: ' + err.message); }
   };
   const handleAcceptWager = async (id) => {
-    try { await wagersApi.accept(id); loadData(); } catch (err) { console.error(err); }
+    try { await wagersApi.accept(id); loadData(); onWalletRefresh?.(); } catch (err) { alert('Error: ' + err.message); }
   };
   const handleDeclineWager = async (id) => {
-    try { await wagersApi.decline(id); loadData(); } catch (err) { console.error(err); }
+    try { await wagersApi.decline(id); loadData(); onWalletRefresh?.(); } catch (err) { alert('Error: ' + err.message); }
   };
   const handleCancelWager = async (id) => {
-    try { await wagersApi.cancel(id); loadData(); } catch (err) { console.error(err); }
+    try { await wagersApi.cancel(id); loadData(); onWalletRefresh?.(); } catch (err) { alert('Error: ' + err.message); }
   };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
-  };
-
-  const handlePayWager = (wager) => {
-    const opponentName = getOpponentName(wager);
-    onNavigate('payment', { wagerId: wager.id, amount: wager.amountCents, opponentName });
   };
 
   const getOpponentName = (w) =>
@@ -84,7 +79,7 @@ export default function DublPlayScreen({ onNavigate }) {
         ? { label: 'WIN', color: theme.colors.success }
         : { label: 'LOSS', color: theme.colors.danger };
     }
-    const labels = { pending_acceptance: 'PENDING', pending_payment: 'PAY NOW', active: 'ACTIVE', both_paid: 'PLAYING' };
+    const labels = { pending_acceptance: 'PENDING', active: 'ACTIVE', both_paid: 'PLAYING' };
     return { label: labels[w.status] || w.status.toUpperCase(), color: theme.colors.primary };
   };
 
@@ -173,13 +168,6 @@ export default function DublPlayScreen({ onNavigate }) {
                       <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>SENT</span>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
-                  ) : item.status === 'pending_payment' ? (
-                    <div style={styles.actionRow}>
-                      <button style={styles.payNowButton} onClick={() => handlePayWager(item)}>
-                        PAY ${(item.amountCents / 100).toFixed(2)}
-                      </button>
-                      <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
-                    </div>
                   ) : item.cancelRequestedBy && item.cancelRequestedBy !== user?.id ? (
                     <div style={styles.actionRow}>
                       <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL REQUESTED</span>
@@ -248,6 +236,5 @@ const styles = {
   wagerPlayers: { color: theme.colors.textSecondary, fontSize: 13, marginBottom: 8 },
   badge: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
   actionRow: { display: 'flex', gap: 8 },
-  payNowButton: { background: theme.colors.primary, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: theme.colors.background, fontWeight: 800, fontSize: 13 },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

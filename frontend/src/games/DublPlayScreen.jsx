@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
-import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl } from './gameConfig.js';
+import { getGameDisplayName, getPlatformDisplayName, getPlatformUrl, getBgaSlug } from './gameConfig.js';
 import { theme } from './theme.js';
 
 export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
@@ -79,8 +79,10 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       const color = isChallenger ? 'white' : 'black';
       return `https://www.chess.com/play/online#time=10m0s0i&game=chess&rated=rated&color=${color}&member=${opponentUsername}`;
     }
-    if (platform === 'bga' && opponentUsername) {
-      return `https://boardgamearena.com/player?id=${opponentUsername}`;
+    if (platform === 'bga') {
+      const slug = getBgaSlug(wager.gameType);
+      if (slug) return `https://boardgamearena.com/gamepanel?game=${slug}`;
+      return 'https://boardgamearena.com';
     }
     return getPlatformUrl(platform);
   };

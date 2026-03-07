@@ -20,22 +20,22 @@ export const PLATFORMS = {
     icon: '🎲',
     games: [
       { id: 'any', name: 'Any Game', icon: '🎯' },
-      { id: 'checkers', name: 'Checkers', icon: '⛀' },
-      { id: 'chess', name: 'Chess', icon: '♟' },
-      { id: 'reversi', name: 'Othello', icon: '⬡' },
-      { id: 'backgammon', name: 'Backgammon', icon: '🎲' },
-      { id: 'connect4', name: 'Connect 4', icon: '🔴' },
-      { id: 'battleship', name: 'Battleship', icon: '🚢' },
-      { id: 'gomoku', name: 'Gomoku', icon: '⊕' },
-      { id: 'patchwork', name: 'Patchwork', icon: '🧵' },
-      { id: 'sevenwonders', name: '7 Wonders Duel', icon: '🏛' },
-      { id: 'carcassonne', name: 'Carcassonne', icon: '🏰' },
-      { id: 'splendor', name: 'Splendor', icon: '💎' },
-      { id: 'azul', name: 'Azul', icon: '🔷' },
-      { id: 'quoridor', name: 'Quoridor', icon: '🧱' },
-      { id: 'santorini', name: 'Santorini', icon: '🏠' },
-      { id: 'jaipur', name: 'Jaipur', icon: '🐪' },
-      { id: 'kingdomino', name: 'Kingdomino', icon: '👑' },
+      { id: 'checkers', name: 'Checkers', icon: '⛀', bgaSlug: 'checkers' },
+      { id: 'chess', name: 'Chess', icon: '♟', bgaSlug: 'chess' },
+      { id: 'reversi', name: 'Othello', icon: '⬡', bgaSlug: 'reversi' },
+      { id: 'backgammon', name: 'Backgammon', icon: '🎲', bgaSlug: 'backgammon' },
+      { id: 'connect4', name: 'Connect 4', icon: '🔴', bgaSlug: 'connectfour' },
+      { id: 'battleship', name: 'Battleship', icon: '🚢', bgaSlug: 'battleship' },
+      { id: 'gomoku', name: 'Gomoku', icon: '⊕', bgaSlug: 'gomoku' },
+      { id: 'patchwork', name: 'Patchwork', icon: '🧵', bgaSlug: 'patchwork' },
+      { id: 'sevenwonders', name: '7 Wonders Duel', icon: '🏛', bgaSlug: 'sevenwondersduel' },
+      { id: 'carcassonne', name: 'Carcassonne', icon: '🏰', bgaSlug: 'carcassonne' },
+      { id: 'splendor', name: 'Splendor', icon: '💎', bgaSlug: 'splendor' },
+      { id: 'azul', name: 'Azul', icon: '🔷', bgaSlug: 'azul' },
+      { id: 'quoridor', name: 'Quoridor', icon: '🧱', bgaSlug: 'quoridor' },
+      { id: 'santorini', name: 'Santorini', icon: '🏠', bgaSlug: 'santorini' },
+      { id: 'jaipur', name: 'Jaipur', icon: '🐪', bgaSlug: 'jaipur' },
+      { id: 'kingdomino', name: 'Kingdomino', icon: '👑', bgaSlug: 'kingdomino' },
     ],
   },
 };
@@ -57,6 +57,12 @@ export function getPlatformDisplayName(platform) {
 // Get the URL to open for a platform
 export function getPlatformUrl(platform) {
   return PLATFORMS[platform]?.url || '#';
+}
+
+// Get the BGA slug for a game (used in BGA URLs)
+export function getBgaSlug(gameType) {
+  const game = PLATFORMS.bga?.games.find((g) => g.id === gameType);
+  return game?.bgaSlug || null;
 }
 
 // Check if user has linked a platform

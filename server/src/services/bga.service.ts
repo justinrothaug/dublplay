@@ -33,8 +33,9 @@ async function bgaLogin(): Promise<boolean> {
 
   try {
     console.log('BGA: Logging in...');
-    // Step 1: GET login page to get CSRF token
-    const loginPage = await fetch(`${BGA_BASE}/account`, {
+    // Step 1: GET login page to get CSRF token (login is on boardgamearena.com, not en. subdomain)
+    const LOGIN_BASE = 'https://boardgamearena.com';
+    const loginPage = await fetch(`${LOGIN_BASE}/account`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
       redirect: 'follow',
     });
@@ -62,7 +63,7 @@ async function bgaLogin(): Promise<boolean> {
 
     const cookieHeader = Object.entries(cookieJar).map(([k, v]) => `${k}=${v}`).join('; ');
 
-    const loginRes = await fetch(`${BGA_BASE}/account/account/login.html`, {
+    const loginRes = await fetch(`${LOGIN_BASE}/account/account/login.html`, {
       method: 'POST',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',

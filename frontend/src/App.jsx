@@ -717,9 +717,7 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
   const myPick = gameBets?.myPick;
 
   const handleSidePick = (side) => {
-    console.log("[BET] KalshiDetail handleSidePick", { side, isUp, hasOnBet: !!onBet, status: game.status, gameId: game.id });
-    if (!onBet) { console.warn("[BET] onBet is null/undefined"); return; }
-    if (!isUp) { console.warn("[BET] game not upcoming, status:", game.status); return; }
+    if (!isUp || !onBet) return;
     const ml = side === "away" ? dispAwayOdds : dispHomeOdds;
     onBet(game.id, side, dispSpread || "", ml || "");
   };
@@ -2338,7 +2336,6 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-                console.log("[BET] onBet fired (scroll)", { gid, side });
                 const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
                 if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
               } : null}
@@ -3784,12 +3781,8 @@ function SportsApp({ onBackToHub, wallet, profile }) {
           pickRecord={detailPickRecord}
           gameBets={betStore ? betStore.forGame(detailGame.id, profile?.uid) : null}
           onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-            console.log("[BET] onBet fired (detail)", { gid, side, lockedSpread, lockedMl, uid: profile.uid, username: profile.username });
-            try {
-              const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
-              console.log("[BET] result:", result);
-              if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
-            } catch(e) { console.error("[BET] onBet error:", e); alert("Bet failed: " + e.message); }
+            const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
+            if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
           } : null}
           username={profile?.username}
           profile={profile}

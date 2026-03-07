@@ -23,7 +23,17 @@ app.use(cors({ origin: true, credentials: true }));
 // Stripe webhook needs raw body — mount before json middleware
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
-app.use(express.json());
+// Skip body parsing for routes that will be proxied to the Python backend
+// so http-proxy-middleware can forward the raw body stream.
+const sportsPaths = [
+  '/api/games', '/api/picks', '/api/props', '/api/injuries',
+  '/api/standings', '/api/analyze', '/api/chat', '/api/bet',
+  '/api/bets', '/api/parlay', '/api/debug', '/health',
+];
+app.use((req, res, next) => {
+  if (sportsPaths.some(p => req.path.startsWith(p))) return next();
+  express.json()(req, res, next);
+});
 
 // ── Games API routes (Express) ──────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -54,12 +64,6 @@ const PYTHON_BACKEND = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:8000'
 // HPM v3 with Express mount paths strips the prefix from req.url, so Python
 // would receive "/" instead of "/api/games". Use pathFilter at the root level
 // to keep the full original path intact.
-const sportsPaths = [
-  '/api/games', '/api/picks', '/api/props', '/api/injuries',
-  '/api/standings', '/api/analyze', '/api/chat', '/api/bet',
-  '/api/bets', '/api/parlay', '/api/debug', '/health',
-];
-
 const sportsProxy = createProxyMiddleware({
   target: PYTHON_BACKEND,
   changeOrigin: true,

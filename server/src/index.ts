@@ -99,6 +99,11 @@ cron.schedule('*/15 * * * *', async () => {
   try { await expireStaleWagers(); } catch (err) { console.error('Expire cron error:', err); }
 });
 
+// Prevent unhandled promise rejections from crashing the server
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+
 // ── Start ───────────────────────────────────────────────────────────────────
 app.listen(env.PORT, () => {
   console.log(`DublPlay server running on port ${env.PORT}`);

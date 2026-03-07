@@ -302,8 +302,16 @@ router.post('/:id/playing', async (req: Request, res: Response) => {
     throw new AppError(400, 'Wager is not active');
   }
 
-  await ref.update({ gameStarted: true, updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, gameStarted: true });
+  const isChallenger = w.challengerId === userId;
+  const updateData: Record<string, any> = { gameStarted: true, updatedAt: new Date().toISOString() };
+  if (isChallenger) {
+    updateData.challengerPlaying = true;
+  } else {
+    updateData.opponentPlaying = true;
+  }
+
+  await ref.update(updateData);
+  res.json({ id: doc.id, ...w, ...updateData });
 });
 
 export default router;

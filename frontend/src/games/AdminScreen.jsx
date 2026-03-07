@@ -98,7 +98,7 @@ export default function AdminScreen({ onBack }) {
             style={{
               width: '100%', padding: '10px 14px', marginBottom: 16,
               background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
-              color: T.text, fontSize: 14, fontFamily: 'inherit', outline: 'none',
+              color: T.text, fontSize: 16, fontFamily: 'inherit', outline: 'none',
               boxSizing: 'border-box',
             }}
           />
@@ -125,7 +125,7 @@ export default function AdminScreen({ onBack }) {
                         onKeyDown={e => e.key === 'Enter' && handleSaveBalance(u.id)}
                         style={{
                           width: 80, padding: '4px 8px', background: T.background, border: `1px solid ${T.border}`,
-                          borderRadius: 6, color: T.text, fontSize: 14, fontFamily: 'inherit', outline: 'none',
+                          borderRadius: 6, color: T.text, fontSize: 16, fontFamily: 'inherit', outline: 'none',
                         }}
                       />
                       <button onClick={() => handleSaveBalance(u.id)} style={{ padding: '4px 10px', background: T.success, color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Save</button>

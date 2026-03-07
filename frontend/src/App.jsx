@@ -4211,6 +4211,12 @@ function WalletModal({ onClose, onSuccess, wallet }) {
                       text = opponent ? `Draw vs ${opponent}` : "Draw Refund"; color = "#4caf50"; sign = "+"; break;
                     case "bet_payment":
                       text = opponent ? `Wager vs ${opponent}` : "Wager"; color = "#e53935"; sign = "-"; break;
+                    case "sports_bet":
+                      text = t.description || "Sports Bet"; color = "#e53935"; sign = "-"; break;
+                    case "sports_win":
+                      text = t.description || "Sports Win"; color = "#4caf50"; sign = "+"; break;
+                    case "sports_loss":
+                      text = t.description || "Sports Loss"; color = "#e53935"; sign = ""; break;
                     default:
                       text = t.type; color = "#8b8fa8"; sign = "";
                   }

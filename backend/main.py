@@ -332,7 +332,7 @@ def _score_pick(pick: dict, away_score: int, home_score: int) -> dict:
 
 
 def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
-    """Score any unscored picks against final game results for the given date."""
+    """Score any unscored picks against final game results for the given date. Also settle user bets."""
     db = _init_firestore()
     if not db:
         return
@@ -351,21 +351,106 @@ def _score_picks_for_date(date_str: str, final_games: list[dict]) -> None:
         updates = {}
         for gid, gdata in games_map.items():
             pick = gdata.get("pick")
-            if not pick:
-                continue
-            # Skip already scored picks
-            if pick.get("result_bet") is not None or pick.get("result_ou") is not None:
-                continue
-            base_id = re.sub(r'-\d{8}$', '', gid)
-            game = final_by_id.get(base_id) or final_by_id.get(gid)
-            if not game:
-                continue
-            away_score = int(game.get("awayScore") or 0)
-            home_score = int(game.get("homeScore") or 0)
-            if away_score == 0 and home_score == 0:
-                continue
-            scored = _score_pick(pick, away_score, home_score)
-            updates[f"games.{gid}.pick"] = scored
+            if pick and pick.get("result_bet") is None and pick.get("result_ou") is None:
+                base_id = re.sub(r'-\d{8}$', '', gid)
+                game = final_by_id.get(base_id) or final_by_id.get(gid)
+                if not game:
+                    continue
+                away_score = int(game.get("awayScore") or 0)
+                home_score = int(game.get("homeScore") or 0)
+                if away_score == 0 and home_score == 0:
+                    continue
+                scored = _score_pick(pick, away_score, home_score)
+                updates[f"games.{gid}.pick"] = scored
+
+            # Settle user bets for this game
+            bets = gdata.get("bets")
+            if bets and not gdata.get("bets_settled"):
+                base_id = re.sub(r'-\d{8}$', '', gid)
+                game = final_by_id.get(base_id) or final_by_id.get(gid)
+                if not game:
+                    continue
+                away_score = int(game.get("awayScore") or 0)
+                home_score = int(game.get("homeScore") or 0)
+                if away_score == 0 and home_score == 0:
+                    continue
+                # Determine winning side
+                if home_score > away_score:
+                    winning_side = "home"
+                elif away_score > home_score:
+                    winning_side = "away"
+                else:
+                    winning_side = "push"
+
+                team_label = gid.upper().replace("-", " vs ")
+                winners = bets.get(winning_side, []) if winning_side != "push" else []
+                losers = bets.get("home" if winning_side == "away" else "away", []) if winning_side != "push" else []
+
+                # Pay winners 2x their bet
+                for bettor in winners:
+                    uid = bettor.get("uid", "")
+                    # Find firebase_uid from dublplay_users
+                    try:
+                        user_docs = db.collection("dublplay_users").where("chessComUsername", "==", uid).limit(1).get()
+                        if not user_docs:
+                            user_docs = db.collection("dublplay_users").where("displayName", "==", uid).limit(1).get()
+                        if not user_docs:
+                            user_docs = db.collection("dublplay_users").where("firebaseUid", "==", uid).limit(1).get()
+                        if user_docs:
+                            u_ref = user_docs[0].reference
+                            u_data = user_docs[0].to_dict()
+                            bal = u_data.get("walletBalanceCents", 0)
+                            payout = BET_AMOUNT_CENTS * 2
+                            u_ref.update({"walletBalanceCents": bal + payout})
+                            db.collection("dublplay_transactions").document().set({
+                                "userId": user_docs[0].id,
+                                "type": "sports_win",
+                                "amountCents": payout,
+                                "status": "completed",
+                                "gameId": gid,
+                                "description": f"Won bet on {team_label}",
+                                "createdAt": datetime.now(timezone.utc).isoformat(),
+                            })
+                    except Exception as e:
+                        logging.warning(f"Sports bet payout failed for {uid}: {e}")
+
+                # Record losses for losers (no wallet change, already deducted)
+                for bettor in losers:
+                    uid = bettor.get("uid", "")
+                    try:
+                        user_docs = db.collection("dublplay_users").where("chessComUsername", "==", uid).limit(1).get()
+                        if not user_docs:
+                            user_docs = db.collection("dublplay_users").where("displayName", "==", uid).limit(1).get()
+                        if not user_docs:
+                            user_docs = db.collection("dublplay_users").where("firebaseUid", "==", uid).limit(1).get()
+                        if user_docs:
+                            db.collection("dublplay_transactions").document().set({
+                                "userId": user_docs[0].id,
+                                "type": "sports_loss",
+                                "amountCents": BET_AMOUNT_CENTS,
+                                "status": "completed",
+                                "gameId": gid,
+                                "description": f"Lost bet on {team_label}",
+                                "createdAt": datetime.now(timezone.utc).isoformat(),
+                            })
+                    except Exception as e:
+                        logging.warning(f"Sports bet loss record failed for {uid}: {e}")
+
+                # Push bets — refund everyone
+                if winning_side == "push":
+                    for bettor in bets.get("home", []) + bets.get("away", []):
+                        uid = bettor.get("uid", "")
+                        try:
+                            user_docs = db.collection("dublplay_users").where("firebaseUid", "==", uid).limit(1).get()
+                            if user_docs:
+                                u_ref = user_docs[0].reference
+                                bal = user_docs[0].to_dict().get("walletBalanceCents", 0)
+                                u_ref.update({"walletBalanceCents": bal + BET_AMOUNT_CENTS})
+                        except Exception:
+                            pass
+
+                updates[f"games.{gid}.bets_settled"] = True
+
         if updates:
             updates["updated_at"] = fb_firestore.SERVER_TIMESTAMP
             doc_ref.update(updates)
@@ -2071,6 +2156,29 @@ def _update_wallet(firebase_uid: str, delta_cents: int) -> int | None:
         return None
 
 
+def _record_sports_transaction(firebase_uid: str, tx_type: str, amount_cents: int, game_id: str = "", description: str = ""):
+    """Record a transaction in dublplay_transactions for sports bets."""
+    db = _init_firestore()
+    if not db or not firebase_uid:
+        return
+    try:
+        users = db.collection("dublplay_users").where("firebaseUid", "==", firebase_uid).limit(1).get()
+        if not users:
+            return
+        user_id = users[0].id
+        db.collection("dublplay_transactions").document().set({
+            "userId": user_id,
+            "type": tx_type,
+            "amountCents": amount_cents,
+            "status": "completed",
+            "gameId": game_id,
+            "description": description,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logging.warning(f"Sports transaction record failed: {e}")
+
+
 @app.post("/api/bet")
 def place_bet(req: BetRequest):
     date_str = req.date or datetime.now().strftime("%Y%m%d")
@@ -2097,14 +2205,28 @@ def place_bet(req: BetRequest):
     # Update wallet based on action
     if req.firebase_uid and result.get("action"):
         action = result["action"]
+        team_label = game_id.upper().replace("-", " vs ")
         if action == "placed":
             new_bal = _update_wallet(req.firebase_uid, -BET_AMOUNT_CENTS)
             if new_bal is not None:
                 result["walletBalanceCents"] = new_bal
+            _record_sports_transaction(req.firebase_uid, "sports_bet", BET_AMOUNT_CENTS, game_id, f"Bet on {team_label}")
         elif action == "removed":
             new_bal = _update_wallet(req.firebase_uid, BET_AMOUNT_CENTS)
             if new_bal is not None:
                 result["walletBalanceCents"] = new_bal
+            # Cancelled bet = never happened, delete the bet transaction
+            db = _init_firestore()
+            if db:
+                try:
+                    users = db.collection("dublplay_users").where("firebaseUid", "==", req.firebase_uid).limit(1).get()
+                    if users:
+                        user_id = users[0].id
+                        txs = db.collection("dublplay_transactions").where("userId", "==", user_id).where("type", "==", "sports_bet").where("gameId", "==", game_id).limit(1).get()
+                        for tx in txs:
+                            tx.reference.delete()
+                except Exception:
+                    pass
         # "switched" = no net change
 
     return result

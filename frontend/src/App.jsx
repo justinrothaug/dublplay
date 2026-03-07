@@ -155,14 +155,17 @@ function avatarColor(name) {
 }
 
 function useProfile() {
-  const { user } = useAuth();
-  const [uid] = useState(() => {
+  const { user, firebaseUser } = useAuth();
+  // Use Firebase UID when logged in so bets persist across devices;
+  // fall back to a random local ID for anonymous/guest usage.
+  const [localUid] = useState(() => {
     try {
       let id = localStorage.getItem("dublplay_uid");
       if (!id) { id = crypto.randomUUID(); localStorage.setItem("dublplay_uid", id); }
       return id;
     } catch { return crypto.randomUUID(); }
   });
+  const uid = firebaseUser?.uid || localUid;
   const [username, setUsername] = useState(() => {
     try { return localStorage.getItem("dublplay_username") || ""; } catch { return ""; }
   });

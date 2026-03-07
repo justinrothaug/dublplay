@@ -107,26 +107,14 @@ export function getResultForChallenger(
   return 'opponent_win';
 }
 
-// BGA has hundreds of games. We support a curated list of popular 1v1 games.
+// Fast 2-player games on BGA
 export const BGA_GAMES: Record<string, string> = {
   checkers: 'Checkers',
-  chess: 'Chess',
-  reversi: 'Othello/Reversi',
-  backgammon: 'Backgammon',
   connect4: 'Connect 4',
   battleship: 'Battleship',
-  gomoku: 'Gomoku',
-  tictactoe: 'Tic Tac Toe',
-  patchwork: 'Patchwork',
   sevenwonders: 'Seven Wonders Duel',
-  carcassonne: 'Carcassonne',
-  splendor: 'Splendor',
-  azul: 'Azul',
-  quoridor: 'Quoridor',
-  santorini: 'Santorini',
-  lost_cities: 'Lost Cities',
-  jaipur: 'Jaipur',
-  codenames: 'Codenames Duet',
-  kingdomino: 'Kingdomino',
-  takenoko: 'Takenoko',
+  dotsandboxes: 'Dots & Boxes',
+  quarto: 'Quarto',
+  oware: 'Mancala',
+  hex: 'Hex',
 };

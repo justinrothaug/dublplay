@@ -41,6 +41,7 @@ export const friendsApi = {
     }),
   accept: (id) => gamesApi(`/friends/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/friends/${id}/decline`, { method: 'POST' }),
+  markBgaAdded: (id) => gamesApi(`/friends/${id}/bga-added`, { method: 'POST' }),
 };
 
 // Wagers

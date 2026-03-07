@@ -107,6 +107,7 @@ export function getResultForChallenger(
   return 'opponent_win';
 }
 
+
 // Fast 2-player games on BGA
 export const BGA_GAMES: Record<string, string> = {
   checkers: 'Checkers',

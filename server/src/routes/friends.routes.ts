@@ -34,6 +34,7 @@ router.get('/', async (req: Request, res: Response) => {
         email: u.email,
         chess_com_username: u.chessComUsername,
         bga_username: u.bgaUsername || null,
+        bga_friend_added: f.bgaFriendAdded || false,
         display_name: u.displayName,
       });
     }
@@ -50,6 +51,7 @@ router.get('/', async (req: Request, res: Response) => {
         email: u.email,
         chess_com_username: u.chessComUsername,
         bga_username: u.bgaUsername || null,
+        bga_friend_added: f.bgaFriendAdded || false,
         display_name: u.displayName,
       });
     }
@@ -207,6 +209,22 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
 
   await ref.update({ status: 'declined', updatedAt: new Date().toISOString() });
   res.json({ id: doc.id, ...f, status: 'declined' });
+});
+
+// Mark friend as added on BGA
+router.post('/:id/bga-added', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_friendships').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Friendship not found');
+  const f = doc.data()!;
+  if (f.requesterId !== userId && f.addresseeId !== userId) {
+    throw new AppError(404, 'Friendship not found');
+  }
+
+  await ref.update({ bgaFriendAdded: true, updatedAt: new Date().toISOString() });
+  res.json({ id: doc.id, bgaFriendAdded: true });
 });
 
 // Remove friend

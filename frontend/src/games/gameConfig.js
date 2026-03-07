@@ -19,6 +19,7 @@ export const PLATFORMS = {
     usernameField: 'bga_username',
     icon: '🎲',
     games: [
+      { id: 'any', name: 'Any Game', icon: '🎯' },
       { id: 'checkers', name: 'Checkers', icon: '⛀' },
       { id: 'chess', name: 'Chess', icon: '♟' },
       { id: 'reversi', name: 'Othello', icon: '⬡' },

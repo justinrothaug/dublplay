@@ -3963,7 +3963,6 @@ function WalletModal({ onClose, onSuccess, wallet }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [clientSecret, setClientSecret] = useState(null);
   const [venmo, setVenmo] = useState("");
   const [venmoSaved, setVenmoSaved] = useState(false);
   const [venmoLoading, setVenmoLoading] = useState(true);
@@ -3983,7 +3982,7 @@ function WalletModal({ onClose, onSuccess, wallet }) {
     })();
   }, []);
 
-  const switchTab = (t) => { setTab(t); setError(""); setSuccess(""); setAmount(""); setClientSecret(null); };
+  const switchTab = (t) => { setTab(t); setError(""); setSuccess(""); setAmount(""); };
 
   const handleDeposit = async () => {
     const cents = Math.round(parseFloat(amount) * 100);
@@ -3993,9 +3992,11 @@ function WalletModal({ onClose, onSuccess, wallet }) {
     setError("");
     try {
       const { clientSecret: cs } = await walletApi.deposit(cents);
-      setClientSecret(cs);
+      await triggerApplePay(cents, cs);
+      onSuccess();
+      onClose();
     } catch (err) {
-      setError(err.message);
+      if (err.message !== 'cancelled') setError(err.message);
       setLoading(false);
     }
   };
@@ -4032,18 +4033,7 @@ function WalletModal({ onClose, onSuccess, wallet }) {
     setLoading(false);
   };
 
-  // Stripe payment form after deposit initiated
-  if (clientSecret) {
-    return (
-      <div style={modalOverlay} onClick={onClose}>
-        <div style={modalBox} onClick={e => e.stopPropagation()}>
-          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 16 }}>COMPLETE PAYMENT</div>
-          <StripePaymentForm clientSecret={clientSecret} onSuccess={() => { onSuccess(); onClose(); }} onError={setError} />
-          {error && <p style={{ color: "#e53935", fontSize: 12, marginTop: 8 }}>{error}</p>}
-        </div>
-      </div>
-    );
-  }
+  // clientSecret no longer needed for intermediate screen — Apple Pay triggers directly
 
   const tabStyle = (active) => ({
     flex: 1, padding: "10px 0", border: "none", borderBottom: active ? "2px solid #d4a843" : "2px solid transparent",
@@ -4190,73 +4180,63 @@ function WalletModal({ onClose, onSuccess, wallet }) {
   );
 }
 
-// ── STRIPE PAYMENT FORM (inline for deposits) ──────────────────────────────
-function StripePaymentForm({ clientSecret, onSuccess, onError }) {
-  const formRef = useRef(null);
-  const [stripe, setStripe] = useState(null);
-  const [elements, setElements] = useState(null);
-  const [paying, setPaying] = useState(false);
+// ── APPLE PAY HELPER ──────────────────────────────────────────────────────
+// Loads Stripe.js and returns the instance
+async function getStripeInstance() {
+  const { publishableKey } = await stripeApi.config();
+  if (window.Stripe) return window.Stripe(publishableKey);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/v3/";
+    script.onload = () => resolve(window.Stripe(publishableKey));
+    script.onerror = () => reject(new Error("Failed to load Stripe"));
+    document.head.appendChild(script);
+  });
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { publishableKey } = await stripeApi.config();
-        if (cancelled) return;
-        const s = window.Stripe?.(publishableKey);
-        if (!s) {
-          // Load Stripe.js dynamically
-          const script = document.createElement("script");
-          script.src = "https://js.stripe.com/v3/";
-          script.onload = () => {
-            if (cancelled) return;
-            const loaded = window.Stripe(publishableKey);
-            setStripe(loaded);
-            const elems = loaded.elements({ clientSecret, appearance: { theme: "night", variables: { colorPrimary: "#d4a843" } } });
-            elems.create("payment").mount(formRef.current);
-            setElements(elems);
-          };
-          document.head.appendChild(script);
-        } else {
-          setStripe(s);
-          const elems = s.elements({ clientSecret, appearance: { theme: "night", variables: { colorPrimary: "#d4a843" } } });
-          elems.create("payment").mount(formRef.current);
-          setElements(elems);
-        }
-      } catch (err) { onError?.(err.message); }
-    })();
-    return () => { cancelled = true; };
-  }, [clientSecret]);
+// Triggers Apple Pay sheet for a given amount and clientSecret
+async function triggerApplePay(amountCents, clientSecret) {
+  const stripe = await getStripeInstance();
+  const paymentRequest = stripe.paymentRequest({
+    country: 'US',
+    currency: 'usd',
+    total: { label: 'DublPlay Deposit', amount: amountCents },
+    requestPayerName: true,
+    requestPayerEmail: true,
+  });
 
-  const handleSubmit = async () => {
-    if (!stripe || !elements) return;
-    setPaying(true);
-    const { error } = await stripe.confirmPayment({
-      elements,
-      confirmParams: { return_url: window.location.origin },
-      redirect: "if_required",
+  const canMakePayment = await paymentRequest.canMakePayment();
+  if (!canMakePayment || !canMakePayment.applePay) {
+    throw new Error("Apple Pay is not available on this device. Please use Safari on an Apple device with Apple Pay set up.");
+  }
+
+  return new Promise((resolve, reject) => {
+    paymentRequest.on('paymentmethod', async (ev) => {
+      const { error, paymentIntent } = await stripe.confirmCardPayment(
+        clientSecret,
+        { payment_method: ev.paymentMethod.id },
+        { handleActions: false }
+      );
+      if (error) {
+        ev.complete('fail');
+        reject(new Error(error.message));
+      } else if (paymentIntent.status === 'requires_action') {
+        ev.complete('success');
+        const { error: confirmError } = await stripe.confirmCardPayment(clientSecret);
+        if (confirmError) reject(new Error(confirmError.message));
+        else resolve();
+      } else {
+        ev.complete('success');
+        resolve();
+      }
     });
-    if (error) {
-      onError?.(error.message);
-      setPaying(false);
-    } else {
-      onSuccess?.();
-    }
-  };
 
-  return (
-    <div>
-      <div ref={formRef} style={{ minHeight: 120, marginBottom: 16 }} />
-      <button onClick={handleSubmit} disabled={paying || !stripe}
-        style={{
-          width: "100%", padding: "14px 0", background: "#d4a843", color: "#0a0e1a",
-          border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
-          letterSpacing: "0.06em", cursor: paying ? "wait" : "pointer",
-          opacity: paying ? 0.6 : 1,
-        }}
-      >{paying ? "Processing..." : "Pay Now"}</button>
-    </div>
-  );
+    paymentRequest.on('cancel', () => {
+      reject(new Error('cancelled'));
+    });
+
+    paymentRequest.show();
+  });
 }
 
 const modalOverlay = {

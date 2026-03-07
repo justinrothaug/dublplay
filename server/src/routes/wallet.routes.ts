@@ -48,6 +48,7 @@ router.post('/deposit', authenticate, async (req: Request, res: Response) => {
     amount: amountCents,
     currency: 'usd',
     customer: customerId,
+    payment_method_types: ['card'],
     metadata: {
       type: 'wallet_deposit',
       userId,

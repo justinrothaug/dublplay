@@ -63,13 +63,19 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/requests', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
-  const snapshot = await db.collection('dublplay_friendships')
+  const incoming = await db.collection('dublplay_friendships')
     .where('addresseeId', '==', userId)
     .where('status', '==', 'pending')
     .get();
 
+  const outgoing = await db.collection('dublplay_friendships')
+    .where('requesterId', '==', userId)
+    .where('status', '==', 'pending')
+    .get();
+
   const requests: any[] = [];
-  for (const doc of snapshot.docs) {
+
+  for (const doc of incoming.docs) {
     const f = doc.data();
     const userDoc = await db.collection('dublplay_users').doc(f.requesterId).get();
     if (userDoc.exists) {
@@ -81,6 +87,24 @@ router.get('/requests', async (req: Request, res: Response) => {
         chess_com_username: u.chessComUsername,
         display_name: u.displayName,
         created_at: f.createdAt,
+        direction: 'incoming',
+      });
+    }
+  }
+
+  for (const doc of outgoing.docs) {
+    const f = doc.data();
+    const userDoc = await db.collection('dublplay_users').doc(f.addresseeId).get();
+    if (userDoc.exists) {
+      const u = userDoc.data()!;
+      requests.push({
+        friendship_id: doc.id,
+        id: userDoc.id,
+        email: u.email,
+        chess_com_username: u.chessComUsername,
+        display_name: u.displayName,
+        created_at: f.createdAt,
+        direction: 'outgoing',
       });
     }
   }

@@ -112,8 +112,14 @@ export default function DublPlayScreen({ onNavigate }) {
                   <div style={styles.friendName}>{r.display_name}</div>
                   <div style={styles.friendUsername}>@{r.chess_com_username}</div>
                 </div>
-                <button style={styles.acceptButton} onClick={() => handleAcceptFriend(r.friendship_id)}>Accept</button>
-                <button style={styles.declineButton} onClick={() => handleDeclineFriend(r.friendship_id)}>Decline</button>
+                {r.direction === 'outgoing' ? (
+                  <span style={styles.pendingBadge}>Pending</span>
+                ) : (
+                  <>
+                    <button style={styles.acceptButton} onClick={() => handleAcceptFriend(r.friendship_id)}>Accept</button>
+                    <button style={styles.declineButton} onClick={() => handleDeclineFriend(r.friendship_id)}>Decline</button>
+                  </>
+                )}
               </div>
             ))}
           </>
@@ -201,6 +207,7 @@ const styles = {
   requestRow: { display: 'flex', alignItems: 'center', background: theme.colors.card, borderRadius: 12, padding: 16, marginBottom: 8, border: `1px solid ${theme.colors.border}` },
   acceptButton: { background: theme.colors.success, borderRadius: 8, padding: '6px 12px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 700, fontSize: 13, marginLeft: 8 },
   declineButton: { background: 'transparent', borderRadius: 8, padding: '6px 12px', border: 'none', cursor: 'pointer', color: theme.colors.danger, fontWeight: 600, fontSize: 13, marginLeft: 6 },
+  pendingBadge: { fontSize: 12, fontWeight: 700, color: theme.colors.textMuted, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '4px 12px' },
   emptyText: { color: theme.colors.textMuted, fontSize: 15, textAlign: 'center', padding: 16 },
   wagerCard: { background: theme.colors.card, borderRadius: 12, padding: 16, marginBottom: 8, border: `1px solid ${theme.colors.border}` },
   wagerHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: 6 },

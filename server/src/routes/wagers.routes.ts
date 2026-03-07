@@ -3,6 +3,7 @@ import { db } from '../config/firebase';
 import { authenticate } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { z } from 'zod';
+import { pollSingleWager } from '../jobs/pollGames';
 
 const router = Router();
 router.use(authenticate);
@@ -312,6 +313,30 @@ router.post('/:id/playing', async (req: Request, res: Response) => {
 
   await ref.update(updateData);
   res.json({ id: doc.id, ...w, ...updateData });
+});
+
+// Check for game result now (user-triggered)
+router.post('/:id/check-result', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
+  const w = doc.data()!;
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
+  }
+  if (w.status !== 'active') {
+    throw new AppError(400, 'Wager is not active');
+  }
+
+  const settled = await pollSingleWager(doc);
+  if (settled) {
+    const updated = await ref.get();
+    res.json(await enrichWager(updated));
+  } else {
+    res.json({ checked: true, settled: false, message: 'No completed game found yet' });
+  }
 });
 
 export default router;

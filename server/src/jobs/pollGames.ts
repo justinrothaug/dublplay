@@ -3,6 +3,93 @@ import * as chesscom from '../services/chesscom.service';
 import * as playstrategy from '../services/playstrategy.service';
 import * as bga from '../services/bga.service';
 
+// Poll a single wager document. Returns true if settled.
+export async function pollSingleWager(doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot): Promise<boolean> {
+  const wager = doc.data()!;
+  const platform = wager.platform || 'chesscom';
+
+  const [challengerDoc, opponentDoc] = await Promise.all([
+    db.collection('dublplay_users').doc(wager.challengerId).get(),
+    db.collection('dublplay_users').doc(wager.opponentId).get(),
+  ]);
+  const challengerData = challengerDoc.data()!;
+  const opponentData = opponentDoc.data()!;
+  const afterTs = Math.floor(new Date(wager.createdAt).getTime() / 1000);
+
+  let result: 'challenger_win' | 'opponent_win' | 'draw' | null = null;
+  let gameUrl: string | null = null;
+
+  if (platform === 'chesscom') {
+    const challengerChess = challengerData.chessComUsername;
+    const opponentChess = opponentData.chessComUsername;
+    if (!challengerChess || !opponentChess) return false;
+
+    const games = await chesscom.fetchRecentGames(challengerChess);
+    const match = chesscom.findMatchingGame(games, challengerChess, opponentChess, afterTs);
+    if (match) {
+      result = chesscom.getResultForChallenger(match, challengerChess);
+      gameUrl = match.url;
+    }
+  } else if (platform === 'playstrategy') {
+    const challengerPS = challengerData.playStrategyUsername;
+    const opponentPS = opponentData.playStrategyUsername;
+    if (!challengerPS || !opponentPS) return false;
+
+    const games = await playstrategy.fetchRecentGames(challengerPS, opponentPS);
+    const match = playstrategy.findMatchingGame(games, challengerPS, opponentPS, afterTs);
+    if (match) {
+      result = playstrategy.getResultForChallenger(match, challengerPS);
+      gameUrl = `https://playstrategy.org/${match.id}`;
+    }
+  } else if (platform === 'bga') {
+    const challengerBGA = challengerData.bgaUsername;
+    const opponentBGA = opponentData.bgaUsername;
+    if (!challengerBGA || !opponentBGA) return false;
+
+    // Resolve usernames to numeric BGA player IDs
+    const [challengerBgaId, opponentBgaId] = await Promise.all([
+      bga.resolvePlayerId(challengerBGA),
+      bga.resolvePlayerId(opponentBGA),
+    ]);
+    if (!challengerBgaId || !opponentBgaId) {
+      console.warn(`BGA: Could not resolve IDs for ${challengerBGA}/${opponentBGA}`);
+      return false;
+    }
+
+    const tables = await bga.fetchRecentGames(challengerBgaId, opponentBgaId);
+    const match = bga.findMatchingGame(tables, challengerBgaId, opponentBgaId, afterTs);
+    if (match) {
+      result = bga.getResultForChallenger(match, challengerBgaId);
+      gameUrl = `https://boardgamearena.com/gamereview?table=${match.table_id}`;
+    }
+  }
+
+  if (result) {
+    let winnerId: string | null = null;
+    if (result === 'challenger_win') winnerId = wager.challengerId;
+    if (result === 'opponent_win') winnerId = wager.opponentId;
+
+    await doc.ref.update({
+      status: 'settled',
+      result,
+      winnerId,
+      gameUrl,
+      settledAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (winnerId) {
+      await processWinnerPayout(doc.id, wager, winnerId);
+    } else {
+      await processDrawRefund(doc.id, wager);
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
 export async function pollActiveWagers() {
   const snapshot = await db.collection('dublplay_wagers').where('status', '==', 'active').get();
 
@@ -10,78 +97,8 @@ export async function pollActiveWagers() {
 
   for (const doc of snapshot.docs) {
     try {
-      const wager = doc.data();
-      const platform = wager.platform || 'chesscom';
-
-      // Get user docs
-      const [challengerDoc, opponentDoc] = await Promise.all([
-        db.collection('dublplay_users').doc(wager.challengerId).get(),
-        db.collection('dublplay_users').doc(wager.opponentId).get(),
-      ]);
-      const challengerData = challengerDoc.data()!;
-      const opponentData = opponentDoc.data()!;
-      const afterTs = Math.floor(new Date(wager.createdAt).getTime() / 1000);
-
-      let result: 'challenger_win' | 'opponent_win' | 'draw' | null = null;
-      let gameUrl: string | null = null;
-
-      if (platform === 'chesscom') {
-        const challengerChess = challengerData.chessComUsername;
-        const opponentChess = opponentData.chessComUsername;
-        if (!challengerChess || !opponentChess) continue;
-
-        const games = await chesscom.fetchRecentGames(challengerChess);
-        const match = chesscom.findMatchingGame(games, challengerChess, opponentChess, afterTs);
-        if (match) {
-          result = chesscom.getResultForChallenger(match, challengerChess);
-          gameUrl = match.url;
-        }
-      } else if (platform === 'playstrategy') {
-        const challengerPS = challengerData.playStrategyUsername;
-        const opponentPS = opponentData.playStrategyUsername;
-        if (!challengerPS || !opponentPS) continue;
-
-        const games = await playstrategy.fetchRecentGames(challengerPS, opponentPS);
-        const match = playstrategy.findMatchingGame(games, challengerPS, opponentPS, afterTs);
-        if (match) {
-          result = playstrategy.getResultForChallenger(match, challengerPS);
-          gameUrl = `https://playstrategy.org/${match.id}`;
-        }
-      } else if (platform === 'bga') {
-        const challengerBGA = challengerData.bgaUsername;
-        const opponentBGA = opponentData.bgaUsername;
-        if (!challengerBGA || !opponentBGA) continue;
-
-        const tables = await bga.fetchRecentGames(challengerBGA, opponentBGA);
-        const match = bga.findMatchingGame(tables, challengerBGA, opponentBGA, afterTs);
-        if (match) {
-          result = bga.getResultForChallenger(match, challengerBGA);
-          gameUrl = `https://boardgamearena.com/gamereview?table=${match.table_id}`;
-        }
-      }
-
-      if (result) {
-        let winnerId: string | null = null;
-        if (result === 'challenger_win') winnerId = wager.challengerId;
-        if (result === 'opponent_win') winnerId = wager.opponentId;
-
-        await doc.ref.update({
-          status: 'settled',
-          result,
-          winnerId,
-          gameUrl,
-          settledAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-
-        if (winnerId) {
-          await processWinnerPayout(doc.id, wager, winnerId);
-        } else {
-          await processDrawRefund(doc.id, wager);
-        }
-
-        settledCount++;
-      }
+      const settled = await pollSingleWager(doc);
+      if (settled) settledCount++;
     } catch (err) {
       console.error(`Error polling wager ${doc.id}:`, err);
     }

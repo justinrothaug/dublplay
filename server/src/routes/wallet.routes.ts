@@ -7,6 +7,30 @@ import { sendPayoutRequestEmail } from '../utils/email';
 
 const router = Router();
 
+// Get transaction history
+router.get('/history', authenticate, async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const snapshot = await db.collection('dublplay_transactions')
+    .where('userId', '==', userId)
+    .orderBy('createdAt', 'desc')
+    .limit(50)
+    .get();
+
+  const transactions = snapshot.docs.map((doc) => {
+    const t = doc.data();
+    return {
+      id: doc.id,
+      type: t.type,
+      amountCents: t.amountCents,
+      status: t.status,
+      createdAt: t.createdAt,
+      wagerId: t.wagerId || null,
+    };
+  });
+
+  res.json(transactions);
+});
+
 // Get wallet balance
 router.get('/balance', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;

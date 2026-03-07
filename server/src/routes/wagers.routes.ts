@@ -287,4 +287,23 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
   res.json({ id: doc.id, ...w, cancelRequestedBy: userId });
 });
 
+// Mark wager as playing (user clicked Play Now)
+router.post('/:id/playing', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
+  const doc = await ref.get();
+
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
+  const w = doc.data()!;
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
+  }
+  if (w.status !== 'active') {
+    throw new AppError(400, 'Wager is not active');
+  }
+
+  await ref.update({ gameStarted: true, updatedAt: new Date().toISOString() });
+  res.json({ id: doc.id, ...w, gameStarted: true });
+});
+
 export default router;

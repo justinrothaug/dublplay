@@ -63,9 +63,19 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const handleCancelWager = async (id) => {
     try { await wagersApi.cancel(id); loadData(); onWalletRefresh?.(); } catch (err) { alert('Error: ' + err.message); }
   };
+  const handlePlayNow = async (item) => {
+    const url = getChallengeUrl(item);
+    try { await wagersApi.markPlaying(item.id); } catch {}
+    openUrl(url);
+    loadData();
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
+  };
+  const handleAddOnBga = async (item) => {
+    openUrl(`https://boardgamearena.com/player?name=${item.bga_username}`);
+    try { await friendsApi.markBgaAdded(item.friendship_id); loadData(); } catch {}
   };
 
   const getOpponentPlatformUsername = (w) =>
@@ -173,12 +183,16 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                 <div style={styles.friendUsername}>@{item.chess_com_username}</div>
               </div>
               {item.bga_username && (
-                <button
-                  style={styles.bgaLinkButton}
-                  onClick={(e) => { e.stopPropagation(); openUrl(`https://boardgamearena.com/player?name=${item.bga_username}`); }}
-                >
-                  Add on BGA
-                </button>
+                item.bga_friend_added ? (
+                  <span style={styles.bgaAddedBadge}>BGA Added</span>
+                ) : (
+                  <button
+                    style={styles.bgaLinkButton}
+                    onClick={(e) => { e.stopPropagation(); handleAddOnBga(item); }}
+                  >
+                    Add on BGA
+                  </button>
+                )
               )}
               <span style={styles.challengeIcon} onClick={() => handleChallengeFriend(item)}>⚔</span>
             </div>
@@ -223,9 +237,14 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <div style={styles.actionRow}>
                         <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
                       </div>
+                    ) : item.gameStarted ? (
+                      <div style={styles.actionRow}>
+                        <span style={{ ...styles.badge, background: theme.colors.primary, color: '#fff' }}>GAME IN PROGRESS</span>
+                        <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                      </div>
                     ) : (
                       <div style={styles.actionRow}>
-                        <button style={styles.playNowButton} onClick={() => openUrl(getChallengeUrl(item))}>
+                        <button style={styles.playNowButton} onClick={() => handlePlayNow(item)}>
                           Play Now
                         </button>
                         <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
@@ -282,5 +301,6 @@ const styles = {
   actionRow: { display: 'flex', gap: 8, alignItems: 'center' },
   playNowButton: { background: theme.colors.success, borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 800, fontSize: 13 },
   bgaLinkButton: { background: 'transparent', border: `1px solid ${theme.colors.primary}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: theme.colors.primary, fontWeight: 600, fontSize: 11, marginRight: 4, whiteSpace: 'nowrap' },
+  bgaAddedBadge: { background: 'transparent', border: `1px solid ${theme.colors.success}`, borderRadius: 6, padding: '4px 8px', color: theme.colors.success, fontWeight: 600, fontSize: 11, marginRight: 4, whiteSpace: 'nowrap' },
   refreshBtn: { background: theme.colors.surface, border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '8px 24px', color: theme.colors.textSecondary, cursor: 'pointer', fontSize: 13 },
 };

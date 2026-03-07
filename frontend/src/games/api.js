@@ -41,6 +41,7 @@ export const friendsApi = {
     }),
   accept: (id) => gamesApi(`/friends/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/friends/${id}/decline`, { method: 'POST' }),
+  markBgaAdded: (id) => gamesApi(`/friends/${id}/bga-added`, { method: 'POST' }),
 };
 
 // Wagers
@@ -55,6 +56,7 @@ export const wagersApi = {
   accept: (id) => gamesApi(`/wagers/${id}/accept`, { method: 'POST' }),
   decline: (id) => gamesApi(`/wagers/${id}/decline`, { method: 'POST' }),
   cancel: (id) => gamesApi(`/wagers/${id}/cancel`, { method: 'POST' }),
+  markPlaying: (id) => gamesApi(`/wagers/${id}/playing`, { method: 'POST' }),
   pay: (id) => gamesApi(`/stripe/wagers/${id}/pay`, { method: 'POST' }),
 };
 

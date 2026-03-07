@@ -3393,6 +3393,13 @@ function SportsApp({ onBackToHub, wallet, profile }) {
   const { firebaseUser } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [tab, setTab] = useState("explore");
+  const tabScrollRef = useRef({}); // save scroll per tab
+  const changeTab = (t) => {
+    tabScrollRef.current[tab] = window.scrollY;
+    setTab(t);
+    if (selectedGame) closeGame();
+    requestAnimationFrame(() => window.scrollTo(0, tabScrollRef.current[t] || 0));
+  };
   const [games, setGames] = useState([]);
   const [props, setProps] = useState([]);
   const [loadingIds, setLoadingIds] = useState(new Set());
@@ -3830,7 +3837,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
       )}
 
       {/* ── Bottom Nav ── */}
-      <BottomNav activeTab={tab} onTabChange={t => { setTab(t); if (selectedGame) closeGame(); }} balance={wallet ? parseFloat(wallet.balanceDollars) : null} />
+      <BottomNav activeTab={tab} onTabChange={changeTab} balance={wallet ? parseFloat(wallet.balanceDollars) : null} />
 
       {/* ── Overlays ── */}
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />

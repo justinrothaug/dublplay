@@ -1,5 +1,4 @@
 import { db } from '../config/firebase';
-import { stripe } from '../config/stripe';
 import { fetchRecentGames, findMatchingGame, getResultForChallenger } from '../services/chesscom.service';
 
 export async function pollActiveWagers() {
@@ -61,37 +60,30 @@ export async function pollActiveWagers() {
 
 async function processWinnerPayout(wagerId: string, wager: any, winnerId: string) {
   try {
-    const winnerDoc = await db.collection('dublplay_users').doc(winnerId).get();
-    const connectAccountId = winnerDoc.data()?.stripeConnectAccountId;
-
-    if (!connectAccountId) {
-      console.error(`Winner ${winnerId} has no Stripe Connect account`);
-      return;
-    }
-
     const totalPot = wager.amountCents * 2;
-    const platformFee = Math.round(totalPot * 0.05);
+    const platformFee = Math.round(totalPot * 0.05); // 5% platform fee
     const payoutAmount = totalPot - platformFee;
 
-    const transfer = await stripe.transfers.create({
-      amount: payoutAmount,
-      currency: 'usd',
-      destination: connectAccountId,
-      transfer_group: wagerId,
-      metadata: { wagerId, winnerId },
-    });
+    // Credit winner's wallet balance
+    const winnerRef = db.collection('dublplay_users').doc(winnerId);
+    const winnerDoc = await winnerRef.get();
+    const currentBalance = winnerDoc.data()?.walletBalanceCents || 0;
 
-    await db.collection('dublplay_wagers').doc(wagerId).update({ payoutTransferId: transfer.id });
+    await winnerRef.update({
+      walletBalanceCents: currentBalance + payoutAmount,
+      updatedAt: new Date().toISOString(),
+    });
 
     await db.collection('dublplay_transactions').doc().set({
       wagerId,
       userId: winnerId,
       type: 'payout',
       amountCents: payoutAmount,
-      stripeTransferId: transfer.id,
       status: 'completed',
       createdAt: new Date().toISOString(),
     });
+
+    console.log(`Credited $${(payoutAmount / 100).toFixed(2)} to wallet of user ${winnerId} for wager ${wagerId}`);
   } catch (err) {
     console.error(`Payout failed for wager ${wagerId}:`, err);
   }
@@ -99,24 +91,28 @@ async function processWinnerPayout(wagerId: string, wager: any, winnerId: string
 
 async function processDrawRefund(wagerId: string, wager: any) {
   try {
-    for (const piId of [wager.challengerPaymentIntentId, wager.opponentPaymentIntentId]) {
-      if (piId) {
-        await stripe.refunds.create({ payment_intent: piId });
-        const userId = piId === wager.challengerPaymentIntentId
-          ? wager.challengerId
-          : wager.opponentId;
+    // Refund both players' wallets
+    for (const userId of [wager.challengerId, wager.opponentId]) {
+      const userRef = db.collection('dublplay_users').doc(userId);
+      const userDoc = await userRef.get();
+      const currentBalance = userDoc.data()?.walletBalanceCents || 0;
 
-        await db.collection('dublplay_transactions').doc().set({
-          wagerId,
-          userId,
-          type: 'draw_refund',
-          amountCents: wager.amountCents,
-          stripePaymentIntentId: piId,
-          status: 'completed',
-          createdAt: new Date().toISOString(),
-        });
-      }
+      await userRef.update({
+        walletBalanceCents: currentBalance + wager.amountCents,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await db.collection('dublplay_transactions').doc().set({
+        wagerId,
+        userId,
+        type: 'draw_refund',
+        amountCents: wager.amountCents,
+        status: 'completed',
+        createdAt: new Date().toISOString(),
+      });
     }
+
+    console.log(`Draw refund: credited $${(wager.amountCents / 100).toFixed(2)} each to both players for wager ${wagerId}`);
   } catch (err) {
     console.error(`Draw refund failed for wager ${wagerId}:`, err);
   }

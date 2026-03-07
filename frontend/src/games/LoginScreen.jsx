@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
-import { theme } from './theme.js';
 
 export default function LoginScreen() {
   const { signInWithGoogle } = useAuth();
@@ -20,9 +19,9 @@ export default function LoginScreen() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.content}>
-        <div style={styles.title}>dublplay</div>
-        <div style={styles.subtitle}>Sports betting & chess wagers</div>
+      <img src="/loading.png" alt="dublplay" style={styles.bgImage} />
+      <div style={styles.overlay}>
+        <div style={styles.spacer} />
         <button
           style={{ ...styles.googleButton, ...(loading ? styles.buttonDisabled : {}) }}
           onClick={handleGoogleSignIn}
@@ -39,11 +38,47 @@ export default function LoginScreen() {
 }
 
 const styles = {
-  container: { display: 'flex', flexDirection: 'column', minHeight: '100%', background: theme.colors.background },
-  content: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: 24, maxWidth: 400, margin: '0 auto', width: '100%' },
-  title: { fontSize: 36, fontWeight: 800, color: theme.colors.primary, textAlign: 'center', marginBottom: 4 },
-  subtitle: { fontSize: 15, color: theme.colors.textSecondary, textAlign: 'center', marginBottom: 52 },
-  googleButton: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, background: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16, cursor: 'pointer', width: '100%' },
+  container: {
+    position: 'relative',
+    minHeight: '100vh',
+    background: '#0a0e1a',
+    overflow: 'hidden',
+  },
+  bgImage: {
+    position: 'absolute',
+    top: 0,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: '100%',
+    maxWidth: 480,
+    height: '100%',
+    objectFit: 'cover',
+    objectPosition: 'top center',
+  },
+  overlay: {
+    position: 'relative',
+    zIndex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    minHeight: '100vh',
+    padding: '0 24px 48px',
+  },
+  spacer: { flex: 1 },
+  googleButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    background: '#fff',
+    border: 'none',
+    borderRadius: 12,
+    padding: '16px 32px',
+    cursor: 'pointer',
+    width: '100%',
+    maxWidth: 340,
+    boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+  },
   buttonDisabled: { opacity: 0.6, cursor: 'default' },
   googleIcon: { fontSize: 20, fontWeight: 700, color: '#4285F4' },
   googleText: { fontSize: 18, fontWeight: 600, color: '#333' },

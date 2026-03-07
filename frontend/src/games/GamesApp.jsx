@@ -33,7 +33,7 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
   };
 
   if (screen === 'newWager') {
-    return <NewWagerScreen params={screenParams} onBack={goBack} onWalletRefresh={wallet?.refresh} />;
+    return <NewWagerScreen params={screenParams} onBack={goBack} onWalletRefresh={wallet?.refresh} walletBalance={wallet?.balanceDollars} />;
   }
 
   return (

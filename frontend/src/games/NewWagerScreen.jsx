@@ -5,7 +5,7 @@ import { PLATFORMS, getGameDisplayName, getPlatformDisplayName } from './gameCon
 import { authApi } from './api.js';
 import { theme } from './theme.js';
 
-export default function NewWagerScreen({ params, onBack, onWalletRefresh }) {
+export default function NewWagerScreen({ params, onBack, onWalletRefresh, walletBalance }) {
   const { user, refreshUser } = useAuth();
   const [friends, setFriends] = useState([]);
   const [selectedFriend, setSelectedFriend] = useState(null);
@@ -59,7 +59,11 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh }) {
       onWalletRefresh?.();
       onBack();
     } catch (err) {
-      alert('Error: ' + err.message);
+      if (err.message?.includes('Insufficient balance')) {
+        alert(`Insufficient funds! Your balance is $${walletBalance || '0.00'}. Please deposit more funds from the wallet.`);
+      } else {
+        alert('Error: ' + err.message);
+      }
     }
   };
 
@@ -170,7 +174,12 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh }) {
               </div>
             </div>
 
-            <div style={styles.label}>Wager Amount ($)</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={styles.label}>Wager Amount ($)</div>
+              <div style={{ fontSize: 13, color: theme.colors.textMuted, marginTop: 16 }}>
+                Balance: <span style={{ color: theme.colors.success, fontWeight: 700 }}>${walletBalance || '0.00'}</span>
+              </div>
+            </div>
             <input
               style={styles.input}
               value={amount}

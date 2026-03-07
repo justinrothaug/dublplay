@@ -4420,7 +4420,7 @@ function AuthenticatedApp() {
     const AdminScreen = lazy(() => import("./games/AdminScreen.jsx"));
     return (
       <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Admin...</div>}>
-        <AdminScreen onBack={() => setMode(null)} />
+        <AdminScreen onBack={() => { wallet.refresh(); setMode(null); }} />
       </Suspense>
     );
   }

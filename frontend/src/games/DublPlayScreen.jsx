@@ -121,6 +121,20 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       alert('Error: ' + err.message);
     }
   };
+  const handleReportResult = async (item, winnerId) => {
+    try {
+      const res = await wagersApi.reportResult(item.id, winnerId);
+      if (res.disagreement) {
+        alert('You and your opponent reported different results. Your report has been updated.');
+      } else if (res.reported) {
+        alert('Result reported! Waiting for your opponent to confirm.');
+      }
+      loadData();
+      onWalletRefresh?.();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
@@ -324,9 +338,52 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     ) : (
                       <div style={styles.actionRow}>
                         {iHaveClickedPlay(item) ? (
-                          <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
-                            ACTIVE
-                          </button>
+                          <>
+                            <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
+                              GAME IN PROGRESS
+                            </button>
+                            {item.reportedBy && item.reportedBy !== user?.id ? (
+                              <>
+                                <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, padding: '4px 8px' }}
+                                  onClick={() => handleReportResult(item, item.reportedResult)}>
+                                  Confirm
+                                </button>
+                                <button style={{ ...styles.badge, background: theme.colors.danger, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, padding: '4px 8px' }}
+                                  onClick={() => {
+                                    const me = user?.id;
+                                    const other = item.challengerId === me ? item.opponentId : item.challengerId;
+                                    const myWin = me;
+                                    const theirWin = other;
+                                    const reported = item.reportedResult;
+                                    // Report opposite of what they claimed
+                                    const myReport = reported === myWin ? theirWin : myWin;
+                                    handleReportResult(item, myReport);
+                                  }}>
+                                  Dispute
+                                </button>
+                              </>
+                            ) : item.reportedBy === user?.id ? (
+                              <span style={{ fontSize: 11, color: theme.colors.textMuted }}>Waiting for opponent...</span>
+                            ) : (
+                              <>
+                                <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, padding: '4px 8px' }}
+                                  onClick={() => handleReportResult(item, user?.id)}>
+                                  I Won
+                                </button>
+                                <button style={{ ...styles.badge, background: theme.colors.danger, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, padding: '4px 8px' }}
+                                  onClick={() => {
+                                    const opponentId = item.challengerId === user?.id ? item.opponentId : item.challengerId;
+                                    handleReportResult(item, opponentId);
+                                  }}>
+                                  I Lost
+                                </button>
+                                <button style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted, background: 'transparent', cursor: 'pointer', fontSize: 11, padding: '4px 8px' }}
+                                  onClick={() => handleReportResult(item, 'draw')}>
+                                  Draw
+                                </button>
+                              </>
+                            )}
+                          </>
                         ) : (
                           <button style={{ ...styles.badge, background: theme.colors.primary, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, padding: '6px 16px' }} onClick={() => handlePlayNow(item)}>
                             PLAY

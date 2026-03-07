@@ -59,6 +59,7 @@ export const wagersApi = {
   cancel: (id) => gamesApi(`/wagers/${id}/cancel`, { method: 'POST' }),
   markPlaying: (id) => gamesApi(`/wagers/${id}/playing`, { method: 'POST' }),
   checkResult: (id) => gamesApi(`/wagers/${id}/check-result`, { method: 'POST' }),
+  reportResult: (id, winnerId) => gamesApi(`/wagers/${id}/report-result`, { method: 'POST', body: JSON.stringify({ winnerId }) }),
   pay: (id) => gamesApi(`/stripe/wagers/${id}/pay`, { method: 'POST' }),
 };
 

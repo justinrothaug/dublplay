@@ -8,7 +8,7 @@ import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
 export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) {
-  const { user, needsRegistration, disconnectChess, refreshUser } = useAuth();
+  const { user, needsRegistration, logout, refreshUser } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
@@ -113,7 +113,7 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
                 borderRadius: 8, fontSize: 13, color: theme.colors.textSecondary,
               }}>
-                <span style={{ fontWeight: 600, color: theme.colors.text }}>{user.bga_username}</span>
+                <span style={{ fontWeight: 600, color: theme.colors.text }}>{decodeURIComponent(user.bga_username)}</span>
                 <span style={{ marginLeft: 4, opacity: 0.6 }}>BGA</span>
               </div>
             ) : linkingBga ? (
@@ -157,7 +157,7 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
               >+ Link Board Game Arena</button>
             )}
             <button
-              onClick={() => { setShowProfile(false); disconnectChess(); }}
+              onClick={() => { setShowProfile(false); logout(); }}
               style={{
                 width: '100%', padding: '10px 0', marginTop: 8,
                 background: 'transparent', color: theme.colors.danger, border: `1px solid ${theme.colors.border}`,

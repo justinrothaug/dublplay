@@ -71,7 +71,7 @@ router.get('/account-status', authenticate, async (req: Request, res: Response) 
   });
 });
 
-// Pay for a wager (creates PaymentIntent)
+// Pay for a wager from wallet balance
 router.post('/wagers/:id/pay', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const wagerRef = db.collection('dublplay_wagers').doc(String(req.params.id));
@@ -91,38 +91,43 @@ router.post('/wagers/:id/pay', authenticate, async (req: Request, res: Response)
   if (isChallenger && wager.challengerPaid) throw new AppError(400, 'Already paid');
   if (isOpponent && wager.opponentPaid) throw new AppError(400, 'Already paid');
 
-  // Get or create Stripe customer
+  // Deduct from wallet balance
   const userRef = db.collection('dublplay_users').doc(userId);
   const userDoc = await userRef.get();
   const user = userDoc.data()!;
+  const balance = user.walletBalanceCents || 0;
 
-  let customerId = user.stripeCustomerId;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: user.email,
-      metadata: { userId },
-    });
-    customerId = customer.id;
-    await userRef.update({ stripeCustomerId: customerId });
+  if (balance < wager.amountCents) {
+    throw new AppError(400, `Insufficient balance. You have $${(balance / 100).toFixed(2)} but need $${(wager.amountCents / 100).toFixed(2)}. Deposit funds first.`);
   }
 
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: wager.amountCents,
-    currency: 'usd',
-    customer: customerId,
-    transfer_group: wagerDoc.id,
-    metadata: {
-      wagerId: wagerDoc.id,
-      userId,
-      side: isChallenger ? 'challenger' : 'opponent',
-    },
+  await userRef.update({
+    walletBalanceCents: balance - wager.amountCents,
+    updatedAt: new Date().toISOString(),
   });
 
-  // Store the PaymentIntent ID
-  const field = isChallenger ? 'challengerPaymentIntentId' : 'opponentPaymentIntentId';
-  await wagerRef.update({ [field]: paymentIntent.id, updatedAt: new Date().toISOString() });
+  // Mark as paid
+  const paidField = isChallenger ? 'challengerPaid' : 'opponentPaid';
+  await wagerRef.update({ [paidField]: true, updatedAt: new Date().toISOString() });
 
-  res.json({ clientSecret: paymentIntent.client_secret });
+  // Check if both sides paid → activate
+  const freshWager = (await wagerRef.get()).data()!;
+  if (freshWager.challengerPaid && freshWager.opponentPaid) {
+    await wagerRef.update({ status: 'active', updatedAt: new Date().toISOString() });
+  }
+
+  // Record transaction
+  await db.collection('dublplay_transactions').doc().set({
+    wagerId: wagerDoc.id,
+    userId,
+    type: 'bet_payment',
+    amountCents: wager.amountCents,
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+  });
+
+  const newBalance = balance - wager.amountCents;
+  res.json({ success: true, newBalanceCents: newBalance });
 });
 
 // Stripe webhook
@@ -143,7 +148,7 @@ router.post(
     if (event.type === 'payment_intent.succeeded') {
       const pi = event.data.object as any;
 
-      // ── Wallet deposit ──
+      // ── Wallet deposit (only remaining Stripe payment flow) ──
       if (pi.metadata?.type === 'wallet_deposit') {
         const userId = pi.metadata.userId;
         if (userId) {
@@ -164,34 +169,7 @@ router.post(
           });
         }
       }
-
-      // ── Wager payment ──
-      const wagerId = pi.metadata?.wagerId;
-      const side = pi.metadata?.side;
-
-      if (wagerId && side) {
-        const wagerRef = db.collection('dublplay_wagers').doc(wagerId);
-        const paidField = side === 'challenger' ? 'challengerPaid' : 'opponentPaid';
-        await wagerRef.update({ [paidField]: true, updatedAt: new Date().toISOString() });
-
-        // Check if both sides paid
-        const wagerDoc = await wagerRef.get();
-        const wager = wagerDoc.data()!;
-        if (wager.challengerPaid && wager.opponentPaid) {
-          await wagerRef.update({ status: 'active', updatedAt: new Date().toISOString() });
-        }
-
-        // Record transaction
-        await db.collection('dublplay_transactions').doc().set({
-          wagerId,
-          userId: pi.metadata.userId,
-          type: 'bet_payment',
-          amountCents: pi.amount,
-          stripePaymentIntentId: pi.id,
-          status: 'completed',
-          createdAt: new Date().toISOString(),
-        });
-      }
+      // Note: wager payments now deduct from wallet balance directly (no Stripe charge)
     }
 
     res.json({ received: true });

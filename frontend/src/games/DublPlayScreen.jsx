@@ -51,10 +51,11 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
       try {
         const results = await friendsApi.search(value.trim());
         setSearchResults(results);
-        setShowDropdown(results.length > 0);
-      } catch {
+        setShowDropdown(true);
+      } catch (err) {
+        console.error('Friend search error:', err);
         setSearchResults([]);
-        setShowDropdown(false);
+        setShowDropdown(true);
       }
     }, 200);
   };
@@ -177,11 +178,13 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
         ? { label: 'WIN', color: theme.colors.success }
         : { label: 'LOSS', color: theme.colors.danger };
     }
-    if (w.status === 'active' && w.gameStarted) {
-      return { label: 'GAME IN PROGRESS', color: theme.colors.success };
-    }
     const labels = { pending_acceptance: 'PENDING', active: 'ACTIVE', both_paid: 'PLAYING' };
     return { label: labels[w.status] || w.status.toUpperCase(), color: theme.colors.primary };
+  };
+
+  const iHaveClickedPlay = (w) => {
+    const isChallenger = w.challengerId === user?.id;
+    return isChallenger ? w.challengerPlaying : w.opponentPlaying;
   };
 
   const isPendingForMe = (w) =>
@@ -238,18 +241,22 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
           </div>
           {showDropdown && (
             <div style={styles.dropdown}>
-              {searchResults.map((r) => (
-                <div
-                  key={r.id}
-                  style={styles.dropdownItem}
-                  onMouseDown={() => handleSelectUser(r)}
-                >
-                  <div style={styles.friendName}>{r.display_name}</div>
-                  {r.chess_com_username && (
-                    <div style={styles.friendUsername}>@{r.chess_com_username}</div>
-                  )}
-                </div>
-              ))}
+              {searchResults.length === 0 ? (
+                <div style={{ padding: '12px 16px', color: theme.colors.textMuted, fontSize: 13 }}>No users found</div>
+              ) : (
+                searchResults.map((r) => (
+                  <div
+                    key={r.id}
+                    style={styles.dropdownItem}
+                    onMouseDown={() => handleSelectUser(r)}
+                  >
+                    <div style={styles.friendName}>{r.display_name}</div>
+                    {r.chess_com_username && (
+                      <div style={styles.friendUsername}>@{r.chess_com_username}</div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -316,9 +323,15 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       </div>
                     ) : (
                       <div style={styles.actionRow}>
-                        <button style={{ ...styles.badge, background: item.gameStarted ? theme.colors.success : theme.colors.primary, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
-                          {statusInfo.label}
-                        </button>
+                        {iHaveClickedPlay(item) ? (
+                          <button style={{ ...styles.badge, background: theme.colors.success, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
+                            ACTIVE
+                          </button>
+                        ) : (
+                          <button style={{ ...styles.badge, background: theme.colors.primary, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, padding: '6px 16px' }} onClick={() => handlePlayNow(item)}>
+                            PLAY
+                          </button>
+                        )}
                         <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                       </div>
                     )

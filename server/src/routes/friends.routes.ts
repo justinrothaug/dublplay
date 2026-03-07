@@ -115,34 +115,50 @@ router.get('/requests', async (req: Request, res: Response) => {
   res.json(requests);
 });
 
-// Search users by display name (for autocomplete)
+// Search users by display name or chess.com username (for autocomplete)
 router.get('/search', async (req: Request, res: Response) => {
-  const userId = req.user!.userId;
-  const q = (req.query.q as string || '').toLowerCase().trim();
+  try {
+    const userId = req.user!.userId;
+    const q = (req.query.q as string || '').toLowerCase().trim();
 
-  if (!q || q.length < 1) {
-    return res.json([]);
-  }
+    if (!q || q.length < 1) {
+      return res.json([]);
+    }
 
-  // Firestore range query for prefix matching on displayNameLower
-  const snapshot = await db.collection('dublplay_users')
-    .where('displayNameLower', '>=', q)
-    .where('displayNameLower', '<=', q + '\uf8ff')
-    .limit(10)
-    .get();
+    // Search by display name prefix
+    const byName = await db.collection('dublplay_users')
+      .where('displayNameLower', '>=', q)
+      .where('displayNameLower', '<=', q + '\uf8ff')
+      .limit(10)
+      .get();
 
-  const results = snapshot.docs
-    .filter((doc) => doc.id !== userId)
-    .map((doc) => {
+    // Also search by chess.com username prefix
+    const byChess = await db.collection('dublplay_users')
+      .where('chessComUsernameLower', '>=', q)
+      .where('chessComUsernameLower', '<=', q + '\uf8ff')
+      .limit(10)
+      .get();
+
+    const seen = new Set<string>();
+    const results: any[] = [];
+
+    for (const doc of [...byName.docs, ...byChess.docs]) {
+      if (doc.id === userId || seen.has(doc.id)) continue;
+      seen.add(doc.id);
       const u = doc.data();
-      return {
+      results.push({
         id: doc.id,
         display_name: u.displayName,
         chess_com_username: u.chessComUsername || null,
-      };
-    });
+        bga_username: u.bgaUsername || null,
+      });
+    }
 
-  res.json(results);
+    res.json(results);
+  } catch (err) {
+    console.error('Friend search error:', err);
+    res.json([]);
+  }
 });
 
 // Send friend request by display name or chess.com username

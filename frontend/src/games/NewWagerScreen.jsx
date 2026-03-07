@@ -211,11 +211,12 @@ export default function NewWagerScreen({ params, onBack, onWalletRefresh, wallet
 }
 
 const styles = {
-  container: { flex: 1, background: theme.colors.background, minHeight: '100%' },
+  container: { background: theme.colors.background, borderRadius: 16 },
   modalHeader: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     padding: '16px 16px 8px', background: theme.colors.surface,
     borderBottom: `1px solid ${theme.colors.border}`,
+    borderRadius: '16px 16px 0 0',
   },
   modalTitle: { color: theme.colors.primary, fontSize: 18, fontWeight: 700 },
   backBtn: {
@@ -228,7 +229,7 @@ const styles = {
     border: 'none', cursor: 'pointer', color: theme.colors.text, fontSize: 18,
     fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  content: { padding: 16, paddingBottom: 100, maxWidth: 500, margin: '0 auto', width: '100%' },
+  content: { padding: 16, paddingBottom: 24, maxWidth: 500, margin: '0 auto', width: '100%' },
   label: {
     color: theme.colors.textSecondary, fontSize: 13, fontWeight: 600,
     textTransform: 'uppercase', letterSpacing: 1, marginTop: 16, marginBottom: 8,

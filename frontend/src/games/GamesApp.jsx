@@ -32,12 +32,17 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
     setScreenParams(null);
   };
 
-  if (screen === 'newWager') {
-    return <NewWagerScreen params={screenParams} onBack={goBack} onWalletRefresh={wallet?.refresh} walletBalance={wallet?.balanceDollars} />;
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: theme.colors.background }}>
+      {/* Challenge modal overlay */}
+      {screen === 'newWager' && (
+        <div style={styles.modalOverlay} onClick={goBack}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <NewWagerScreen params={screenParams} onBack={goBack} onWalletRefresh={wallet?.refresh} walletBalance={wallet?.balanceDollars} />
+          </div>
+        </div>
+      )}
+
       {/* Top bar with profile + wallet + back */}
       <div style={styles.topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -198,6 +203,18 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
 }
 
 const styles = {
+  modalOverlay: {
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 16,
+  },
+  modalContent: {
+    background: theme.colors.background, borderRadius: 16,
+    border: `1px solid ${theme.colors.border}`,
+    width: '100%', maxWidth: 440, maxHeight: '85vh', overflowY: 'auto',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+  },
   topBar: { padding: '8px 16px', background: theme.colors.surface, borderBottom: `1px solid ${theme.colors.border}` },
   backButton: { background: 'none', border: 'none', color: theme.colors.primary, fontSize: 15, fontWeight: 600, cursor: 'pointer', padding: '4px 0' },
   bottomNav: {

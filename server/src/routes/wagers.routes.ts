@@ -186,8 +186,8 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
     throw new AppError(404, 'Wager not found or cannot be declined');
   }
 
-  await ref.update({ status: 'cancelled', updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, status: 'cancelled' });
+  await ref.delete();
+  res.json({ deleted: true });
 });
 
 // Cancel wager (challenger only, before acceptance)
@@ -202,8 +202,8 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
     throw new AppError(404, 'Wager not found or cannot be cancelled');
   }
 
-  await ref.update({ status: 'cancelled', updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, status: 'cancelled' });
+  await ref.delete();
+  res.json({ deleted: true });
 });
 
 export default router;

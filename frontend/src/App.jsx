@@ -4235,7 +4235,7 @@ const modalBox = {
 };
 
 // ── HUB SCREEN ─────────────────────────────────────────────────────────────
-function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
+function HubScreen({ onSelect, user, onLogout, wallet, profile, dbUser }) {
   const [showDeposit, setShowDeposit] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
@@ -4327,6 +4327,19 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
         </button>
       </div>
 
+      {/* Admin button — only for admins */}
+      {dbUser?.is_admin && (
+        <button
+          onClick={() => onSelect("admin")}
+          style={{
+            marginTop: 24, padding: "10px 24px",
+            background: "rgba(239,83,80,0.1)", border: "1px solid #ef5350",
+            borderRadius: 10, color: "#ef5350", fontSize: 13, fontWeight: 700,
+            cursor: "pointer", letterSpacing: "0.04em",
+          }}
+        >Admin Panel</button>
+      )}
+
       {showDeposit && <WalletModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} wallet={wallet} />}
       {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onLogout={onLogout} onClose={() => setShowProfile(false)} />}
     </div>
@@ -4368,7 +4381,16 @@ function AuthenticatedApp() {
     );
   }
 
-  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} profile={profile} />;
+  if (mode === "admin") {
+    const AdminScreen = lazy(() => import("./games/AdminScreen.jsx"));
+    return (
+      <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Admin...</div>}>
+        <AdminScreen onBack={() => setMode(null)} />
+      </Suspense>
+    );
+  }
+
+  return <HubScreen onSelect={setMode} user={firebaseUser} onLogout={logout} wallet={wallet} profile={profile} dbUser={user} />;
 }
 
 // ── APP ROOT ────────────────────────────────────────────────────────────────

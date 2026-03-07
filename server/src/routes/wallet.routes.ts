@@ -71,21 +71,29 @@ router.get('/history', authenticate, async (req: Request, res: Response) => {
     } catch {}
   }
 
-  const enriched = transactions.map(t => {
-    if (t.wagerId && wagerMap[t.wagerId]) {
-      const w = wagerMap[t.wagerId];
-      const opponentId = w.challengerId === userId ? w.opponentId : w.challengerId;
-      return {
-        ...t,
-        opponentName: userNames[opponentId] || null,
-        game: w.gameType || null,
-        platform: w.platform || null,
-        wagerStatus: w.status || null,
-        winnerId: w.winnerId || null,
-      };
-    }
-    return t;
-  });
+  const enriched = transactions
+    .filter((t: any) => {
+      // Hide bet_payment transactions for wagers that no longer exist (cancelled/declined)
+      if (t.type === 'bet_payment' && t.wagerId && !wagerMap[t.wagerId]) return false;
+      // Hide refund transactions (cancelled = never happened)
+      if (t.type === 'refund') return false;
+      return true;
+    })
+    .map((t: any) => {
+      if (t.wagerId && wagerMap[t.wagerId]) {
+        const w = wagerMap[t.wagerId];
+        const opponentId = w.challengerId === userId ? w.opponentId : w.challengerId;
+        return {
+          ...t,
+          opponentName: userNames[opponentId] || null,
+          game: w.gameType || null,
+          platform: w.platform || null,
+          wagerStatus: w.status || null,
+          winnerId: w.winnerId || null,
+        };
+      }
+      return t;
+    });
 
   res.json(enriched);
 });

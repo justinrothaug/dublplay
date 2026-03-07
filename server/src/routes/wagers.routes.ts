@@ -186,24 +186,50 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
     throw new AppError(404, 'Wager not found or cannot be declined');
   }
 
-  await ref.update({ status: 'cancelled', updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, status: 'cancelled' });
+  await ref.delete();
+  res.json({ deleted: true });
 });
 
-// Cancel wager (challenger only, before acceptance)
+// Cancel wager — before acceptance: instant delete. After acceptance: request mutual cancel.
 router.post('/:id/cancel', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const ref = db.collection('dublplay_wagers').doc(String(req.params.id));
   const doc = await ref.get();
 
-  if (!doc.exists) throw new AppError(404, 'Wager not found or cannot be cancelled');
+  if (!doc.exists) throw new AppError(404, 'Wager not found');
   const w = doc.data()!;
-  if (w.challengerId !== userId || w.status !== 'pending_acceptance') {
-    throw new AppError(404, 'Wager not found or cannot be cancelled');
+  if (w.challengerId !== userId && w.opponentId !== userId) {
+    throw new AppError(404, 'Wager not found');
   }
 
-  await ref.update({ status: 'cancelled', updatedAt: new Date().toISOString() });
-  res.json({ id: doc.id, ...w, status: 'cancelled' });
+  // Before acceptance: challenger can delete instantly
+  if (w.status === 'pending_acceptance') {
+    if (w.challengerId !== userId) {
+      throw new AppError(400, 'Only the challenger can cancel before acceptance');
+    }
+    await ref.delete();
+    return res.json({ deleted: true });
+  }
+
+  // After acceptance: either side can request cancellation
+  const activeStatuses = ['pending_payment', 'active', 'both_paid'];
+  if (!activeStatuses.includes(w.status)) {
+    throw new AppError(400, 'This wager cannot be cancelled');
+  }
+
+  // If the OTHER person already requested cancellation, this confirms it — delete
+  if (w.cancelRequestedBy && w.cancelRequestedBy !== userId) {
+    await ref.delete();
+    return res.json({ deleted: true });
+  }
+
+  // Otherwise, request cancellation
+  if (w.cancelRequestedBy === userId) {
+    throw new AppError(400, 'You already requested cancellation');
+  }
+
+  await ref.update({ cancelRequestedBy: userId, updatedAt: new Date().toISOString() });
+  res.json({ id: doc.id, ...w, cancelRequestedBy: userId });
 });
 
 export default router;

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './AuthContext.jsx';
 import { friendsApi, wagersApi } from './api.js';
-import { PLATFORMS, getGameDisplayName, getPlatformDisplayName, userHasPlatform } from './gameConfig.js';
+import { PLATFORMS, getGameDisplayName, getPlatformDisplayName } from './gameConfig.js';
+import { authApi } from './api.js';
 import { theme } from './theme.js';
 
 export default function NewWagerScreen({ params, onBack }) {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [friends, setFriends] = useState([]);
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
@@ -30,7 +31,18 @@ export default function NewWagerScreen({ params, onBack }) {
     }).catch(console.error);
   }, [params]);
 
-  const handleSelectGame = (platformId, game) => {
+  const handleSelectGame = async (platformId, game) => {
+    if (platformId === 'bga' && !user?.bga_username) {
+      const bgaName = prompt('Enter your Board Game Arena username to continue:');
+      if (!bgaName?.trim()) return;
+      try {
+        await authApi.updatePlatformUsernames(null, bgaName.trim());
+        await refreshUser();
+      } catch (err) {
+        alert('Error linking BGA: ' + err.message);
+        return;
+      }
+    }
     setSelectedPlatform(platformId);
     setSelectedGame(game);
     setStep('amount');
@@ -59,14 +71,9 @@ export default function NewWagerScreen({ params, onBack }) {
     else { onBack(); }
   };
 
-  // Get platforms both users have linked
+  // Show all platforms — prompt for username during wager if not linked
   const getAvailablePlatforms = () => {
-    return Object.values(PLATFORMS).filter((p) => {
-      // Chess.com is always available (required at registration)
-      if (p.id === 'chesscom') return true;
-      // Other platforms: check if current user has linked
-      return userHasPlatform(user, p.id);
-    });
+    return Object.values(PLATFORMS);
   };
 
   return (

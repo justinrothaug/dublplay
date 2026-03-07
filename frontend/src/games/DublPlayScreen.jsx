@@ -164,6 +164,9 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
         ? { label: 'WIN', color: theme.colors.success }
         : { label: 'LOSS', color: theme.colors.danger };
     }
+    if (w.status === 'active' && w.gameStarted) {
+      return { label: 'GAME IN PROGRESS', color: theme.colors.success };
+    }
     const labels = { pending_acceptance: 'PENDING', active: 'ACTIVE', both_paid: 'PLAYING' };
     return { label: labels[w.status] || w.status.toUpperCase(), color: theme.colors.primary };
   };
@@ -288,7 +291,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>SENT</span>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                     </div>
-                  ) : ['active', 'both_paid'].includes(item.status) ? (
+                  ) : item.status === 'active' || item.status === 'both_paid' ? (
                     item.cancelRequestedBy && item.cancelRequestedBy !== user?.id ? (
                       <div style={styles.actionRow}>
                         <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL REQUESTED</span>
@@ -298,24 +301,10 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <div style={styles.actionRow}>
                         <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
                       </div>
-                    ) : item.gameStarted ? (
-                      <div style={styles.actionRow}>
-                        {((item.challengerId === user?.id && !item.challengerPlaying) ||
-                          (item.opponentId === user?.id && !item.opponentPlaying)) ? (
-                          <button style={styles.playNowButton} onClick={() => handlePlayNow(item)}>
-                            Join Game
-                          </button>
-                        ) : (
-                          <button style={{ ...styles.playNowButton, background: theme.colors.primary }} onClick={() => handlePlayNow(item)}>
-                            Rejoin Game
-                          </button>
-                        )}
-                        <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
-                      </div>
                     ) : (
                       <div style={styles.actionRow}>
-                        <button style={styles.playNowButton} onClick={() => handlePlayNow(item)}>
-                          Play Now
+                        <button style={{ ...styles.badge, background: item.gameStarted ? theme.colors.success : theme.colors.primary, color: '#fff', border: 'none', cursor: 'pointer' }} onClick={() => handlePlayNow(item)}>
+                          {statusInfo.label}
                         </button>
                         <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
                       </div>

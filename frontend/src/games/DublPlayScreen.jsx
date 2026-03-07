@@ -68,8 +68,23 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
   };
 
-  const openPlatform = async (platform) => {
-    const url = getPlatformUrl(platform);
+  const getOpponentPlatformUsername = (w) =>
+    w.challengerId === user?.id ? w.opponent_platform_username : w.challenger_platform_username;
+
+  const getChallengeUrl = (wager) => {
+    const opponentUsername = getOpponentPlatformUsername(wager);
+    const platform = wager.platform || 'chesscom';
+    if (platform === 'chesscom' && opponentUsername) {
+      return `https://www.chess.com/play/${opponentUsername}`;
+    }
+    if (platform === 'bga' && opponentUsername) {
+      return `https://boardgamearena.com/player?id=${opponentUsername}`;
+    }
+    return getPlatformUrl(platform);
+  };
+
+  const openChallenge = async (wager) => {
+    const url = getChallengeUrl(wager);
     if (typeof window !== 'undefined' && window.Capacitor) {
       try {
         const { Browser } = window.Capacitor.Plugins;
@@ -192,7 +207,7 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                     </div>
                   ) : ['active', 'both_paid'].includes(item.status) ? (
                     <div style={styles.actionRow}>
-                      <button style={styles.playNowButton} onClick={() => openPlatform(item.platform || 'chesscom')}>
+                      <button style={styles.playNowButton} onClick={() => openChallenge(item)}>
                         Play Now
                       </button>
                       <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>

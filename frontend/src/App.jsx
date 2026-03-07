@@ -333,6 +333,36 @@ function useFavoritePicks() {
   };
 }
 
+// Auto-add a placed bet to favorites (de-dupes if already saved for that game+spread type)
+function autoFavoriteBet(favorites, game, side, aiOverride) {
+  if (!favorites || !game) return;
+  const pickId = `${game.id}-bet`;
+  // Already in favorites for this game — skip
+  if (favorites.has(pickId)) return;
+  const isHome = side === "home";
+  const teamName = isHome ? (game.homeName || game.home) : (game.awayName || game.away);
+  const spread = isHome
+    ? (game.homeSpread ? `${teamName} ${game.homeSpread}` : `${teamName} ML`)
+    : (game.awaySpread ? `${teamName} ${game.awaySpread}` : `${teamName} ML`);
+  favorites.add({
+    id: pickId, type: "bet",
+    label: "MY BET", icon: "💰", color: "#4caf50",
+    text: spread,
+    score: aiOverride?.dubl_score_bet || 0,
+    reasoning: aiOverride?.dubl_reasoning_bet || "",
+    betTeam: isHome ? game.home : game.away,
+    betIsSpread: !!(isHome ? game.homeSpread : game.awaySpread),
+    matchup: `${game.away} @ ${game.home}`,
+    gameId: game.id, savedAt: Date.now(),
+    gameSnapshot: {
+      away: game.away, home: game.home,
+      awayName: game.awayName, homeName: game.homeName,
+      ou: game.ou, awayOdds: game.awayOdds, homeOdds: game.homeOdds,
+      homeSpreadOdds: game.homeSpreadOdds, awaySpreadOdds: game.awaySpreadOdds,
+    },
+  });
+}
+
 function BookmarkBtn({ active, onClick, light }) {
   return (
     <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
@@ -2341,6 +2371,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
                 const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
                 if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
+                if (result === "placed") autoFavoriteBet(onFavorite, g, side, aiOverrides[g.id]);
               } : null}
               username={profile?.username}
               wallet={wallet}
@@ -3796,6 +3827,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
           onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
             const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
             if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
+            if (result === "placed") autoFavoriteBet(favorites, detailGame, side, aiOverrides[detailGame.id]);
           } : null}
           username={profile?.username}
           profile={profile}

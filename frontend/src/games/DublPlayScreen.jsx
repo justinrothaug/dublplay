@@ -63,6 +63,12 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
   const handleCancelWager = async (id) => {
     try { await wagersApi.cancel(id); loadData(); onWalletRefresh?.(); } catch (err) { alert('Error: ' + err.message); }
   };
+  const handlePlayNow = async (item) => {
+    const url = getChallengeUrl(item);
+    try { await wagersApi.markPlaying(item.id); } catch {}
+    openUrl(url);
+    loadData();
+  };
 
   const handleChallengeFriend = (friend) => {
     onNavigate('newWager', { friendId: friend.id, friendName: friend.display_name, friendUsername: friend.chess_com_username });
@@ -223,9 +229,14 @@ export default function DublPlayScreen({ onNavigate, onWalletRefresh }) {
                       <div style={styles.actionRow}>
                         <span style={{ ...styles.badge, border: `1px solid ${theme.colors.textMuted}`, color: theme.colors.textMuted }}>CANCEL PENDING</span>
                       </div>
+                    ) : item.gameStarted ? (
+                      <div style={styles.actionRow}>
+                        <span style={{ ...styles.badge, background: theme.colors.primary, color: '#fff' }}>GAME IN PROGRESS</span>
+                        <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>
+                      </div>
                     ) : (
                       <div style={styles.actionRow}>
-                        <button style={styles.playNowButton} onClick={() => openUrl(getChallengeUrl(item))}>
+                        <button style={styles.playNowButton} onClick={() => handlePlayNow(item)}>
                           Play Now
                         </button>
                         <button style={styles.declineButton} onClick={() => handleCancelWager(item.id)}>Cancel</button>

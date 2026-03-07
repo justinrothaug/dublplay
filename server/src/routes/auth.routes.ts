@@ -60,6 +60,7 @@ router.post('/register', async (req: Request, res: Response) => {
       display_name: userData.displayName,
       stripe_onboarding_complete: false,
       venmo_username: null,
+      is_admin: false,
       created_at: now,
     });
   } catch (err: any) {
@@ -97,6 +98,7 @@ router.post('/login', async (req: Request, res: Response) => {
       display_name: u.displayName,
       stripe_onboarding_complete: u.stripeOnboardingComplete,
       venmo_username: u.venmoUsername || null,
+      is_admin: !!u.admin,
       created_at: u.createdAt,
     });
   } catch {
@@ -139,6 +141,7 @@ router.put('/chess-username', authenticate, async (req: Request, res: Response) 
     display_name: u.displayName,
     stripe_onboarding_complete: u.stripeOnboardingComplete,
     venmo_username: u.venmoUsername || null,
+    is_admin: !!u.admin,
     created_at: u.createdAt,
   });
 });
@@ -177,6 +180,7 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     display_name: u.displayName,
     stripe_onboarding_complete: u.stripeOnboardingComplete,
     venmo_username: u.venmoUsername || null,
+    is_admin: !!u.admin,
     created_at: u.createdAt,
   });
 });

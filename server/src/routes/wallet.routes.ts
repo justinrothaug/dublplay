@@ -3,6 +3,7 @@ import { db } from '../config/firebase';
 import { stripe } from '../config/stripe';
 import { authenticate } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
+import { sendPayoutRequestEmail } from '../utils/email';
 
 const router = Router();
 
@@ -142,6 +143,10 @@ router.post('/request-payout', authenticate, async (req: Request, res: Response)
     status: 'pending',
     createdAt: new Date().toISOString(),
   });
+
+  // Email admin
+  const displayName = user.displayName || user.email || userId;
+  sendPayoutRequestEmail(displayName, user.venmoUsername, amountCents).catch(() => {});
 
   res.json({ success: true, newBalanceCents: balance - amountCents });
 });

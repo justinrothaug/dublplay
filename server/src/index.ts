@@ -11,6 +11,7 @@ import wagersRoutes from './routes/wagers.routes';
 import stripeRoutes from './routes/stripe.routes';
 import statsRoutes from './routes/stats.routes';
 import walletRoutes from './routes/wallet.routes';
+import adminRoutes from './routes/admin.routes';
 import { pollActiveWagers } from './jobs/pollGames';
 import { expireStaleWagers } from './jobs/expireWagers';
 
@@ -42,6 +43,7 @@ app.use('/api/wagers', wagersRoutes);
 app.use('/api/stripe', stripeRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Games health check
 app.get('/api/health', (_req, res) => {

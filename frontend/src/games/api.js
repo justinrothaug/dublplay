@@ -100,3 +100,15 @@ export const statsApi = {
   leaderboard: () => gamesApi('/stats/leaderboard'),
   balance: (friendId) => gamesApi(`/stats/balance/${friendId}`),
 };
+
+// Admin
+export const adminApi = {
+  users: (search) => gamesApi(`/admin/users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  updateBalance: (userId, balanceCents) =>
+    gamesApi(`/admin/users/${userId}/balance`, {
+      method: 'PUT',
+      body: JSON.stringify({ balanceCents }),
+    }),
+  payouts: (status) => gamesApi(`/admin/payouts${status ? `?status=${status}` : ''}`),
+  markPaid: (payoutId) => gamesApi(`/admin/payouts/${payoutId}/paid`, { method: 'PUT' }),
+};

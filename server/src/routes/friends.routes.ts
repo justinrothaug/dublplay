@@ -64,7 +64,6 @@ router.get('/requests', async (req: Request, res: Response) => {
   const snapshot = await db.collection('dublplay_friendships')
     .where('addresseeId', '==', userId)
     .where('status', '==', 'pending')
-    .orderBy('createdAt', 'desc')
     .get();
 
   const requests: any[] = [];
@@ -84,6 +83,7 @@ router.get('/requests', async (req: Request, res: Response) => {
     }
   }
 
+  requests.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
   res.json(requests);
 });
 

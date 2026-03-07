@@ -5,15 +5,18 @@ async function req(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  const data = await res.json();
   if (!res.ok) {
-    const detail = data.detail;
-    const msg = Array.isArray(detail)
-      ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
-      : (typeof detail === "string" ? detail : "Request failed");
+    let msg = `Server error (${res.status})`;
+    try {
+      const data = await res.json();
+      const detail = data.detail;
+      msg = Array.isArray(detail)
+        ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
+        : (typeof detail === "string" ? detail : msg);
+    } catch { /* response wasn't JSON (e.g. 502 HTML page) */ }
     throw new Error(msg);
   }
-  return data;
+  return await res.json();
 }
 
 export const api = {

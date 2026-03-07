@@ -305,6 +305,7 @@ function useBets(dateStr) {
         return res.action; // "placed" | "switched" | "removed"
       } catch (e) {
         console.error("Bet failed:", e);
+        alert("Bet failed: " + (e.message || "Something went wrong"));
         return null;
       }
     },
@@ -691,7 +692,7 @@ function KalshiCard({ game, aiOverride, pickRecord, onClick, betStore, profile }
 }
 
 // ── KALSHI-STYLE GAME DETAIL VIEW ────────────────────────────────────────────
-function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile, wallet }) {
+function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, favorites, onFavorite, pickRecord, gameBets, onBet, username, onPickOdds, profile, wallet, hideHeader }) {
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const isUp = game.status === "upcoming";
@@ -738,29 +739,31 @@ function KalshiDetail({ game, aiOverride, onBack, onRefresh, loadingRefresh, fav
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg }}>
-      {/* Header */}
-      <div style={{
-        background:T.card, borderBottom:`1px solid ${T.border}`,
-        display:"flex", alignItems:"center", padding:"14px 16px", gap:12,
-        position:"sticky", top:0, zIndex:50,
-      }}>
-        <button onClick={onBack} style={{
-          background:"none", border:"none", fontSize:20, color:T.text, padding:"4px 8px",
-          display:"flex", alignItems:"center",
+      {/* Header — hidden when rendered inside SportsApp with its own top bar */}
+      {!hideHeader && (
+        <div style={{
+          background:T.card, borderBottom:`1px solid ${T.border}`,
+          display:"flex", alignItems:"center", padding:"14px 16px", gap:12,
+          position:"sticky", top:0, zIndex:50,
         }}>
-          ←
-        </button>
-        <div style={{ flex:1, textAlign:"center" }}>
-          <span style={{ fontSize:15, fontWeight:700, color:T.text }}>
-            {game.awayName || TEAM_FULL[game.away] || game.away} at {game.homeName || TEAM_FULL[game.home] || game.home}
-          </span>
+          <button onClick={onBack} style={{
+            background:"none", border:"none", fontSize:20, color:T.text, padding:"4px 8px",
+            display:"flex", alignItems:"center",
+          }}>
+            ←
+          </button>
+          <div style={{ flex:1, textAlign:"center" }}>
+            <span style={{ fontSize:15, fontWeight:700, color:T.text }}>
+              {game.awayName || TEAM_FULL[game.away] || game.away} at {game.homeName || TEAM_FULL[game.home] || game.home}
+            </span>
+          </div>
+          <button onClick={() => onRefresh(game.id)} style={{
+            background:"none", border:"none", fontSize:16, color:T.text3, padding:"4px 8px",
+          }}>
+            {loadingRefresh ? <span style={{ display:"inline-block", animation:"spin 0.8s linear infinite" }}>↻</span> : "↻"}
+          </button>
         </div>
-        <button onClick={() => onRefresh(game.id)} style={{
-          background:"none", border:"none", fontSize:16, color:T.text3, padding:"4px 8px",
-        }}>
-          {loadingRefresh ? <span style={{ display:"inline-block", animation:"spin 0.8s linear infinite" }}>↻</span> : "↻"}
-        </button>
-      </div>
+      )}
 
       <div style={{ maxWidth:480, margin:"0 auto", padding:"0 16px 120px" }}>
         {/* Win probability display */}
@@ -2333,6 +2336,7 @@ function GamesScroll({ games, onRefresh, loadingIds, lastUpdated, aiOverrides, u
               pickRecord={pickRecord}
               gameBets={betStore ? betStore.forGame(g.id, profile?.uid) : null}
               onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+                if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
                 const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", dateStr, firebaseUser?.uid || "");
                 if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
               } : null}
@@ -3647,33 +3651,9 @@ function SportsApp({ onBackToHub, wallet, profile }) {
     picksData.picks.forEach(p => { picksMap[p.game_id] = p; });
   }
 
-  // ── KALSHI DETAIL VIEW ──
-  if (selectedGame) {
-    const sg = games.find(g => g.id === selectedGame.id) || selectedGame;
-    const baseId = sg.id.replace(/-\d{8}$/, "");
-    const pickRecord = picksMap ? (picksMap[baseId] || picksMap[sg.id]) : null;
-    return (
-      <KalshiDetail
-        game={sg}
-        aiOverride={aiOverrides[sg.id]}
-        onBack={() => setSelectedGame(null)}
-        onRefresh={handleRefresh}
-        loadingRefresh={loadingIds.has(sg.id)}
-        favorites={favorites}
-        onFavorite={favorites}
-        pickRecord={pickRecord}
-        gameBets={betStore ? betStore.forGame(sg.id, profile?.uid) : null}
-        onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
-          const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
-          if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
-        } : null}
-        username={profile?.username}
-        profile={profile}
-        wallet={wallet}
-        onPickOdds={odds => setCalcSeed(odds)}
-      />
-    );
-  }
+  // ── Prepare detail view data (rendered inline below) ──
+  const detailGame = selectedGame ? (games.find(g => g.id === selectedGame.id) || selectedGame) : null;
+  const detailPickRecord = detailGame ? (() => { const baseId = detailGame.id.replace(/-\d{8}$/, ""); return picksMap ? (picksMap[baseId] || picksMap[detailGame.id]) : null; })() : null;
 
   // ── KALSHI MAIN VIEW ──
   return (
@@ -3681,11 +3661,11 @@ function SportsApp({ onBackToHub, wallet, profile }) {
       {/* ── Header (Kalshi-style) ── */}
       <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", height:56, padding:"0 20px" }}>
-          {/* Back to hub */}
+          {/* Back to hub / back to list */}
           <button
-            onClick={onBackToHub}
+            onClick={selectedGame ? () => setSelectedGame(null) : onBackToHub}
             style={{ background:"none", border:"none", fontSize:14, color:T.green, fontWeight:600, padding:"4px 12px 4px 0", cursor:"pointer" }}
-          >← Hub</button>
+          >{selectedGame ? "← Back" : "← Hub"}</button>
           {/* Profile avatar */}
           <button
             onClick={() => setShowProfile(v => !v)}
@@ -3760,8 +3740,8 @@ function SportsApp({ onBackToHub, wallet, profile }) {
         </div>
       </div>
 
-      {/* ── Category tabs (Kalshi-style horizontal scroll) ── */}
-      <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
+      {/* ── Category tabs (Kalshi-style horizontal scroll) — hidden in detail view ── */}
+      {!selectedGame && <div style={{ background:T.card, borderBottom:`1px solid ${T.border}` }}>
         <div className="hide-scrollbar" style={{
           display:"flex", gap:0, overflowX:"auto", WebkitOverflowScrolling:"touch",
           padding:"0 16px",
@@ -3787,39 +3767,65 @@ function SportsApp({ onBackToHub, wallet, profile }) {
             );
           })}
         </div>
-      </div>
+      </div>}
 
-      {/* ── Tab content ── */}
-      {tab === "explore" && (
-        <KalshiGameList
-          games={games}
-          aiOverrides={aiOverrides}
-          onGameClick={g => setSelectedGame(g)}
-          lastUpdated={lastUpdated}
-          upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
-          betStore={betStore}
-          profile={profile}
-          loading={gamesLoading}
-          picksMap={picksMap}
-        />
-      )}
-
-      {tab === "mybets" && (
-        <KalshiMyBets
-          games={games}
-          aiOverrides={aiOverrides}
-          onPickOdds={odds => setCalcSeed(odds)}
+      {/* ── Tab content (or detail view) ── */}
+      {selectedGame && detailGame ? (
+        <KalshiDetail
+          game={detailGame}
+          aiOverride={aiOverrides[detailGame.id]}
+          onBack={() => setSelectedGame(null)}
+          onRefresh={handleRefresh}
+          loadingRefresh={loadingIds.has(detailGame.id)}
           favorites={favorites}
           onFavorite={favorites}
-          onGameClick={g => setSelectedGame(g)}
-          loading={gamesLoading || picksLoading}
+          pickRecord={detailPickRecord}
+          gameBets={betStore ? betStore.forGame(detailGame.id, profile?.uid) : null}
+          onBet={betStore && profile?.uid ? async (gid, side, lockedSpread, lockedMl) => {
+            if (wallet && wallet.balanceCents < 1000) { alert("Insufficient balance. Please deposit at least $10 to place a bet."); return; }
+            const result = await betStore.pick(gid, side, profile.uid, profile.username, lockedSpread || "", lockedMl || "", selectedDate || todayStr, firebaseUser?.uid || "");
+            if (wallet && (result === "placed" || result === "removed")) wallet.refresh();
+          } : null}
+          username={profile?.username}
+          profile={profile}
+          wallet={wallet}
+          onPickOdds={odds => setCalcSeed(odds)}
+          hideHeader
         />
-      )}
+      ) : (
+        <>
+          {tab === "explore" && (
+            <KalshiGameList
+              games={games}
+              aiOverrides={aiOverrides}
+              onGameClick={g => setSelectedGame(g)}
+              lastUpdated={lastUpdated}
+              upcomingLabel={selectedDate ? "UPCOMING" : "TONIGHT"}
+              betStore={betStore}
+              profile={profile}
+              loading={gamesLoading}
+              picksMap={picksMap}
+            />
+          )}
 
-      {tab === "chat" && (
-        <div style={{ maxWidth:480, margin:"0 auto", padding:"22px 16px 120px" }}>
-          <ChatTab apiKey={apiKey} />
-        </div>
+          {tab === "mybets" && (
+            <KalshiMyBets
+              games={games}
+              aiOverrides={aiOverrides}
+              onPickOdds={odds => setCalcSeed(odds)}
+              favorites={favorites}
+              onFavorite={favorites}
+              onGameClick={g => setSelectedGame(g)}
+              loading={gamesLoading || picksLoading}
+            />
+          )}
+
+          {tab === "chat" && (
+            <div style={{ maxWidth:480, margin:"0 auto", padding:"22px 16px 120px" }}>
+              <ChatTab apiKey={apiKey} />
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Bottom Nav ── */}

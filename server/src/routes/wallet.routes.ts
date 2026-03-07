@@ -44,7 +44,50 @@ router.get('/history', authenticate, async (req: Request, res: Response) => {
   // Sort in JS if we used the fallback
   transactions.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-  res.json(transactions);
+  // Enrich wager-related transactions with opponent name and game info
+  const wagerIds: string[] = [...new Set(transactions.filter((t: any) => t.wagerId).map((t: any) => t.wagerId as string))];
+  const wagerMap: Record<string, any> = {};
+  for (const wid of wagerIds) {
+    try {
+      const wDoc = await db.collection('dublplay_wagers').doc(wid).get();
+      if (wDoc.exists) wagerMap[wid] = wDoc.data();
+    } catch {}
+  }
+
+  // Resolve unique user IDs for opponent names
+  const opponentIds = new Set<string>();
+  for (const t of transactions) {
+    if (t.wagerId && wagerMap[t.wagerId]) {
+      const w = wagerMap[t.wagerId];
+      const opponentId = w.challengerId === userId ? w.opponentId : w.challengerId;
+      opponentIds.add(opponentId);
+    }
+  }
+  const userNames: Record<string, string> = {};
+  for (const uid of opponentIds) {
+    try {
+      const uDoc = await db.collection('dublplay_users').doc(uid).get();
+      if (uDoc.exists) userNames[uid] = uDoc.data()?.displayName || uDoc.data()?.email || '';
+    } catch {}
+  }
+
+  const enriched = transactions.map(t => {
+    if (t.wagerId && wagerMap[t.wagerId]) {
+      const w = wagerMap[t.wagerId];
+      const opponentId = w.challengerId === userId ? w.opponentId : w.challengerId;
+      return {
+        ...t,
+        opponentName: userNames[opponentId] || null,
+        game: w.gameType || null,
+        platform: w.platform || null,
+        wagerStatus: w.status || null,
+        winnerId: w.winnerId || null,
+      };
+    }
+    return t;
+  });
+
+  res.json(enriched);
 });
 
 // Get wallet balance

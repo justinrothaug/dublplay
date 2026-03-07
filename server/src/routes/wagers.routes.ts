@@ -225,6 +225,10 @@ router.post('/:id/decline', async (req: Request, res: Response) => {
     const challengerDoc = await challengerRef.get();
     const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
     await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
+    // Record refund transaction
+    await db.collection('dublplay_transactions').doc().set({
+      wagerId: doc.id, userId: w.challengerId, type: 'refund', amountCents: w.amountCents, status: 'completed', createdAt: new Date().toISOString(),
+    });
   }
 
   await ref.delete();
@@ -251,6 +255,10 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
       const challengerDoc = await challengerRef.get();
       const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
       await challengerRef.update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() });
+      // Record refund transaction
+      await db.collection('dublplay_transactions').doc().set({
+        wagerId: doc.id, userId: w.challengerId, type: 'refund', amountCents: w.amountCents, status: 'completed', createdAt: new Date().toISOString(),
+      });
     }
     await ref.delete();
     return res.json({ deleted: true });
@@ -271,9 +279,19 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
     ]);
     const challengerBalance = challengerDoc.data()?.walletBalanceCents || 0;
     const opponentBalance = opponentDoc.data()?.walletBalanceCents || 0;
+    const now = new Date().toISOString();
     await Promise.all([
-      db.collection('dublplay_users').doc(w.challengerId).update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: new Date().toISOString() }),
-      db.collection('dublplay_users').doc(w.opponentId).update({ walletBalanceCents: opponentBalance + w.amountCents, updatedAt: new Date().toISOString() }),
+      db.collection('dublplay_users').doc(w.challengerId).update({ walletBalanceCents: challengerBalance + w.amountCents, updatedAt: now }),
+      db.collection('dublplay_users').doc(w.opponentId).update({ walletBalanceCents: opponentBalance + w.amountCents, updatedAt: now }),
+    ]);
+    // Record refund transactions for both players
+    await Promise.all([
+      db.collection('dublplay_transactions').doc().set({
+        wagerId: doc.id, userId: w.challengerId, type: 'refund', amountCents: w.amountCents, status: 'completed', createdAt: now,
+      }),
+      db.collection('dublplay_transactions').doc().set({
+        wagerId: doc.id, userId: w.opponentId, type: 'refund', amountCents: w.amountCents, status: 'completed', createdAt: now,
+      }),
     ]);
     await ref.delete();
     return res.json({ deleted: true });

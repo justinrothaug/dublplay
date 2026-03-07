@@ -61,16 +61,14 @@ export async function pollActiveWagers() {
 async function processWinnerPayout(wagerId: string, wager: any, winnerId: string) {
   try {
     const totalPot = wager.amountCents * 2;
-    const platformFee = Math.round(totalPot * 0.05); // 5% platform fee
-    const payoutAmount = totalPot - platformFee;
 
-    // Credit winner's wallet balance
+    // Credit winner's wallet balance (full pot, no fee)
     const winnerRef = db.collection('dublplay_users').doc(winnerId);
     const winnerDoc = await winnerRef.get();
     const currentBalance = winnerDoc.data()?.walletBalanceCents || 0;
 
     await winnerRef.update({
-      walletBalanceCents: currentBalance + payoutAmount,
+      walletBalanceCents: currentBalance + totalPot,
       updatedAt: new Date().toISOString(),
     });
 
@@ -78,12 +76,12 @@ async function processWinnerPayout(wagerId: string, wager: any, winnerId: string
       wagerId,
       userId: winnerId,
       type: 'payout',
-      amountCents: payoutAmount,
+      amountCents: totalPot,
       status: 'completed',
       createdAt: new Date().toISOString(),
     });
 
-    console.log(`Credited $${(payoutAmount / 100).toFixed(2)} to wallet of user ${winnerId} for wager ${wagerId}`);
+    console.log(`Credited $${(totalPot / 100).toFixed(2)} to wallet of user ${winnerId} for wager ${wagerId}`);
   } catch (err) {
     console.error(`Payout failed for wager ${wagerId}:`, err);
   }

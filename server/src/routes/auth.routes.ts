@@ -46,6 +46,7 @@ router.post('/register', async (req: Request, res: Response) => {
       stripeCustomerId: null,
       stripeConnectAccountId: null,
       stripeOnboardingComplete: false,
+      venmoUsername: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -58,6 +59,7 @@ router.post('/register', async (req: Request, res: Response) => {
       chess_com_username: userData.chessComUsername,
       display_name: userData.displayName,
       stripe_onboarding_complete: false,
+      venmo_username: null,
       created_at: now,
     });
   } catch (err: any) {
@@ -94,6 +96,7 @@ router.post('/login', async (req: Request, res: Response) => {
       chess_com_username: u.chessComUsername,
       display_name: u.displayName,
       stripe_onboarding_complete: u.stripeOnboardingComplete,
+      venmo_username: u.venmoUsername || null,
       created_at: u.createdAt,
     });
   } catch {
@@ -135,8 +138,26 @@ router.put('/chess-username', authenticate, async (req: Request, res: Response) 
     chess_com_username: u.chessComUsername,
     display_name: u.displayName,
     stripe_onboarding_complete: u.stripeOnboardingComplete,
+    venmo_username: u.venmoUsername || null,
     created_at: u.createdAt,
   });
+});
+
+// Update Venmo username
+router.put('/venmo', authenticate, async (req: Request, res: Response) => {
+  const { venmoUsername } = req.body;
+  if (venmoUsername !== null && (typeof venmoUsername !== 'string' || !venmoUsername.trim())) {
+    res.status(400).json({ error: 'Venmo username required' });
+    return;
+  }
+
+  const userRef = db.collection('dublplay_users').doc(req.user!.userId);
+  await userRef.update({
+    venmoUsername: venmoUsername ? venmoUsername.trim() : null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  res.json({ venmoUsername: venmoUsername ? venmoUsername.trim() : null });
 });
 
 // Get current user profile
@@ -155,6 +176,7 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     chess_com_username: u.chessComUsername,
     display_name: u.displayName,
     stripe_onboarding_complete: u.stripeOnboardingComplete,
+    venmo_username: u.venmoUsername || null,
     created_at: u.createdAt,
   });
 });

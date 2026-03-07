@@ -7,6 +7,7 @@ export interface User {
   stripe_customer_id: string | null;
   stripe_connect_account_id: string | null;
   stripe_onboarding_complete: boolean;
+  venmo_username: string | null;
   created_at: string;
 }
 

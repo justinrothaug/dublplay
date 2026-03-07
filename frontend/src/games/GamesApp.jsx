@@ -7,12 +7,13 @@ import PaymentScreen from './PaymentScreen.jsx';
 import PlayScreen from './PlayScreen.jsx';
 import { theme } from './theme.js';
 
-export default function GamesApp({ onBackToHub, wallet, profile }) {
+export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) {
   const { user, needsRegistration, disconnectChess } = useAuth();
   const [screen, setScreen] = useState('main');
   const [screenParams, setScreenParams] = useState(null);
   const [activeTab, setActiveTab] = useState('dublplay');
   const [showProfile, setShowProfile] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
 
   // User is logged in via Firebase but hasn't set Chess.com username yet
   if (!user || needsRegistration) {
@@ -52,13 +53,17 @@ export default function GamesApp({ onBackToHub, wallet, profile }) {
             }}
           >{(profile?.username || user?.display_name || '?')[0].toUpperCase()}</button>
           {wallet && (
-            <span style={{
-              background: 'rgba(212,168,67,0.12)', border: '1px solid #d4a843', borderRadius: 8,
-              padding: '4px 12px', display: 'flex', alignItems: 'center',
-              fontSize: 13, fontWeight: 800, color: '#d4a843',
-            }}>
+            <button
+              onClick={() => setShowWallet(true)}
+              style={{
+                background: 'rgba(212,168,67,0.12)', border: '1px solid #d4a843', borderRadius: 8,
+                padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+                fontSize: 13, fontWeight: 800, color: '#d4a843',
+              }}
+            >
               ${wallet.loading ? '—' : wallet.balanceDollars}
-            </span>
+              <span style={{ fontSize: 10, color: '#d4a843' }}>+</span>
+            </button>
           )}
         </div>
       </div>
@@ -118,6 +123,9 @@ export default function GamesApp({ onBackToHub, wallet, profile }) {
           <PlayScreen />
         )}
       </div>
+
+      {/* Wallet modal */}
+      {showWallet && WalletModal && <WalletModal onClose={() => setShowWallet(false)} onSuccess={wallet.refresh} wallet={wallet} />}
 
       {/* Bottom tabs */}
       <div style={styles.bottomNav}>

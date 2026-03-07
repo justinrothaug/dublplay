@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { api } from "./api.js";
 import { AuthProvider, useAuth } from "./games/AuthContext.jsx";
-import { walletApi, stripeApi } from "./games/api.js";
+import { walletApi, stripeApi, authApi } from "./games/api.js";
 import LoginScreen from "./games/LoginScreen.jsx";
 const GamesApp = lazy(() => import("./games/GamesApp.jsx"));
 
@@ -3836,7 +3836,7 @@ function SportsApp({ onBackToHub, wallet, profile }) {
       <ParlayTray parlay={parlay} onRemove={toggleParlay} onClear={()=>setParlay([])} />
       {calcSeed !== null && <CalcPopup key={calcSeed} initialOdds={calcSeed} onClose={() => setCalcSeed(null)} />}
       {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onClose={() => setShowProfile(false)} />}
-      {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
+      {showDeposit && <WalletModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} wallet={wallet} />}
     </div>
   );
 }
@@ -3914,13 +3914,34 @@ function useWallet(firebaseUser) {
   return { balanceCents, loading, refresh, balanceDollars: (balanceCents / 100).toFixed(2) };
 }
 
-// ── DEPOSIT MODAL ───────────────────────────────────────────────────────────
-function DepositModal({ onClose, onSuccess }) {
+// ── WALLET MODAL (Add Funds + Cash Out) ─────────────────────────────────────
+function WalletModal({ onClose, onSuccess, wallet }) {
+  const [tab, setTab] = useState("deposit"); // "deposit" | "cashout"
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [clientSecret, setClientSecret] = useState(null);
+  const [venmo, setVenmo] = useState("");
+  const [venmoSaved, setVenmoSaved] = useState(false);
+  const [venmoLoading, setVenmoLoading] = useState(true);
   const presets = [5, 10, 25, 50, 100];
+
+  // Load user's Venmo on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await authApi.me();
+        if (me.venmo_username) {
+          setVenmo(me.venmo_username);
+          setVenmoSaved(true);
+        }
+      } catch {}
+      setVenmoLoading(false);
+    })();
+  }, []);
+
+  const switchTab = (t) => { setTab(t); setError(""); setSuccess(""); setAmount(""); setClientSecret(null); };
 
   const handleDeposit = async () => {
     const cents = Math.round(parseFloat(amount) * 100);
@@ -3937,7 +3958,39 @@ function DepositModal({ onClose, onSuccess }) {
     }
   };
 
-  // If we have a clientSecret, show the Stripe payment form
+  const handleSaveVenmo = async () => {
+    if (!venmo.trim()) { setError("Enter your Venmo username"); return; }
+    setLoading(true);
+    setError("");
+    try {
+      await authApi.updateVenmo(venmo.trim());
+      setVenmoSaved(true);
+      setLoading(false);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const handlePayout = async () => {
+    const cents = Math.round(parseFloat(amount) * 100);
+    if (!cents || cents < 100) { setError("Minimum $1.00"); return; }
+    if (cents > (wallet?.balanceCents || 0)) { setError("Insufficient balance"); return; }
+    if (!venmoSaved) { setError("Save your Venmo first"); return; }
+    setLoading(true);
+    setError("");
+    try {
+      await walletApi.requestPayout(cents);
+      setSuccess(`Payout of $${(cents / 100).toFixed(2)} requested to @${venmo}!`);
+      setAmount("");
+      onSuccess();
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  // Stripe payment form after deposit initiated
   if (clientSecret) {
     return (
       <div style={modalOverlay} onClick={onClose}>
@@ -3950,49 +4003,146 @@ function DepositModal({ onClose, onSuccess }) {
     );
   }
 
+  const tabStyle = (active) => ({
+    flex: 1, padding: "10px 0", border: "none", borderBottom: active ? "2px solid #d4a843" : "2px solid transparent",
+    background: "transparent", color: active ? "#d4a843" : "#8b8fa8", fontWeight: 700, fontSize: 13,
+    cursor: "pointer", letterSpacing: "0.04em",
+  });
+
   return (
     <div style={modalOverlay} onClick={onClose}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 16 }}>ADD FUNDS</div>
+        {/* Balance header */}
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>YOUR BALANCE</div>
+          <div style={{ fontSize: 36, fontWeight: 900, color: "#d4a843" }}>
+            ${wallet?.loading ? "—" : wallet?.balanceDollars || "0.00"}
+          </div>
+        </div>
 
-        {/* Quick amounts */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {presets.map(v => (
-            <button key={v} onClick={() => { setAmount(String(v)); setError(""); }}
+        {/* Tabs */}
+        <div style={{ display: "flex", marginBottom: 20, borderBottom: "1px solid #2a2f4a" }}>
+          <button style={tabStyle(tab === "deposit")} onClick={() => switchTab("deposit")}>Add Funds</button>
+          <button style={tabStyle(tab === "cashout")} onClick={() => switchTab("cashout")}>Cash Out</button>
+        </div>
+
+        {tab === "deposit" && (
+          <>
+            {/* Quick amounts */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+              {presets.map(v => (
+                <button key={v} onClick={() => { setAmount(String(v)); setError(""); }}
+                  style={{
+                    flex: 1, minWidth: 50, padding: "10px 0", border: `1px solid ${amount === String(v) ? "#d4a843" : "#2a2f4a"}`,
+                    borderRadius: 8, background: amount === String(v) ? "rgba(212,168,67,0.15)" : "#141829",
+                    color: amount === String(v) ? "#d4a843" : "#8b8fa8", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                  }}
+                >${v}</button>
+              ))}
+            </div>
+
+            {/* Custom amount */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <span style={{ color: "#8b8fa8", fontSize: 20, fontWeight: 700 }}>$</span>
+              <input
+                type="number" min="1" max="500" step="1" placeholder="0.00"
+                value={amount} onChange={e => { setAmount(e.target.value); setError(""); }}
+                onKeyDown={e => e.key === "Enter" && handleDeposit()}
+                style={{
+                  flex: 1, background: "#141829", border: "1px solid #2a2f4a", borderRadius: 8,
+                  color: "#e8e8f0", padding: "12px 14px", fontSize: 18, fontFamily: "inherit",
+                  outline: "none",
+                }}
+              />
+            </div>
+
+            {error && <p style={{ color: "#e53935", fontSize: 12, marginBottom: 12 }}>{error}</p>}
+
+            <button onClick={handleDeposit} disabled={loading}
               style={{
-                flex: 1, minWidth: 50, padding: "10px 0", border: `1px solid ${amount === String(v) ? "#d4a843" : "#2a2f4a"}`,
-                borderRadius: 8, background: amount === String(v) ? "rgba(212,168,67,0.15)" : "#141829",
-                color: amount === String(v) ? "#d4a843" : "#8b8fa8", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                width: "100%", padding: "14px 0", background: "#d4a843", color: "#0a0e1a",
+                border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
+                letterSpacing: "0.06em", cursor: loading ? "wait" : "pointer",
+                opacity: loading ? 0.6 : 1,
               }}
-            >${v}</button>
-          ))}
-        </div>
+            >{loading ? "Processing..." : "Continue to Payment"}</button>
+          </>
+        )}
 
-        {/* Custom amount */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <span style={{ color: "#8b8fa8", fontSize: 20, fontWeight: 700 }}>$</span>
-          <input
-            type="number" min="1" max="500" step="1" placeholder="0.00"
-            value={amount} onChange={e => { setAmount(e.target.value); setError(""); }}
-            onKeyDown={e => e.key === "Enter" && handleDeposit()}
-            style={{
-              flex: 1, background: "#141829", border: "1px solid #2a2f4a", borderRadius: 8,
-              color: "#e8e8f0", padding: "12px 14px", fontSize: 18, fontFamily: "inherit",
-              outline: "none",
-            }}
-          />
-        </div>
+        {tab === "cashout" && (
+          <>
+            {/* Venmo username */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 8 }}>VENMO USERNAME</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", background: "#141829", border: "1px solid #2a2f4a", borderRadius: 8, padding: "0 12px" }}>
+                  <span style={{ color: "#8b8fa8", fontSize: 14, fontWeight: 700 }}>@</span>
+                  <input
+                    placeholder="your-venmo"
+                    value={venmo} onChange={e => { setVenmo(e.target.value); setVenmoSaved(false); setError(""); }}
+                    disabled={venmoLoading}
+                    style={{
+                      flex: 1, background: "transparent", border: "none",
+                      color: "#e8e8f0", padding: "12px 8px", fontSize: 14, fontFamily: "inherit",
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                {!venmoSaved && venmo.trim() && (
+                  <button onClick={handleSaveVenmo} disabled={loading}
+                    style={{
+                      padding: "0 16px", background: "#2a2f4a", color: "#e8e8f0", border: "none",
+                      borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >Save</button>
+                )}
+                {venmoSaved && (
+                  <span style={{ display: "flex", alignItems: "center", color: "#4caf50", fontSize: 18 }}>&#10003;</span>
+                )}
+              </div>
+            </div>
 
-        {error && <p style={{ color: "#e53935", fontSize: 12, marginBottom: 12 }}>{error}</p>}
+            {/* Payout amount */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: "#8b8fa8", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 8 }}>PAYOUT AMOUNT</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#8b8fa8", fontSize: 20, fontWeight: 700 }}>$</span>
+                <input
+                  type="number" min="1" step="1" placeholder="0.00"
+                  value={amount} onChange={e => { setAmount(e.target.value); setError(""); setSuccess(""); }}
+                  onKeyDown={e => e.key === "Enter" && handlePayout()}
+                  style={{
+                    flex: 1, background: "#141829", border: "1px solid #2a2f4a", borderRadius: 8,
+                    color: "#e8e8f0", padding: "12px 14px", fontSize: 18, fontFamily: "inherit",
+                    outline: "none",
+                  }}
+                />
+              </div>
+              {wallet && !wallet.loading && (
+                <button
+                  onClick={() => { setAmount((wallet.balanceCents / 100).toFixed(2)); setError(""); setSuccess(""); }}
+                  style={{
+                    background: "none", border: "none", color: "#d4a843", fontSize: 11,
+                    fontWeight: 700, cursor: "pointer", padding: "6px 0", letterSpacing: "0.04em",
+                  }}
+                >Withdraw all (${wallet.balanceDollars})</button>
+              )}
+            </div>
 
-        <button onClick={handleDeposit} disabled={loading}
-          style={{
-            width: "100%", padding: "14px 0", background: "#d4a843", color: "#0a0e1a",
-            border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
-            letterSpacing: "0.06em", cursor: loading ? "wait" : "pointer",
-            opacity: loading ? 0.6 : 1,
-          }}
-        >{loading ? "Processing..." : "Continue to Payment"}</button>
+            {error && <p style={{ color: "#e53935", fontSize: 12, marginBottom: 12 }}>{error}</p>}
+            {success && <p style={{ color: "#4caf50", fontSize: 12, marginBottom: 12 }}>{success}</p>}
+
+            <button onClick={handlePayout} disabled={loading || !venmoSaved}
+              style={{
+                width: "100%", padding: "14px 0", background: venmoSaved ? "#4caf50" : "#2a2f4a",
+                color: venmoSaved ? "#fff" : "#8b8fa8",
+                border: "none", borderRadius: 10, fontSize: 14, fontWeight: 800,
+                letterSpacing: "0.06em", cursor: (loading || !venmoSaved) ? "not-allowed" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >{loading ? "Processing..." : "Pay Me"}</button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -4170,7 +4320,7 @@ function HubScreen({ onSelect, user, onLogout, wallet, profile }) {
         </button>
       </div>
 
-      {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} />}
+      {showDeposit && <WalletModal onClose={() => setShowDeposit(false)} onSuccess={wallet.refresh} wallet={wallet} />}
       {showProfile && <ProfileDropdown profile={profile} wallet={wallet} onLogout={onLogout} onClose={() => setShowProfile(false)} />}
     </div>
   );
@@ -4206,7 +4356,7 @@ function AuthenticatedApp() {
   if (mode === "games") {
     return (
       <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#d4a843" }}>Loading Games...</div>}>
-        <GamesApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} onLogout={logout} />
+        <GamesApp onBackToHub={() => setMode(null)} wallet={wallet} profile={profile} onLogout={logout} WalletModal={WalletModal} />
       </Suspense>
     );
   }

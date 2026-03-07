@@ -10,11 +10,25 @@ const router = Router();
 // Get transaction history
 router.get('/history', authenticate, async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const snapshot = await db.collection('dublplay_transactions')
-    .where('userId', '==', userId)
-    .orderBy('createdAt', 'desc')
-    .limit(50)
-    .get();
+  let snapshot;
+  try {
+    snapshot = await db.collection('dublplay_transactions')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(50)
+      .get();
+  } catch (err: any) {
+    // Fallback: query without orderBy if composite index doesn't exist yet
+    if (err.code === 9) {
+      console.warn('Firestore composite index missing for transactions. Falling back to unordered query.');
+      snapshot = await db.collection('dublplay_transactions')
+        .where('userId', '==', userId)
+        .limit(50)
+        .get();
+    } else {
+      throw err;
+    }
+  }
 
   const transactions = snapshot.docs.map((doc) => {
     const t = doc.data();
@@ -27,6 +41,8 @@ router.get('/history', authenticate, async (req: Request, res: Response) => {
       wagerId: t.wagerId || null,
     };
   });
+  // Sort in JS if we used the fallback
+  transactions.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
   res.json(transactions);
 });

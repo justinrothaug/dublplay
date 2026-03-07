@@ -175,15 +175,6 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 }}
               >+ Link Board Game Arena</button>
             )}
-            <button
-              onClick={() => { setShowProfile(false); logout(); }}
-              style={{
-                width: '100%', padding: '10px 0', marginTop: 8,
-                background: 'transparent', color: theme.colors.danger, border: `1px solid ${theme.colors.border}`,
-                borderRadius: 8, fontSize: 12, fontWeight: 700,
-                letterSpacing: '0.06em', cursor: 'pointer',
-              }}
-            >Sign Out</button>
           </div>
         </div>
       )}

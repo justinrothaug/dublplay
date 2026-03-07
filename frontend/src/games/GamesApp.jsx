@@ -110,8 +110,9 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                 </div>
                 <button
                   onClick={() => { setShowProfile(false); disconnectChess(); }}
-                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
-                >Disconnect</button>
+                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                  title="Remove account"
+                >&#128465;</button>
               </div>
             )}
             {user?.bga_username ? (
@@ -132,8 +133,9 @@ export default function GamesApp({ onBackToHub, wallet, profile, WalletModal }) 
                       await refreshUser();
                     } catch (err) { alert('Error: ' + err.message); }
                   }}
-                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
-                >Disconnect</button>
+                  style={{ background: 'none', border: 'none', color: theme.colors.danger, fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                  title="Remove account"
+                >&#128465;</button>
               </div>
             ) : linkingBga ? (
               <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
